@@ -1,0 +1,93 @@
+#version 450
+#define PLAGUE_WATER_INTERACTION 1 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Quality" 2="Performance"}
+#define SURFACE_FLUID_DETAIL 1 //[0 1 2] compile "Water Simulation Boundaries" {0="Off" 1="Standard" 2="Quality"}
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:surface_fluid.glsl>
+#moj_import <fornax_runtime:water_actors.glsl>
+#moj_import <fornax_runtime:water_impulse.glsl>
+
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+layout(std430, set = 0, binding = 1) readonly buffer WaterWaveState {
+    vec4 committed;
+    vec4 frame;
+    vec4 control;
+    vec4 travel;
+    vec4 splash;
+} waveState;
+layout(rg16f, set = 0, binding = 3) uniform readonly image2D wavePrevious;
+layout(rgba16f, set = 0, binding = 5) uniform writeonly image2D waveNext;
+
+ivec2 clamped(ivec2 p, ivec2 size) { return clamp(p, ivec2(1), size - ivec2(2)); }
+
+// ABSORBING walls: see water_step_a.comp. 0.72 must match stage A's or the two half-steps disagree.
+float surfaceFluidPressure(ivec2 sampleCoord, ivec2 fluidCoord, ivec2 size,
+                           float centrePressure, float centreSurfaceY) {
+    float neighbourSurfaceY;
+    bool valid = surfaceFluidCellValid(fluidCoord, size, neighbourSurfaceY);
+    return valid && abs(neighbourSurfaceY - centreSurfaceY) <= SURFACE_FLUID_HEIGHT_TOLERANCE
+            ? imageLoad(wavePrevious, clamped(sampleCoord, size)).r : centrePressure * 0.72;
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = ivec2(PLAGUE_WATER_INTERACTION == 2 ? 256 : 512);
+    if (any(greaterThanEqual(coord, size))) return;
+    vec2 centreDelta = vec2(coord) - 0.5 * vec2(size);
+    float radialDistance = length(centreDelta);
+    if (waveState.control.x > 0.5) {
+        imageStore(waveNext, coord, vec4(0.0));
+        return;
+    }
+
+    ivec2 source = clamped(coord, size);
+    vec2 oldState = imageLoad(wavePrevious, source).rg;
+    float pressure = oldState.x;
+    float velocity = oldState.y;
+    float centreSurfaceY;
+    if (!surfaceFluidCellValid(coord, size, centreSurfaceY)) {
+        imageStore(waveNext, coord, vec4(0.0));
+        return;
+    }
+    float down = surfaceFluidPressure(source + ivec2(0, -1), coord + ivec2(0, -1),
+            size, pressure, centreSurfaceY);
+    float left = surfaceFluidPressure(source + ivec2(-1, 0), coord + ivec2(-1, 0),
+            size, pressure, centreSurfaceY);
+    float right = surfaceFluidPressure(source + ivec2(1, 0), coord + ivec2(1, 0),
+            size, pressure, centreSurfaceY);
+    float up = surfaceFluidPressure(source + ivec2(0, 1), coord + ivec2(0, 1),
+            size, pressure, centreSurfaceY);
+    if (waveState.control.x < -0.5) {
+        imageStore(waveNext, coord, vec4(pressure, velocity,
+                0.5 * (right - left), 0.5 * (up - down)));
+        return;
+    }
+    float delta = waveState.control.y;
+
+    velocity += delta * (-2.0 * pressure + right + left) * 0.25;
+    velocity += delta * (-2.0 * pressure + up + down) * 0.25;
+    pressure += delta * velocity;
+    velocity -= 0.0014 * delta * pressure;
+    velocity *= 1.0 - 0.006 * delta;
+    // High-frequency dissipation: see water_step_a.comp; coefficients must stay in lockstep.
+    pressure = mix(pressure, 0.25 * (up + down + left + right), 0.08 * delta);
+    float edgeFade = smoothstep(0.49 * float(size.x), 0.25 * float(size.x), radialDistance);
+    pressure *= 0.985 * edgeFade;
+    velocity *= edgeFade;
+
+    if (waveState.control.w > 0.5) {
+        pressure += plagueImpulseDisplacement(
+                plagueImpulseSweptOffset(centreDelta, waveState.travel.xy),
+                waveState.control.z,
+                u_LocalActorPosition.w > 1.5 && u_LocalActorPosition.w < 2.5,
+                u_LocalActorShape.xy);
+    }
+    // Splash stamped outside the surface-contact gate on purpose: see water_step_a.comp.
+    pressure += plagueImpulseSplash(centreDelta, waveState.splash);
+    // Every OTHER body near the camera; slot 0 is the local actor, already driven above.
+    pressure += plagueImpulseRemoteActors(centreDelta,
+            float(size.x) / PLAGUE_INTERACTION_FIELD_SIZE, u_LocalActorMotion.w);
+    imageStore(waveNext, coord, vec4(pressure, velocity,
+            0.5 * (right - left), 0.5 * (up - down)));
+}

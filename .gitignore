@@ -1,0 +1,13 @@
+# The pack is authored files only; everything below is emitted by a tool and is reproducible by
+# rerunning it.
+.DS_Store
+__pycache__/
+# tools/verify_snow_dusting.py --render writes its before/after images here.
+tools/out/
+# A macOS Finder "Compress" of shaders/ committed by accident once (a6609c3); nothing references
+# it, but Finder will happily regenerate it from the same gesture.
+shaders.zip
+
+# Third-party-derived artwork and captures never enter the tree -- see ASSETS.md
+tools/textures/
+tools/captures/

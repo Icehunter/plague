@@ -1,0 +1,6 @@
+[pack]
+name = "Plague"
+version = "0.1.0"
+authors = ["Ryan Wilson"]
+license = "MIT"
+format = 1

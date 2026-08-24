@@ -1,0 +1,85 @@
+#version 450
+#define PLAGUE_WATER_INTERACTION 1 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Quality" 2="Performance"}
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:water_impulse.glsl>
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 1) buffer WaterWaveState {
+    vec4 committed; // xy fractional cell movement; z deferred performance-tier dt; w previous fluid kind
+    vec4 frame;     // xy integer cell shift; zw next fractional remainder
+    vec4 control;   // x reset, y delta, z interaction radius in cells, w surface contact
+    vec4 travel;    // xy actor displacement in cells covered by THIS solve; zw carry across skipped frames
+    vec4 splash;    // x signed amplitude, y remaining seconds, z radius in cells, w previous surface contact
+} waveState;
+
+void main() {
+    const float cellsPerBlock = (PLAGUE_WATER_INTERACTION == 2 ? 256.0 : 512.0) / 64.0;
+    bool reset = u_LocalActorFluid.w > 0.5 || length(u_LocalActorMotion.xz) > 16.0;
+    bool updateSimulation = PLAGUE_WATER_INTERACTION != 2
+            || mod(floor(u_FrameState.x), 2.0) < 0.5 || reset;
+    vec2 motionCells = u_LocalActorMotion.xz * cellsPerBlock;
+    vec2 accumulated = reset ? vec2(0.0) : waveState.committed.xy - motionCells;
+    // Reprojected every rendered frame, even when Performance skips the pressure solve, so the
+    // history field stays locked to world space while its physics runs at 30 Hz.
+    ivec2 wholeCells = ivec2(trunc(accumulated));
+    waveState.frame = vec4(vec2(wholeCells), accumulated - vec2(wholeCells));
+
+    // Movement is CARRIED rather than dropped on a deferred frame: the impulse only stamps on solve
+    // frames, so otherwise Performance tier would stamp a 60 Hz displacement at 30 Hz and lose half.
+    vec2 carried = reset ? vec2(0.0) : waveState.travel.zw;
+    vec2 travelThisStep = carried + motionCells;
+    waveState.travel = updateSimulation ? vec4(travelThisStep, 0.0, 0.0)
+                                        : vec4(0.0, 0.0, travelThisStep);
+
+    float speed = length(u_LocalActorMotion.xyz) / max(u_LocalActorMotion.w, 1e-4);
+    bool boat = u_LocalActorPosition.w > 1.5 && u_LocalActorPosition.w < 2.5;
+    float radius = boat ? max(12.0, u_LocalActorShape.w * cellsPerBlock)
+            : 5.0 + 5.0 * smoothstep(0.1, 13.0, speed);
+    // A near-stationary body collapses its continuous displacement source to near-zero radius —
+    // otherwise it stamps the full disc every simulated frame forever, feeding the field energy
+    // indefinitely (user-reported, screenshot 111: endless recursive bounce). A real crossing still
+    // splashes through the splash lane below.
+    if (speed < 0.15) radius = 0.01;
+    float accumulatedTime = reset ? u_LocalActorMotion.w
+            : waveState.committed.z + u_LocalActorMotion.w;
+    float delta = updateSimulation ? clamp(accumulatedTime * 60.0, 0.6, 1.4) : 0.0;
+    waveState.committed.z = updateSimulation ? 0.0 : accumulatedTime;
+    waveState.control = vec4(reset ? 1.0 : (updateSimulation ? 0.0 : -1.0),
+            delta, radius, updateSimulation ? u_LocalActorFluid.y : 0.0);
+
+    // SURFACE CROSSINGS: u_LocalActorFluid.y ("in a fluid but not fully under") rises on entry and
+    // falls on submerging, so a transition alone can't tell entry from dive. Direction instead
+    // comes from vertical speed: falling through digs a crater, rising through throws a mound.
+    float contact = u_LocalActorFluid.y;
+    float previousContact = reset ? contact : waveState.splash.w;
+    float crossing = abs(contact - previousContact);
+    float verticalSpeed = u_LocalActorFluid.z;
+    float previousFluid = reset ? u_LocalActorFluid.x : waveState.committed.w;
+    // Water on either side of the crossing counts: climbing out reports no fluid the moment
+    // contact drops, and the splash belongs to the water just left.
+    bool water = (u_LocalActorFluid.x > 0.5 && u_LocalActorFluid.x < 1.5)
+            || (previousFluid > 0.5 && previousFluid < 1.5);
+    float crossingStrength = crossing * (water ? 1.0 : 0.0)
+            * smoothstep(PLAGUE_IMPULSE_SPLASH_MIN_SPEED, PLAGUE_IMPULSE_SPLASH_MAX_SPEED,
+                    abs(verticalSpeed));
+    float newSplash = sign(verticalSpeed) * crossingStrength * PLAGUE_IMPULSE_SPLASH_PEAK;
+
+    float remaining = reset ? 0.0 : max(waveState.splash.y - u_LocalActorMotion.w, 0.0);
+    float liveAmplitude = remaining > 0.0 ? waveState.splash.x : 0.0;
+    // A bigger crossing overrides one still playing rather than summing — summing two rapid
+    // crossings saturates the solver into a flat plateau.
+    bool replace = abs(newSplash) > abs(liveAmplitude);
+    float splashRadius = max(3.0, u_LocalActorShape.z * cellsPerBlock * 1.8);
+    // `reset` counts as a replace so the radius lane is never read back uninitialised after a
+    // world change, teleport, or vehicle swap.
+    bool rewrite = replace || reset;
+    waveState.splash = vec4(
+            rewrite ? newSplash : liveAmplitude,
+            rewrite ? (newSplash != 0.0 ? PLAGUE_IMPULSE_SPLASH_SECONDS : 0.0) : remaining,
+            rewrite ? splashRadius : waveState.splash.z,
+            contact);
+    waveState.committed.w = u_LocalActorFluid.x;
+}

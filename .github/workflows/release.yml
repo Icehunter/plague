@@ -1,0 +1,56 @@
+# Cut a release when a v* tag is pushed.
+#
+# A Plague release is the pack folder zipped, and nothing else: the four TOMLs and shaders/. docs/,
+# tools/ and .claude/ are repository material -- the engine never reads them and a player never
+# needs them -- so they are excluded here rather than trimmed by hand at release time.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:        # a dry run, without tagging
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # pack.toml is the single source of the version; a tag that disagrees with it is a mistake
+      # worth stopping for rather than shipping under two different numbers.
+      - name: Check the tag matches pack.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          packver=$(grep -E '^version' pack.toml | head -1 | cut -d'"' -f2)
+          tagver="${GITHUB_REF_NAME#v}"
+          if [ "$packver" != "$tagver" ]; then
+            echo "pack.toml says $packver, tag says $tagver"
+            exit 1
+          fi
+          echo "version $packver"
+
+      - name: Build the pack zip
+        run: |
+          packver=$(grep -E '^version' pack.toml | head -1 | cut -d'"' -f2)
+          mkdir -p dist/Plague
+          cp pack.toml graph.toml screens.toml blocks.toml dist/Plague/
+          cp -R shaders dist/Plague/
+          find dist -name '.DS_Store' -delete
+          (cd dist && zip -qr "Plague-${packver}.zip" Plague)
+          ls -la dist/*.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pack
+          path: dist/*.zip
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true

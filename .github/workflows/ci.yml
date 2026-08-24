@@ -1,0 +1,50 @@
+# Compile every shader on every push.
+#
+# This pack has no build: the "artifact" is the source tree itself, so the only thing CI can
+# establish is that every shader still compiles under every arm the pack declares. That is worth
+# having, because the failure it catches is invisible locally -- an arm behind a default-off option
+# is never compiled unless check_shaders.sh has a variant turning it on, and an arm never compiled
+# is only ever compiled on a player's GPU.
+#
+# What this CANNOT establish: that anything looks right. A shader that compiles can render nothing,
+# render it in the wrong place, or render it beautifully wrong. Look changes are verified by a human
+# with the pack loaded, and nothing here substitutes for that.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:        # so it can be run by hand from the Actions tab
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shaders:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install glslang
+        run: sudo apt-get update && sudo apt-get install -y glslang-tools
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install numpy Pillow
+
+      # The compile gate lives outside the published tree, so it is only present in a working
+      # checkout. Skip cleanly rather than fail when it is absent -- a fork that only has the pack
+      # should not see a red X it cannot fix.
+      - name: Compile every shader under every declared arm
+        run: |
+          if [ -x tools/check_shaders.sh ]; then
+            tools/check_shaders.sh
+          else
+            echo "tools/check_shaders.sh is not in this checkout; nothing to compile-check."
+          fi

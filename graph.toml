@@ -1,0 +1,840 @@
+# Plague render graph. Passes execute in declaration order.
+
+# --- Geometry -------------------------------------------------------------------------------------
+
+[[pass]]
+name = "terrain"
+type = "geometry"
+slot = "terrain"
+program = "shaders/blocks/terrain"
+# builtin.noise is THIRD (u_GeomInput2); terrain.fsh's puddle/ripple/splash/snow calls depend on that
+# position — append only, never insert.
+inputs = ["builtin.spriteBounds", "builtin.spriteHeightRange", "builtin.noise", "waterWaveB.history"]
+outputs = []
+
+# Ships both vsh/fsh stages: vanilla's entity vertex shader consumes Normal and never forwards it, so
+# a fragment-only stage couldn't write gNormal.
+[[pass]]
+name = "entities"
+type = "geometry"
+slot = "entities"
+program = "shaders/blocks/entities"
+inputs = []
+outputs = []
+
+# Fornax maps vanilla's SOLID_BLOCK/CUTOUT_BLOCK pipelines to BLOCK_ENTITIES; claiming this slot is
+# what makes the pack program reachable instead of being overpainted by the deferred resolve.
+[[pass]]
+name = "block_entities"
+type = "geometry"
+slot = "block_entities"
+program = "shaders/blocks/block_entities"
+inputs = []
+outputs = []
+
+# Solid arm only — see particles_translucent for the translucent arm (cannot be deferred). Declaring
+# this pass is required for Fornax's hook to defer particles at all.
+[[pass]]
+name = "particles"
+type = "geometry"
+slot = "particles"
+program = "shaders/blocks/particles"
+inputs = []
+outputs = []
+
+# FORWARD pass: draws after the resolve, so deferring would write a G-buffer nothing reads and drop
+# the translucent blend. Reached via a second engine hook (particles bypass the normal chokepoint
+# entirely) and is not claimed under Fabulous Graphics, which uses a separate, non-tonemapped buffer.
+[[pass]]
+name = "particles_translucent"
+type = "geometry"
+slot = "particles_translucent"
+program = "shaders/blocks/particles_translucent"
+inputs = []
+outputs = []
+
+# FORWARD pass, writing DISPLAY-space colour straight into builtin.output — the only program in this
+# pack that does. Can't be deferred: BANNER_PATTERN has depthWrite = false (refused by
+# GeometryPipelineMap) and draws after the resolve regardless.
+[[pass]]
+name = "banner_patterns"
+type = "geometry"
+slot = "banner_patterns"
+program = "shaders/blocks/banner_patterns"
+inputs = []
+outputs = []
+
+# NO WEATHER PASS: precipitation bypasses Fornax's deferral chokepoint entirely (its own render pass,
+# never routed through drawFromBuffer), so claiming a slot here does nothing. Plague's weather lives
+# on the ground instead — wetness, puddles, ripples, splashes.
+
+# Entity shadow casting. The engine replays the already-prepared entity draws a second time with the
+# shadow map bound, and this program reprojects them through the light's matrix.
+[[pass]]
+name = "shadow_entities"
+type = "geometry"
+slot = "shadow_entities"
+program = "shaders/blocks/shadow_entities"
+inputs = []
+outputs = []
+
+# --- Ambient occlusion --------------------------------------------------------------------------
+# Targets ungated though passes are gated: the resolve reads `ssao` unconditionally, and
+# gate-consistency refuses an ungated pass reading a gated target.
+
+# rgba16f, not the resolve writing straight to builtin.output (8-bit): clipping above 1.0 there is
+# irrecoverable — no tonemap can recover a sunlit-white value from an already-clipped one.
+[targets.sceneHdr]
+format = "rgba16f"
+scale = 1.0
+
+# Finite water-volume interval ABI. It is deliberately separate from radiance and remains valid for
+# a full frame so the half-resolution transport chain can reject stale revisions deterministically.
+[targets.waterVolumeInterval]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+history = true
+enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
+
+# Current-frame premultiplied single-scatter radiance plus the interval revision in alpha. Temporal
+# ownership belongs to the later resolved target, never to this raw integration result.
+[targets.waterVolumeScatterRaw]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
+
+# Interval-aware reconstruction owns only scatter radiance history. Alpha remains the current
+# interval revision, while the paired interval history supplies the geometric rejection domain.
+[targets.waterVolumeScatter]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+history = true
+enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
+
+# A is the RG16F intermediate; B stores pressure, velocity and the gradients water shading consumes.
+# Graph storage images — the 512x extent is unrelated to resource-pack atlas resolution.
+[targets.waterWaveA]
+format = "rg16f"
+width = 512
+height = 512
+storage = true
+
+[targets.waterWaveB]
+format = "rgba16f"
+width = 512
+height = 512
+storage = true
+history = true
+filter = "linear"
+
+[targets.waterWaveState]
+kind = "buffer"
+stride_bytes = 16
+# Five vec4s: committed, frame, control, travel, splash. Under the Performance tier's skipped solves,
+# "survives a frame" is not the same as "survives a step".
+count = 5
+
+[targets.surfaceFluidClipmap]
+kind = "buffer"
+
+# Engine-filled (Fornax WaterActorBuffer), slot 0 the local actor — no stride/count here since the
+# engine sizes it, and skips the whole sweep for any pack that doesn't declare this target.
+[targets.waterActors]
+kind = "buffer"
+
+[targets.ssaoRaw]
+format = "r8"
+scale = 1.0
+
+[targets.ssao]
+format = "r8"
+scale = 1.0
+
+[[pass]]
+name = "ssao_raw"
+type = "fullscreen"
+shader = "shaders/post/ssao.fsh"
+enabled_if = "SSAO_ENABLED"
+inputs = ["builtin.gNormal", "builtin.depth"]
+outputs = ["ssaoRaw"]
+
+[[pass]]
+name = "ssao_blur"
+type = "fullscreen"
+shader = "shaders/post/ssao_blur.fsh"
+enabled_if = "SSAO_ENABLED"
+inputs = ["ssaoRaw"]
+outputs = ["ssao"]
+
+# --- Reflections ----------------------------------------------------------------------------------
+# Single mirror ray per pixel (see ssr_trace.fsh for why, not a sampled cone), marched through Hi-Z,
+# blurred by roughness, accumulated temporally. Reads `sceneHistory.history`, not this frame's
+# sceneHdr — the resolve also writes sceneHdr, and reading it here would close a validator cycle.
+
+# Fast tier: traces and blurs at HALF resolution, then joint-bilateral-upsamples into the full-res
+# `ssr` the resolve reads. Same shader files as Fancy — FullscreenPassRunner keys shader identity by
+# file path, so resolution reaches the shader only at runtime via textureSize()/u_PassTexelSize.
+
+# Reversed-Z means max IS closest (see hiz_downsample.fsh). FULL RESOLUTION in both tiers — Fast
+# halves ray COUNT, not pyramid precision; a half-res pyramid would miss thin geometry entirely.
+[targets.hiz]
+format = "r32f"
+scale = 1.0
+enabled_if = "SSR_QUALITY != 0"
+
+[targets.ssrRaw]
+format = "rgba16f"
+scale = 1.0
+enabled_if = "SSR_QUALITY == 1"
+
+# `filter = "linear"` is mandatory, not decorative: PlaguePackLoadsTest fails any scale<1 target left
+# at NEAREST, since downsampled targets exist to be read back magnified.
+[targets.ssrRawHalf]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+enabled_if = "SSR_QUALITY == 2"
+
+# Fast's temporal accumulation buffer. The history lives at HALF res, not full: accumulating at full
+# res would mean running the blur at full res, which is the 1.84 ms this tier exists to avoid.
+[targets.ssrHalf]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+history = true
+enabled_if = "SSR_QUALITY == 2"
+
+# UNGATED like `ssao`/`bloomFinal`: both SSR tiers write this positional resolve input, and `scale`
+# can't be switched by `enabled_if`, so Fast stays full-res here and ends in an upsample pass instead.
+# Writers must write every pixel, never discard: history ping-pongs by pointer swap, not copy, so a
+# discarded pixel shows a value from two frames ago.
+[targets.ssr]
+format = "rgba16f"
+scale = 1.0
+history = true
+
+# Prefiltered mip chain over `ssr` (ssr_blur alone caps at a 7x7 kernel, nowhere near a hemisphere
+# integral). Separate target rather than mips on `ssr` itself: TargetRegistry can't do history AND
+# mipLevels > 1 on one target. Level 0 is a faithful copy of the seed, so the resolve reads this
+# INSTEAD of `ssr`. `filter = "linear"` is load-bearing even at scale 1.0 for trilinear-between-mips.
+[targets.ssrPrefilter]
+format = "rgba16f"
+scale = 1.0
+filter = "linear"
+
+[[pass]]
+name = "hiz"
+type = "mipchain"
+shader = "shaders/post/hiz_downsample.fsh"
+target = "hiz"
+enabled_if = "SSR_QUALITY != 0"
+inputs = ["builtin.depth"]
+outputs = []
+
+# NAME IS LOAD-BEARING: the engine supplies Hi-Z level count in u_Param2 only for passes named exactly
+# ssr_trace_fancy/ssr_trace_fast/ssr_trace_water. Rename one and u_Param2 silently stays 0, corrupting every ray.
+[[pass]]
+name = "ssr_trace_fancy"
+type = "fullscreen"
+shader = "shaders/post/ssr_trace.fsh"
+enabled_if = "SSR_QUALITY == 1"
+inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHistory.history", "hiz"]
+outputs = ["ssrRaw"]
+
+# Reads FULL-res depth/Hi-Z despite writing to a half-res target: ssr_trace.fsh derives step size
+# from textureSize(u_Input1), not u_PassTexelSize, so Fast shoots a quarter as many rays, not coarser ones.
+[[pass]]
+name = "ssr_trace_fast"
+type = "fullscreen"
+shader = "shaders/post/ssr_trace.fsh"
+enabled_if = "SSR_QUALITY == 2"
+inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHistory.history", "hiz"]
+outputs = ["ssrRawHalf"]
+
+# Not renamed to `ssr_blur_fancy`: unlike the traces (engine-dictated names), this name is free, but
+# renaming would invalidate profiler comparisons made against it.
+[[pass]]
+name = "ssr_blur"
+type = "fullscreen"
+shader = "shaders/post/ssr_blur.fsh"
+enabled_if = "SSR_QUALITY == 1"
+inputs = ["ssrRaw", "ssr.history", "builtin.gMotion", "builtin.depth", "builtin.gMaterial", "builtin.gNormal"]
+outputs = ["ssr"]
+
+# Same shader as ssr_blur; converts tap spacing through the source/depth texture-size ratio so the
+# same authored roughness covers the same screen-space footprint in both tiers.
+[[pass]]
+name = "ssr_blur_fast"
+type = "fullscreen"
+shader = "shaders/post/ssr_blur.fsh"
+enabled_if = "SSR_QUALITY == 2"
+inputs = ["ssrRawHalf", "ssrHalf.history", "builtin.gMotion", "builtin.depth", "builtin.gMaterial", "builtin.gNormal"]
+outputs = ["ssrHalf"]
+
+[[pass]]
+name = "ssr_upsample"
+type = "fullscreen"
+shader = "shaders/post/ssr_upsample.fsh"
+enabled_if = "SSR_QUALITY == 2"
+inputs = ["ssrHalf", "builtin.depth", "builtin.gMaterial"]
+outputs = ["ssr"]
+
+# Must be LAST in the reflection chain: seeds from `ssr`, which both tiers finish writing above.
+# Gated pass reading an ungated target (`ssr`) is always safe — the opposite direction gate-
+# consistency forbids.
+[[pass]]
+name = "ssr_prefilter"
+type = "mipchain"
+shader = "shaders/post/ssr_prefilter_downsample.fsh"
+target = "ssrPrefilter"
+enabled_if = "SSR_QUALITY != 0"
+inputs = ["ssr"]
+outputs = []
+
+# --- Bloom ----------------------------------------------------------------------------------------
+# Seven levels, LODs 2..8, each a 7x7 binomial blur of the level above (see bloom_blur.fsh for why
+# derived not tabulated). rgba16f: levels are summed, so 8-bit quantisation error would compound
+# across all seven before the composite sees it.
+
+[targets.bloom1]
+format = "rgba16f"
+scale = 0.25
+filter = "linear"
+
+[targets.bloom2]
+format = "rgba16f"
+scale = 0.125
+filter = "linear"
+
+[targets.bloom3]
+format = "rgba16f"
+scale = 0.0625
+filter = "linear"
+
+[targets.bloom4]
+format = "rgba16f"
+scale = 0.03125
+filter = "linear"
+
+[targets.bloom5]
+format = "rgba16f"
+scale = 0.015625
+filter = "linear"
+
+[targets.bloom6]
+format = "rgba16f"
+scale = 0.0078125
+filter = "linear"
+
+[targets.bloom7]
+format = "rgba16f"
+scale = 0.00390625
+filter = "linear"
+
+# `filter = "linear"` on every bloom target is mandatory, not decoration: each exists only to be read
+# back magnified, and NEAREST would turn texels into visible blocks (worst at bloomFinal, quarter
+# scale read at full res by tonemap).
+
+# The seven levels combined into one, so tonemap reads a single input rather than seven.
+[targets.bloomFinal]
+format = "rgba16f"
+scale = 0.25
+filter = "linear"
+
+# --- Resolve --------------------------------------------------------------------------------------
+
+[[pass]]
+name = "resolve"
+type = "fullscreen"
+shader = "shaders/post/gbuffer_resolve.fsh"
+# u_InputN is positional — append only. Buffer inputs go last (usamplerBuffer, not sampler2D).
+# sunShadowMapRaw aliases the same texture under a different target name so the comparison-sampler
+# branch (keyed by exact target string) doesn't wrongly attach to this plain-sampler debug read. A
+# shader uniform and its graph.toml binding are one atomic contract — never remove one side alone.
+inputs = ["builtin.gNormal", "builtin.gAlbedo", "builtin.gMaterial", "builtin.gAo", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw"]
+outputs = ["sceneHdr"]
+
+# Tileable grayscale focusing pattern, sampled by two rotated flowing layers with mirror-repeat UVs.
+# Consumed by gbuffer_resolve (seabed projection) and water_composite (surface shimmer).
+[textures.causticsTexture]
+file = "shaders/textures/water_caustics.png"
+
+# Seamless sea-foam pattern: a bubble-film web, connected bright films with darker holes. Built by
+# tools/generate_foam.py, see water_composite.fsh's own foam block for why noise alone cannot
+# produce foam's actual shape.
+[textures.foamTexture]
+file = "shaders/textures/water_foam.png"
+
+# Green channel points DOWN, so water_composite.fsh flips it before decoding. No smoothness channel:
+# foam roughness is authored in the shader, not sampled.
+[textures.foamNormalTexture]
+file = "shaders/textures/water_foam_n.png"
+
+# Source height field for the pattern/normal pair, used for foam relief (POM). Seamless by
+# construction — matters more here than elsewhere since the shader tiles it across world XZ at two
+# scales at once.
+[textures.foamHeightTexture]
+file = "shaders/textures/water_foam_h.png"
+
+# --- Water ------------------------------------------------------------------------------------
+# Runs AFTER the resolve: the water trace reads THIS frame's sceneHdr (not last frame's, like the
+# opaque SSR trace), since its origin surface was never in the G-buffer to reproject from.
+#
+# EVERY PASS AND TARGET HERE MUST CARRY THE SAME GATE, BY HAND — GraphValidator can't verify it
+# (Fornax pins the invariant separately in WaterPrepassLockstepTest).
+
+[targets.ssrWaterRaw]
+format = "rgba16f"
+scale = 1.0
+enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+
+[targets.ssrWater]
+format = "rgba16f"
+scale = 1.0
+history = true
+enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+
+# Fixed-size graph images containing Plague's directional sky radiance and its filtered hierarchy.
+# They are independent of resource-pack texture resolution and never enter the pack texture loader.
+[targets.waterEnvironmentSeed]
+format = "rgba16f"
+width = 128
+height = 128
+filter = "linear"
+enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+
+[targets.waterEnvironment]
+format = "rgba16f"
+width = 128
+height = 128
+filter = "linear"
+enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+
+# Exists to break a validator cycle: water_composite can't blend into sceneHdr, since the trace reads
+# sceneHdr and GraphValidator treats any reader as depending on ALL writers of a target.
+# UNGATED, with its copy pass: bloom/tonemap read it every frame unconditionally, and a gated target
+# read by an ungated pass is refused by gate-consistency.
+[targets.sceneHdrComposited]
+format = "rgba16f"
+scale = 1.0
+
+# --- Clouds -----------------------------------------------------------------------------------
+# HDR, before the tonemap, not display-space after it: a sunlit cloud top exceeds 1.0, and clipping
+# it flat white before the tonemap loses that information the same way clipping sceneHdr would.
+#
+# Composited INTO sceneHdr itself, before scene_hdr_copy: the march reads only depth/noise (no
+# validator cycle), water_composite then blends the water surface over both sky and clouds (water is
+# in front), and ssr_trace_water reads sceneHdr so reflections carry the same clouds as the direct view.
+#
+# No separate fog pass: fog colour IS plagueGetSky along the view ray, so sky pixels are already fog-
+# identity and the cloud march already fades toward that same colour via fog_model.glsl. Fog stays in
+# gbuffer_resolve.fsh and water_composite.fsh only.
+
+# PREMULTIPLIED (rgb*a, a) — see clouds_composite.fsh. `filter = "linear"` is mandatory on the
+# half-scale target (PlaguePackLoadsTest), free on the full-scale one.
+[targets.cloudsRaw]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY != 2"
+
+# Ultra tier's full-res arm — same shader/march/field, only output size differs. Second target
+# because `scale` is static and can't be switched by `enabled_if`.
+[targets.cloudsRawFull]
+format = "rgba16f"
+scale = 1.0
+filter = "linear"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY == 2"
+
+# Gate strings must be BYTE-IDENTICAL to the target they write — gate-consistency short-circuits on
+# exact string match, the simplest way to satisfy "pass enabled implies target allocated".
+[[pass]]
+name = "clouds_march"
+type = "fullscreen"
+shader = "shaders/post/clouds_march.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY != 2"
+inputs = ["builtin.depth", "builtin.noise"]
+outputs = ["cloudsRaw"]
+
+[[pass]]
+name = "clouds_composite"
+type = "fullscreen"
+shader = "shaders/post/clouds_composite.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY != 2"
+blend = "translucent"
+# sceneHdr absent from inputs: blend-only write (see water_composite for the same convention).
+# builtin.waterDepth appended so the underwater veil sizes its in-water leg correctly.
+inputs = ["cloudsRaw", "builtin.depth", "builtin.waterDepth"]
+outputs = ["sceneHdr"]
+
+[[pass]]
+name = "clouds_march_full"
+type = "fullscreen"
+shader = "shaders/post/clouds_march.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY == 2"
+inputs = ["builtin.depth", "builtin.noise"]
+outputs = ["cloudsRawFull"]
+
+[[pass]]
+name = "clouds_composite_full"
+type = "fullscreen"
+shader = "shaders/post/clouds_composite.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY == 2"
+blend = "translucent"
+# builtin.waterDepth: same underwater-veil input as the half-res composite above.
+inputs = ["cloudsRawFull", "builtin.depth", "builtin.waterDepth"]
+outputs = ["sceneHdr"]
+
+[[pass]]
+name = "scene_hdr_copy"
+type = "fullscreen"
+shader = "shaders/post/scene_copy.fsh"
+inputs = ["sceneHdr"]
+outputs = ["sceneHdrComposited"]
+
+# NAME IS LOAD-BEARING: the engine supplies Hi-Z level count (u_Param2) AND terrain render distance
+# (u_Param3) only for a pass named exactly `ssr_trace_water` (matched by equality, not prefix).
+[[pass]]
+name = "water_environment_seed"
+type = "fullscreen"
+shader = "shaders/post/water_environment.fsh"
+enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+# builtin.noise: the cloud imposter's erosion lattice. The probe now carries the cloud deck, so
+# a reflected sky is no longer clear under an overcast one. See the imposter note in the shader.
+inputs = ["builtin.noise"]
+outputs = ["waterEnvironmentSeed"]
+
+[[pass]]
+name = "water_environment_mips"
+type = "mipchain"
+shader = "shaders/post/water_environment_downsample.fsh"
+target = "waterEnvironment"
+enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+inputs = ["waterEnvironmentSeed"]
+outputs = []
+
+[[pass]]
+name = "ssr_trace_water"
+type = "fullscreen"
+shader = "shaders/post/ssr_trace_water.fsh"
+enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "sceneHdr", "builtin.gNormal", "builtin.depth"]
+outputs = ["ssrWaterRaw"]
+
+[[pass]]
+name = "ssr_blur_water"
+type = "fullscreen"
+shader = "shaders/post/ssr_blur_water.fsh"
+enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+# builtin.gMotion deliberately absent: it carries the SEABED's motion, not the surface's. Surface
+# motion is derived per pixel from waterDepth + previous-frame matrices instead (see
+# ssr_blur_water.fsh header).
+# waterNormal appended so history/clipping can't borrow a lake reflection for a differently-sloped
+# surface (e.g. a waterfall).
+inputs = ["ssrWaterRaw", "ssrWater.history", "builtin.waterDepth", "builtin.waterNormal"]
+outputs = ["ssrWater"]
+
+# rgba16f, not r8: water_composite only reads .r, but .gba carries lightDir for
+# EnvSpecularRatioReadback's debug instrument (see glint_occlusion.fsh's fragColor comment).
+[targets.glintOcclusion]
+format = "rgba16f"
+scale = 1.0
+enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+
+# Screen-space raymarch toward the light direction (same family as ssr_trace_water, coarse-march
+# half only — no bisection/backface test, a binary answer needs neither). Runs before
+# water_composite, which reads its output directly; no blur stage since a binary result has nothing
+# to soften.
+[[pass]]
+name = "glint_occlusion"
+type = "fullscreen"
+shader = "shaders/post/glint_occlusion.fsh"
+enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth"]
+outputs = ["glintOcclusion"]
+
+[[pass]]
+name = "water_volume_interval"
+type = "fullscreen"
+shader = "shaders/post/water_volume_interval.fsh"
+enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
+inputs = ["builtin.depth", "builtin.waterDepth", "builtin.waterNormal"]
+outputs = ["waterVolumeInterval"]
+
+[[pass]]
+name = "water_volume_march"
+type = "fullscreen"
+shader = "shaders/post/water_volume_march.fsh"
+enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
+inputs = ["waterVolumeInterval", "sunShadowMap", "builtin.noise"]
+outputs = ["waterVolumeScatterRaw"]
+
+[[pass]]
+name = "water_volume_scatter_history"
+type = "fullscreen"
+shader = "shaders/post/water_volume_scatter_history.fsh"
+enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
+inputs = ["waterVolumeScatterRaw", "waterVolumeScatter.history", "waterVolumeInterval", "waterVolumeInterval.history"]
+outputs = ["waterVolumeScatter"]
+
+# Name-keyed like ssr_trace_water, for the render-distance anchor its fog border needs.
+# Destination absent from inputs: blend-only write (see the convention note on clouds_composite).
+[[pass]]
+name = "water_composite"
+type = "fullscreen"
+shader = "shaders/post/water_composite.fsh"
+enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+blend = "translucent"
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "ssrWater", "builtin.depth", "builtin.noise", "causticsTexture", "glintOcclusion", "builtin.celestials", "foamTexture", "foamNormalTexture", "foamHeightTexture", "waterEnvironment"]
+outputs = ["sceneHdrComposited"]
+
+# Placed after the last scene writer, BEFORE bloom and underwater_refraction: accumulating a
+# bloom-included frame let a bright mover's halo hold the anti-ghost clamp open, dragging a permanent
+# comet tail behind every star (tools/verify_star_trails.py). Degrades to an identity copy under
+# anything but TAA, so the chain stays valid at every AA method.
+[targets.sceneHdrTemporal]
+format = "rgba16f"
+scale = 1.0
+history = true
+
+[[pass]]
+name = "temporal_accumulate"
+type = "temporal"
+inputs = ["sceneHdrComposited"]
+outputs = ["sceneHdrTemporal"]
+
+# Reads the accumulated scene; dry camera gets a passthrough copy. UNGATED like sceneHdrComposited:
+# bloom/tonemap read it unconditionally, and a gated target read by an ungated pass is refused.
+[targets.sceneHdrRefracted]
+format = "rgba16f"
+scale = 1.0
+
+[targets.sceneHdrRefractedTransport]
+format = "rgba16f"
+scale = 1.0
+enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
+
+[[pass]]
+name = "underwater_refraction"
+type = "fullscreen"
+shader = "shaders/post/underwater_refraction.fsh"
+enabled_if = "PLAGUE_UNDERWATER == 0 || WATER_SCATTERING_QUALITY == 0"
+inputs = ["sceneHdrTemporal", "builtin.depth", "builtin.noise", "builtin.waterDepth"]
+outputs = ["sceneHdrRefracted"]
+
+[[pass]]
+name = "underwater_refraction_shafts"
+type = "fullscreen"
+shader = "shaders/post/underwater_refraction.fsh"
+enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
+inputs = ["sceneHdrTemporal", "builtin.depth", "builtin.noise", "builtin.waterDepth"]
+outputs = ["sceneHdrRefractedTransport"]
+
+[[pass]]
+name = "water_volume_composite_submerged"
+type = "fullscreen"
+shader = "shaders/post/water_volume_composite_submerged.fsh"
+enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
+inputs = ["sceneHdrRefractedTransport", "waterVolumeScatter", "waterVolumeInterval", "builtin.depth", "builtin.waterDepth", "builtin.waterNormal"]
+outputs = ["sceneHdrRefracted"]
+
+# Refraction must run first: the blur consumes sceneHdrRefracted. Tonemap reconstructs the half-res
+# blur against full-resolution depth so silhouettes stay sealed.
+[targets.underwaterBlurH]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+
+[targets.underwaterBlurred]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+
+[[pass]]
+name = "underwater_blur_h"
+type = "fullscreen"
+shader = "shaders/post/underwater_blur_h.fsh"
+inputs = ["sceneHdrRefracted", "builtin.depth", "builtin.waterDepth"]
+outputs = ["underwaterBlurH"]
+
+[[pass]]
+name = "underwater_blur_v"
+type = "fullscreen"
+shader = "shaders/post/underwater_blur_v.fsh"
+inputs = ["underwaterBlurH", "builtin.depth", "builtin.waterDepth"]
+outputs = ["underwaterBlurred"]
+
+# Four ordered solver stages: prepare derives the moving-window shift, the middle stages advance
+# pressure/velocity and generate gradients, commit preserves the fractional shift remainder.
+[[pass]]
+name = "water_prepare"
+type = "compute"
+shader = "shaders/compute/water_prepare.comp"
+enabled_if = "PLAGUE_WATER_INTERACTION != 0"
+inputs = ["globals"]
+outputs = ["waterWaveState"]
+dispatch = [1, 1, 1]
+
+[[pass]]
+name = "water_step_a_quality"
+type = "compute"
+shader = "shaders/compute/water_step_a.comp"
+enabled_if = "PLAGUE_WATER_INTERACTION == 1"
+inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "waterWaveB.history", "waterActors"]
+outputs = ["waterWaveA"]
+dispatch = [16, 16, 1]
+
+[[pass]]
+name = "water_step_b_quality"
+type = "compute"
+shader = "shaders/compute/water_step_b.comp"
+enabled_if = "PLAGUE_WATER_INTERACTION == 1"
+inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "waterWaveA", "waterActors"]
+outputs = ["waterWaveB"]
+dispatch = [16, 16, 1]
+
+[[pass]]
+name = "water_step_a_performance"
+type = "compute"
+shader = "shaders/compute/water_step_a.comp"
+enabled_if = "PLAGUE_WATER_INTERACTION == 2"
+inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "waterWaveB.history", "waterActors"]
+outputs = ["waterWaveA"]
+dispatch = [8, 8, 1]
+
+[[pass]]
+name = "water_step_b_performance"
+type = "compute"
+shader = "shaders/compute/water_step_b.comp"
+enabled_if = "PLAGUE_WATER_INTERACTION == 2"
+inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "waterWaveA", "waterActors"]
+outputs = ["waterWaveB"]
+dispatch = [8, 8, 1]
+
+[[pass]]
+name = "water_commit"
+type = "compute"
+shader = "shaders/compute/water_commit.comp"
+enabled_if = "PLAGUE_WATER_INTERACTION != 0"
+inputs = []
+outputs = ["waterWaveState"]
+dispatch = [1, 1, 1]
+
+# scale = 0.0 floors to 1x1. UNGATED: always-allocated regardless of writer, keeping the input table
+# stable across option flips. history = true because the per-frame self-blend in
+# exposure_measure.fsh IS the adaptation smoothing, not a separate pass.
+[targets.exposure]
+format = "r32f"
+scale = 0.0
+history = true
+
+[[pass]]
+name = "exposure_measure"
+type = "fullscreen"
+shader = "shaders/post/exposure_measure.fsh"
+# Gated on the pass only (target above is ungated — the pass is what costs). Off, the target stays
+# cleared to 0.0; tonemap treats "off" via its own #ifdef, never by reading that cleared value.
+enabled_if = "AUTO_EXPOSURE"
+inputs = ["sceneHdrRefracted", "exposure.history"]
+outputs = ["exposure"]
+
+# Strictly sequential — each level blurs the one above, accumulating all prior levels to widen the
+# blur without striding a full-res image sparsely (see bloom_blur.fsh).
+[[pass]]
+name = "bloom_blur1"
+type = "fullscreen"
+shader = "shaders/post/bloom_blur.fsh"
+enabled_if = "BLOOM_ENABLED"
+inputs = ["sceneHdrRefracted"]
+outputs = ["bloom1"]
+
+[[pass]]
+name = "bloom_blur2"
+type = "fullscreen"
+shader = "shaders/post/bloom_blur.fsh"
+enabled_if = "BLOOM_ENABLED"
+inputs = ["bloom1"]
+outputs = ["bloom2"]
+
+[[pass]]
+name = "bloom_blur3"
+type = "fullscreen"
+shader = "shaders/post/bloom_blur.fsh"
+enabled_if = "BLOOM_ENABLED"
+inputs = ["bloom2"]
+outputs = ["bloom3"]
+
+[[pass]]
+name = "bloom_blur4"
+type = "fullscreen"
+shader = "shaders/post/bloom_blur.fsh"
+enabled_if = "BLOOM_ENABLED"
+inputs = ["bloom3"]
+outputs = ["bloom4"]
+
+[[pass]]
+name = "bloom_blur5"
+type = "fullscreen"
+shader = "shaders/post/bloom_blur.fsh"
+enabled_if = "BLOOM_ENABLED"
+inputs = ["bloom4"]
+outputs = ["bloom5"]
+
+[[pass]]
+name = "bloom_blur6"
+type = "fullscreen"
+shader = "shaders/post/bloom_blur.fsh"
+enabled_if = "BLOOM_ENABLED"
+inputs = ["bloom5"]
+outputs = ["bloom6"]
+
+[[pass]]
+name = "bloom_blur7"
+type = "fullscreen"
+shader = "shaders/post/bloom_blur.fsh"
+enabled_if = "BLOOM_ENABLED"
+inputs = ["bloom6"]
+outputs = ["bloom7"]
+
+# Kept as its own pass so tonemap takes one input instead of seven, and so the level weighting is
+# stated in one place rather than spread across the composite.
+[[pass]]
+name = "bloom_combine"
+type = "fullscreen"
+shader = "shaders/post/bloom_combine.fsh"
+enabled_if = "BLOOM_ENABLED"
+inputs = ["bloom1", "bloom2", "bloom3", "bloom4", "bloom5", "bloom6", "bloom7"]
+outputs = ["bloomFinal"]
+
+# Linear HDR -> displayable sRGB. Kept separate from the resolve so bloom, exposure metering and this
+# pass all read true scene values.
+[[pass]]
+name = "tonemap"
+type = "fullscreen"
+shader = "shaders/post/tonemap.fsh"
+# Reads the finished two-pass blur (underwaterBlurred) rather than computing a disc kernel inline.
+# Inputs are positional — append only, never insert.
+inputs = ["sceneHdrRefracted", "builtin.depth", "bloomFinal", "builtin.waterDepth", "exposure",
+          "underwaterBlurred", "builtin.noise"]
+outputs = ["builtin.output"]
+
+# NO SNOW ACCUMULATION / COMPUTE PASS, deliberately: a deferred blend can only paint colour, not
+# displace geometry (a geometry pass can't read a pack buffer), so a thin-snow material blend has a
+# hard ceiling a snow LAYER block doesn't. Replaced by a static per-fragment dusting in the geometry
+# stage instead (shaders/include/snow.glsl, `PLAGUE_SNOW_*` in terrain.fsh) — adds no pass/target/
+# input here.
+#
+# If a field is ever rebuilt: (1) address it TOROIDALLY, `slot = (wz & 127)*128 + (wx & 127)`, so a
+# world column owns one slot with no resample step; (2) the write pass must run LAST — Fornax adds no
+# compute→fullscreen dependency for a pack pass, so ordering it last is what makes the same-frame
+# read deliberately one-frame-old rather than a race.
+
+# Restores depth for vanilla translucents and first-person rendering, which draw after the graph.
+[[pass]]
+name = "depth_copyback"
+type = "copy"
+inputs = ["builtin.depth"]
+outputs = ["builtin.sceneDepth"]
