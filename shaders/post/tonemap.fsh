@@ -146,7 +146,12 @@ vec2 plagueWaterCameraUv(vec2 uv) {
     if (entryAmount > 1e-4) {
         vec2 entryNoiseUv = (0.5 + (uv - 0.5) * sqrt(entryAmount))
                 * vec2(aspectRatio, 1.0);
-        float waterSplash = texture(u_Input6, entryNoiseUv).r * entryAmount;
+        // Capped at the same 0.3 ceiling the exit arm above uses (its own trailing `* 0.3`).
+        // Uncapped, a bright noise texel at entryAmount's peak (the dive-in frame) drove this to
+        // ~1.0, which collapses remapped toward dead-center UV for that pixel: large swatches of
+        // the frame briefly sample one screen-center point instead of the real underwater scene,
+        // reading as the whole veil/tint dropping out for the splash's ~1 s decay.
+        float waterSplash = texture(u_Input6, entryNoiseUv).r * entryAmount * 0.3;
         distortMask = max(distortMask, waterSplash);
     }
 
