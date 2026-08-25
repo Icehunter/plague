@@ -74,6 +74,7 @@ sliders = [
     "u_WaterTintSaturation",
     "u_WaterReflectionStrength",
     "u_WaterSunGlitterStrength",
+    "u_WaterSplashStrength",
     "u_WaterFoamAmount",
     "u_FoamTextureScale",
     "u_FoamPomDepth",
@@ -445,6 +446,9 @@ elements = [
     "SSR_WATER_MODE",
     "u_WaterReflectionStrength",
     "u_WaterSunGlitterStrength",
+
+    "<group:Camera Splash>",
+    "u_WaterSplashStrength",
 
     "<group:Shoreline Foam|requires:WATER_FOAM>",
     "WATER_FOAM",
@@ -1454,6 +1458,13 @@ Strength of reflections on water only.
 
 Kept separate from the main Reflection Strength setting, so tuning lake reflections cannot \
 change how metals look."""
+
+u_WaterSplashStrength = """
+How strongly the view warps when the camera crosses the water surface, in or out.
+
+Zero turns the crossing effect off without touching the underwater look itself. This is separate \
+from Underwater Distortion, which is the shimmer you see while already submerged, not the moment \
+of crossing."""
 
 u_WaterSunGlitterStrength = """
 Strength of the sun's sparkle on the water surface.

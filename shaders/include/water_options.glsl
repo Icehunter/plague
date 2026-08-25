@@ -18,6 +18,10 @@
 #define u_WaterTintSaturation 0.45 //[0.0..1.0 step 0.05] runtime "Surface Water Saturation"
 #define u_WaterReflectionStrength 1.0 //[0.0..1.5 step 0.05] runtime "Water Reflection Strength"
 #define u_WaterSunGlitterStrength 1.0 //[0.0..2.0 step 0.05] runtime "Surface Sun Glitter"
+// The lens-splash warp when the camera crosses the surface (tonemap.fsh's plagueWaterCameraUv).
+// 0.75 picked live by the owner over the original hardcoded 0.3; 1.0 is a full-strength splash,
+// 0.0 turns the crossing distortion off entirely without touching the underwater look itself.
+#define u_WaterSplashStrength 0.75 //[0.0..1.0 step 0.05] runtime "Water Splash Strength"
 
 // --- Shoreline foam ----------------------------------------------------------------------------------
 #define u_WaterFoamAmount 1.0 //[0.0..2.0 step 0.05] runtime "Foam Amount"

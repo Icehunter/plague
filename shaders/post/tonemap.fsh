@@ -144,9 +144,10 @@ vec2 plagueWaterCameraUv(vec2 uv) {
         // near-constant opacity until the tracker's hard zero, then vanished in the one frame
         // direction resets. The trailing exitAmount factor fades that residual opacity to true
         // zero over the same second the droplets are shrinking, so the last ones dim out instead
-        // of popping off. 0.75 ceiling picked live by the owner, up from the original 0.3.
+        // of popping off. Ceiling is u_WaterSplashStrength (water_options.glsl), not hardcoded.
         waterDrops = sqrt(min(max(waterDrops
-                - (1.0 - sqrt(exitAmount)) * 0.7, 0.0) * (1.0 + exitAmount), 1.0)) * 0.75 * exitAmount;
+                - (1.0 - sqrt(exitAmount)) * 0.7, 0.0) * (1.0 + exitAmount), 1.0))
+                * u_WaterSplashStrength * exitAmount;
         distortMask = max(distortMask, waterDrops);
     }
 
@@ -157,9 +158,9 @@ vec2 plagueWaterCameraUv(vec2 uv) {
         // Uncapped, a bright noise texel at entryAmount's peak (the dive-in frame) drove this to
         // ~1.0, which collapses remapped toward dead-center UV for that pixel: large swatches of
         // the frame briefly sample one screen-center point instead of the real underwater scene,
-        // reading as the whole veil/tint dropping out for the splash's ~1 s decay. 0.75 picked
-        // live by the owner, up from the original 0.3.
-        float waterSplash = texture(u_Input6, entryNoiseUv).r * entryAmount * 0.75;
+        // reading as the whole veil/tint dropping out for the splash's ~1 s decay. Ceiling is
+        // u_WaterSplashStrength (water_options.glsl), not hardcoded.
+        float waterSplash = texture(u_Input6, entryNoiseUv).r * entryAmount * u_WaterSplashStrength;
         distortMask = max(distortMask, waterSplash);
     }
 
