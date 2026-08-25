@@ -138,20 +138,28 @@ vec2 plagueWaterCameraUv(vec2 uv) {
                 * vec2(aspectRatio, 1.0);
         vec2 exitNoiseUv = (uv - vec2(0.0, exitAmount)) * exitScale;
         float waterDrops = texture(u_Input6, exitNoiseUv).r;
+        // The rising threshold above shrinks how much of the noise field survives as exitAmount
+        // falls, but not how bright a surviving droplet is: a texel just over threshold reaches
+        // the same peak near exitAmount == 0 as at exitAmount == 1. Surviving droplets held
+        // near-constant opacity until the tracker's hard zero, then vanished in the one frame
+        // direction resets. The trailing exitAmount factor fades that residual opacity to true
+        // zero over the same second the droplets are shrinking, so the last ones dim out instead
+        // of popping off. 0.75 ceiling picked live by the owner, up from the original 0.3.
         waterDrops = sqrt(min(max(waterDrops
-                - (1.0 - sqrt(exitAmount)) * 0.7, 0.0) * (1.0 + exitAmount), 1.0)) * 0.3;
+                - (1.0 - sqrt(exitAmount)) * 0.7, 0.0) * (1.0 + exitAmount), 1.0)) * 0.75 * exitAmount;
         distortMask = max(distortMask, waterDrops);
     }
 
     if (entryAmount > 1e-4) {
         vec2 entryNoiseUv = (0.5 + (uv - 0.5) * sqrt(entryAmount))
                 * vec2(aspectRatio, 1.0);
-        // Capped at the same 0.3 ceiling the exit arm above uses (its own trailing `* 0.3`).
+        // Capped at the same ceiling the exit arm above uses (its own trailing multiplier).
         // Uncapped, a bright noise texel at entryAmount's peak (the dive-in frame) drove this to
         // ~1.0, which collapses remapped toward dead-center UV for that pixel: large swatches of
         // the frame briefly sample one screen-center point instead of the real underwater scene,
-        // reading as the whole veil/tint dropping out for the splash's ~1 s decay.
-        float waterSplash = texture(u_Input6, entryNoiseUv).r * entryAmount * 0.3;
+        // reading as the whole veil/tint dropping out for the splash's ~1 s decay. 0.75 picked
+        // live by the owner, up from the original 0.3.
+        float waterSplash = texture(u_Input6, entryNoiseUv).r * entryAmount * 0.75;
         distortMask = max(distortMask, waterSplash);
     }
 
