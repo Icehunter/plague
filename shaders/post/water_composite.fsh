@@ -392,6 +392,10 @@ void main() {
     } else {
         thickness = distance(worldPos, worldPosAt(texCoord, opaqueDepth));
     }
+    // Kept before the clarity divide below: shoreline foam (WATER_FOAM) reads this raw geometric
+    // distance, not the optical one, so raising Water Clarity can't make deep water numerically
+    // shrink into the foam band and grow foam somewhere the shore never reaches.
+    float rawThickness = thickness;
     thickness /= max(u_WaterClarity, 0.05);
 
     // Beer-Lambert. Transmittance is what SURVIVES the trip to the bed and back.
@@ -417,12 +421,15 @@ void main() {
     body *= bodyIllumination;
 
 #ifdef WATER_FOAM
-    // Shoreline foam hugs every coastline/sandbar for free, since it's driven by the same thickness
-    // computed above rather than needing a separate edge-detection pass.
-    float shoreline = 1.0 - smoothstep(0.0, 1.6, thickness);
+    // Shoreline foam hugs every coastline/sandbar for free, since it's driven by the same distance
+    // computed above rather than needing a separate edge-detection pass. Reads rawThickness, not
+    // the optical thickness above: shore proximity is geometry, not a function of how clear the
+    // water is, and dividing it by clarity first would let a high Water Clarity value paint foam
+    // onto water that is not actually shallow.
+    float shoreline = 1.0 - smoothstep(0.0, 1.6, rawThickness);
     // Leading-edge fade: `shoreline` alone peaks exactly at the waterline, reading as foam clipped
     // hard against dry land. Real foam sits set back from the edge.
-    float leading = smoothstep(0.0, 0.35, thickness);
+    float leading = smoothstep(0.0, 0.35, rawThickness);
     float edge = shoreline * leading;
 
     // No open-water whitecaps: driving a foam mask off crest height/slope produced flat white slabs
