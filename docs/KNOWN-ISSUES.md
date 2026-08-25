@@ -21,6 +21,18 @@ working notes; what is here is what a reader needs to know the limitation exists
 - **The climate signal snaps at biome borders**, so fog character can change abruptly across a line.
 - **Thunder is not its own fog driver.** Heavy weather reads as ordinary rain.
 
+## Particles
+
+- **Forward-translucent draws (particles, banner patterns) do not warp with the water-entry/exit
+  camera distortion.** They draw after `GraphRunner.finishDeferred()` (fornax's
+  `FeatureSolidFeaturesGraphMixin`), which is where tonemap's remap runs; nothing after that point
+  in the frame can be reached by it. Moving that boundary later breaks banner patterns and other
+  blended geometry, so this is a structural limit, not a quick fix.
+- **Campfire/torch smoke's fog does not match the deferred fog behind it.**
+  `shaders/blocks/particles_translucent.fsh` hand-rolls its own `plagueFogTerms` call since it draws
+  after the real fog pass finishes, and the approximation diverges from the real fog enough that
+  smoke reads as floating in front of it rather than sitting inside it.
+
 ## Materials
 
 - **`u_PomShadowStrength` has no visible effect.** The slider moves and nothing changes.
