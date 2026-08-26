@@ -36,6 +36,13 @@ def _const(name):
     return float(m.group(1))
 
 
+def _const_vec3(name):
+    m = re.search(rf"const vec3 {name}\s*=\s*vec3\(([^)]+)\)\s*;", _SRC)
+    if not m:
+        raise SystemExit(f"plague_fog: vec3 constant {name} not found in fog.glsl")
+    return np.array([float(x) for x in m.group(1).split(",")], dtype=np.float64)
+
+
 def _option(name):
     m = re.search(rf"#define {name}\s+(-?[\d.]+)\s*//", _SRC)
     if not m:
@@ -46,6 +53,8 @@ def _option(name):
 RD_REF = _const("PLAGUE_FOG_RD_REF")
 SEA_LEVEL = _const("PLAGUE_FOG_SEA_LEVEL")
 MIN_RENDER_DIST = _const("PLAGUE_FOG_MIN_RENDER_DISTANCE")
+
+RAYLEIGH_NORM = _const_vec3("PLAGUE_FOG_RAYLEIGH_NORM")
 
 K_C = [_const(f"PLAGUE_FOG_K_C{i}") for i in range(3)]
 LAMBDA_C = [_const(f"PLAGUE_FOG_LAMBDA_C{i}") for i in range(4)]
@@ -243,6 +252,37 @@ def air_opacity(dist, rain, render_distance, d=None):
     lam = lam_of(d.rain) * d.lambda_scale
     tau = (dd / lam) ** k * rd_scale(render_distance) * d.tau_scale
     return np.where(dd > 0.0, 1.0 - np.exp(-tau), 0.0)
+
+
+def air_opacity3(dist, rain, render_distance, d=None):
+    """plagueFogAirOpacity3: the per-channel Rayleigh twin of air_opacity. Same tau, scaled per
+    channel by RAYLEIGH_NORM (luminance-preserving) before the exponential, so a scalar-equivalent
+    grey opacity value corresponds to a spread of per-channel values around it, not a shift of it."""
+    if d is None:
+        d = drive(rain)
+    dd = np.maximum(np.asarray(dist, dtype=np.float64), 0.0)
+    k = k_of(d.rain) * d.k_scale
+    lam = lam_of(d.rain) * d.lambda_scale
+    tau = (dd / lam) ** k * rd_scale(render_distance) * d.tau_scale
+    tau3 = tau[..., None] * RAYLEIGH_NORM
+    return np.where((dd > 0.0)[..., None], 1.0 - np.exp(-tau3), 0.0)
+
+
+def atmospheric_fog3(dist, frag_alt, cam_alt, render_distance, rain, density, sky_access=1.0,
+                     reach=None, d=None):
+    """plagueAtmosphericFog3: raw extinction goes per-channel (air_opacity3); the gate, damp,
+    density and altitude factors stay scalar, matching the shader's own split. They gate the
+    extinction process, not its colour; the gate's handover distance matches the grey model."""
+    if d is None:
+        d = drive(rain)
+    raw = air_opacity3(dist, rain, render_distance, d)
+    r = SKY_LIGHT_REACH if reach is None else reach
+    path_air = air_opacity(np.asarray(dist, dtype=np.float64) - r, rain, render_distance, d)
+    access = sky_access * (1.0 - path_air) + 1.0 * path_air
+    damp = damp_of(d.rain)
+    damp = 1.0 - (1.0 - damp) * (1.0 - d.damp_boost)
+    scalar = damp * density * access * altitude_weight(cam_alt, frag_alt, rain, d)
+    return raw * np.asarray(scalar)[..., None]
 
 
 def height_weight(y, H=None):

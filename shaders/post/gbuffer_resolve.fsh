@@ -482,6 +482,19 @@ int debugView = int(u_Param3 + 0.5);
     float plagueSunVisibility = lighting.sunVisibility;
     float plagueSunFactor = lighting.sunFactor;
     float plagueNightFactor = lighting.nightFactor;
+
+    // Computed before the sky branch, which returns before PLAGUE_FOG's block runs, so the dome,
+    // the haze and the fog border all grade off one shared value. Every consumer of plagueGetSky
+    // in this file reads this, not a local copy.
+    vec3 atmColorMult = vec3(1.0);
+#ifdef ATM_COLOR_MULTS
+    atmColorMult = plagueAtmColorMult(lighting.noonFactor, lighting.sunVisibility2,
+            lighting.rainFactor,
+            vec3(u_AtmMorningR, u_AtmMorningG, u_AtmMorningB) * u_AtmMorningI,
+            vec3(u_AtmNoonR, u_AtmNoonG, u_AtmNoonB) * u_AtmNoonI,
+            vec3(u_AtmNightR, u_AtmNightG, u_AtmNightB) * u_AtmNightI,
+            vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
+#endif
     // --- Sky ---------------------------------------------------------------------------------------
     //
     // Reversed-Z: depth clears to 0.0 = far, so depth zero means nothing was drawn here. With
@@ -531,7 +544,10 @@ int debugView = int(u_Param3 + 0.5);
             float VdotU = viewRay.y;
             float VdotS = dot(viewRay, sunDirTrue);
 
-            skyOut = plagueGetSky(skyColours, VdotU, VdotS, skyDither, true, false);
+            // Graded so the dome agrees with the aerial haze and border fog it fades into; all
+            // three read the same atmColorMult. Additive stars/nebula/discs/aurora below are
+            // separate light sources, not haze, and stay ungraded.
+            skyOut = plagueGetSky(skyColours, VdotU, VdotS, skyDither, true, false) * atmColorMult;
 
             // Additive, not blended: stars are emitters seen through the atmosphere, so a bright
             // sky washes them out via the day/night term inside plagueGetStars.
@@ -1081,10 +1097,12 @@ int debugView = int(u_Param3 + 0.5);
     // scalar that used to compensate for "a surface sees the whole dome, not one sample" is still
     // here for magnitude, but the direction problem it was standing in for is solved rather than
     // scaled.
+    // Graded after the mix, not before: both terms sample the same sky palette, so multiplying once
+    // at the end keeps the zenith sample and the hemisphere estimate in the same ratio the mix set.
     vec3 zenithSky = mix(plagueGetSky(skyColours, 1.0, dot(vec3(0.0, 1.0, 0.0), sunDirTrue), 0.5,
                                       false, false),
                          plagueSkyHemisphere(skyColours, sunDirTrue.y),
-                         u_AmbientSkyBleed);
+                         u_AmbientSkyBleed) * atmColorMult;
     // Scaled to the ambient magnitude the table it replaces established, measured: at noon against a
     // typical plains sky the zenith value is (0.284, 0.493, 0.810), luminance 0.471, against that
     // table's 0.607. Ratio 1.29. Integrating over the hemisphere, since a surface sees the whole
@@ -1449,9 +1467,10 @@ int debugView = int(u_Param3 + 0.5);
     // lobe width below — no second smoothness curve may attenuate a ray that actually landed.
 
     // Same sky the pack paints, sampled once along the mirror direction, celestial disc suppressed.
+    // Graded so a reflection miss agrees with the dome it is reflecting.
     vec3 reflDir = reflect(-viewDir, normal);
     vec3 skyMiss = plagueGetSky(skyColours, reflDir.y, dot(reflDir, sunDirTrue), 0.5,
-                                false, true);
+                                false, true) * atmColorMult;
     // Same night correction the diffuse path takes (skyReflectionLift), applied before the warm
     // pull and the underwater override so every consumer of the sky guess agrees. 1.0 in daylight.
     skyMiss *= skyReflectionLift;
@@ -1817,15 +1836,8 @@ int debugView = int(u_Param3 + 0.5);
         // it converges to break banding identically rather than crossing patterns.
         float fogDither = fract(52.9829189
                 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
-        vec3 atmColorMult = vec3(1.0);
-#ifdef ATM_COLOR_MULTS
-        atmColorMult = plagueAtmColorMult(lighting.noonFactor, lighting.sunVisibility2,
-                lighting.rainFactor,
-                vec3(u_AtmMorningR, u_AtmMorningG, u_AtmMorningB) * u_AtmMorningI,
-                vec3(u_AtmNoonR, u_AtmNoonG, u_AtmNoonB) * u_AtmNoonI,
-                vec3(u_AtmNightR, u_AtmNightG, u_AtmNightB) * u_AtmNightI,
-                vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
-#endif
+        // atmColorMult is computed above the sky branch (see there) so the dome and the fog it
+        // fades into agree.
         PlagueFogTerms fogTerms = plagueFogTerms(worldPos, skyLight, u_CameraSkyLight.x,
                                                  renderDistance, u_CameraAbs.y, fogDither,
                                                  skyColours, lighting, sunDirTrue,

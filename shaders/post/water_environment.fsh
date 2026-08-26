@@ -60,8 +60,20 @@ void main() {
             max(u_SkyColor.rgb, vec3(0.0)), trueSunDirection,
             lighting.sunVisibility, rainFactor, u_CameraAbs.y);
     float VdotS = dot(direction, trueSunDirection);
+
+    // Graded so a water reflection agrees with the dome gbuffer_resolve.fsh paints; identity
+    // vec3(1.0) when the option is off.
+    vec3 atmColorMult = vec3(1.0);
+#ifdef ATM_COLOR_MULTS
+    atmColorMult = plagueAtmColorMult(lighting.noonFactor, lighting.sunVisibility2,
+            lighting.rainFactor,
+            vec3(u_AtmMorningR, u_AtmMorningG, u_AtmMorningB) * u_AtmMorningI,
+            vec3(u_AtmNoonR, u_AtmNoonG, u_AtmNoonB) * u_AtmNoonI,
+            vec3(u_AtmNightR, u_AtmNightG, u_AtmNightB) * u_AtmNightI,
+            vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
+#endif
     vec3 radiance = plagueGetSky(
-            skyColours, direction.y, VdotS, 0.5, false, true);
+            skyColours, direction.y, VdotS, 0.5, false, true) * atmColorMult;
 
 #if CLOUDS_VOLUMETRIC
     // A screen-space trace can never return the reflected sky (no depth to hit), so every
@@ -92,7 +104,7 @@ void main() {
 
             // Flat two-term radiance (mid-dome ambient plus a modest sunward lift): an imposter for
             // a prefiltered probe, not a lit cloud — the march owns that.
-            vec3 cloudCol = plagueSkyAnchorMiddle(skyColours, VdotS)
+            vec3 cloudCol = plagueSkyAnchorMiddle(skyColours, VdotS) * atmColorMult
                     * (1.15 + 0.35 * max(VdotS, 0.0) * lighting.sunVisibility);
 
             // Same air the direct-view clouds melt into, built by the same PLAGUE_FOG_DRIVE

@@ -110,9 +110,21 @@ void main() {
 
     // Same anchor expression every fog site uses, so the cloud veil and terrain veil close together.
     float renderDistance = u_Param2 > 1.0 ? u_Param2 : max(u_RenderFog.y, 32.0);
+
+    // Same value every other pass reaches for, so the deck's fade-to-sky agrees with the dome and
+    // the terrain fog it fades alongside.
+    vec3 atmColorMult = vec3(1.0);
+#ifdef ATM_COLOR_MULTS
+    atmColorMult = plagueAtmColorMult(lighting.noonFactor, lighting.sunVisibility2,
+            lighting.rainFactor,
+            vec3(u_AtmMorningR, u_AtmMorningG, u_AtmMorningB) * u_AtmMorningI,
+            vec3(u_AtmNoonR, u_AtmNoonG, u_AtmNoonB) * u_AtmNoonI,
+            vec3(u_AtmNightR, u_AtmNightG, u_AtmNightB) * u_AtmNightI,
+            vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
+#endif
     fragColor = plagueGetClouds(viewDir, u_CameraAbs, terrainDist, dither,
                                 deck, skyColours, lighting, sunDirTrue, syncedTime,
-                                renderDistance);
+                                renderDistance, atmColorMult);
 #else
     // Graph gates this pass off entirely when CLOUDS_VOLUMETRIC is 0; this arm only exists so
     // check_shaders.sh compiles both.

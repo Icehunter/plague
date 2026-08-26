@@ -384,7 +384,8 @@ vec3 plagueCloudAirTransmittance(float eyeY, float rayUp, float dist) {
  */
 vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, float dither,
                      PlagueCloudDeck deck, PlagueSkyColors skyColours, PlagueLighting lighting,
-                     vec3 sunDirTrue, float syncedTime, float renderDistance) {
+                     vec3 sunDirTrue, float syncedTime, float renderDistance,
+                     vec3 atmColorMult) {
     // --- Geometry -------------------------------------------------------------------------------
     float slabTop = deck.base + deck.depth;
 
@@ -594,7 +595,9 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // it reopens the same seam.
     float meanDist = weightSum > 0.0 ? distSum / weightSum : tNear;
     float VdotS = dot(viewDir, sunDirTrue);
-    vec3 skyAlong = plagueGetSky(skyColours, viewDir.y, VdotS, dither, true, false);
+    // Graded so the deck fades toward the same tinted sky fog.glsl's border term dissolves
+    // terrain into, holding the seam closed under a non-identity atmColorMult too.
+    vec3 skyAlong = plagueGetSky(skyColours, viewDir.y, VdotS, dither, true, false) * atmColorMult;
 
     PlagueFogDrive fogDrive = PLAGUE_FOG_DRIVE(lighting);
     float rainH = fogDrive.H * (1.0 + fogDrive.rainDepth * fogDrive.rain);
@@ -630,7 +633,8 @@ float plagueCloudDensity(vec3 worldPos, PlagueCloudDeck deck, float syncedTime) 
 
 vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, float dither,
                      PlagueCloudDeck deck, PlagueSkyColors skyColours, PlagueLighting lighting,
-                     vec3 sunDirTrue, float syncedTime, float renderDistance) {
+                     vec3 sunDirTrue, float syncedTime, float renderDistance,
+                     vec3 atmColorMult) {
     return vec4(0.0);
 }
 

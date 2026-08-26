@@ -51,7 +51,7 @@
 // the same mixes, verified bit-identical to this by tools/verify_fog.py.
 struct PlagueFogTerms {
     vec3 atmColor;      // aerial-perspective haze colour, linear HDR
-    float atm;          // its opacity, 0..1
+    vec3 atm;           // its opacity per channel, 0..1; blue extinguishes before red
     vec3 borderColor;   // the sky along this ray, what the world dissolves INTO at the boundary
     float border;       // its opacity, 0..1, outermost of the two AIR terms
     vec3 waterColor;    // eye-in-water fog colour (underwater.glsl); vec3(0) above water
@@ -67,7 +67,7 @@ PlagueFogTerms plagueFogTerms(vec3 worldPos, float skyLight, float cameraSkyLigh
                               float uwFogStartBlocks, float uwDistanceFogBlocks,
                               float uwDepthFogBlocks, vec3 uwTintBase, vec3 uwDarkness,
                               vec3 atmColorMult) {
-    PlagueFogTerms terms = PlagueFogTerms(vec3(0.0), 0.0, vec3(0.0), 0.0,
+    PlagueFogTerms terms = PlagueFogTerms(vec3(0.0), vec3(0.0), vec3(0.0), 0.0,
                                           vec3(0.0), 0.0, vec3(1.0));
 
     float rayLength = length(worldPos);
@@ -103,9 +103,11 @@ PlagueFogTerms plagueFogTerms(vec3 worldPos, float skyLight, float cameraSkyLigh
 
     // Applied to the term, not folded into density, so the gate's handover maths above stays
     // keyed to the real curve. Deliberately doesn't touch the cloud fade: clouds must keep
-    // melting into the sky where the terrain veil closes.
-    terms.atm = plagueAtmosphericFog(rayLength, fragAltitude, cameraAltitude, renderDistance,
-                                     drive, atmDensity, access) * u_FogEnableDistance;
+    // melting into the sky where the terrain veil closes. Per channel, so distant terrain loses
+    // red before blue instead of greying out uniformly; the cloud fade stays on the grey scalar
+    // twin.
+    terms.atm = plagueAtmosphericFog3(rayLength, fragAltitude, cameraAltitude, renderDistance,
+                                      drive, atmDensity, access) * u_FogEnableDistance;
     float heightWeight = plagueFogHeightWeight(fragAltitude, drive.H);
 
     // Scales the COLOUR, not the opacity: in the dark the in-scatter vanishes but extinction
@@ -131,14 +133,23 @@ PlagueFogTerms plagueFogTerms(vec3 worldPos, float skyLight, float cameraSkyLigh
                                       borderFraction));
     // Edge Fog multiplies the finished term: off shows the raw render edge, the point of the
     // switch.
-    terms.border = plagueBorderFog(borderDist, renderDistance, borderDensity) * borderGate
-                 * u_FogEnableEdge;
+    float rawBorder = plagueBorderFog(borderDist, renderDistance, borderDensity) * borderGate
+                    * u_FogEnableEdge;
+
+    // Border fills only the gap the aerial term's own luminance leaves, not a stack of the two.
+    // atmLuma reads terms.atm. The sequential mix's total opacity equals max(atmLuma, rawBorder):
+    // below the crossover this term is 0 and atm alone shows; at and past it, the (raw-L)/(1-L)
+    // rescale cancels atm's contribution and the total equals rawBorder. rawBorder reaches exactly
+    // 1.0 at the cutoff for every reach (fog_model.glsl), so terms.border does too: the render edge
+    // stays fully hidden.
+    float atmLuma = dot(terms.atm, vec3(0.2126, 0.7152, 0.0722));
+    terms.border = max(0.0, (rawBorder - atmLuma) / max(1.0 - atmLuma, 1e-4));
 
     // No air between the eye and a submerged fragment, so aerial/border fog are wrong there, not
     // just weak. The water term below owns the whole closure.
 #if PLAGUE_UNDERWATER
     if (u_WaterState.x > 0.5) {
-        terms.atm = 0.0;
+        terms.atm = vec3(0.0);
         terms.border = 0.0;
     }
 #endif

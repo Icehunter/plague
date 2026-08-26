@@ -299,6 +299,18 @@ void main() {
     PlagueSkyColors waterSky = plagueSkyColors(max(u_SkyColor.rgb, vec3(0.0)),
             trueSunDir, lighting.sunVisibility, rainFactor, u_CameraAbs.y);
 
+    // Computed above every plagueGetSky consumer in this pass so all of them agree with
+    // gbuffer_resolve.fsh's dome.
+    vec3 atmColorMult = vec3(1.0);
+#ifdef ATM_COLOR_MULTS
+    atmColorMult = plagueAtmColorMult(lighting.noonFactor, lighting.sunVisibility2,
+            lighting.rainFactor,
+            vec3(u_AtmMorningR, u_AtmMorningG, u_AtmMorningB) * u_AtmMorningI,
+            vec3(u_AtmNoonR, u_AtmNoonG, u_AtmNoonB) * u_AtmNoonI,
+            vec3(u_AtmNightR, u_AtmNightG, u_AtmNightB) * u_AtmNightI,
+            vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
+#endif
+
     // glitterLightDir is the ACTIVE light (whichever body is actually casting light), distinct from
     // trueSunDir above which stays the true sun for sky-dome sampling. Glint terms need the former.
     vec3 glitterLightDir = u_SunDirection.xyz;
@@ -409,7 +421,7 @@ void main() {
 
     // WATER_TINT is scattering colour, not emitted radiance — illuminate it with zenith sky,
     // normalized so noon brightness is unchanged but dawn/overcast/night genuinely dim it.
-    vec3 zenithSky = plagueGetSky(waterSky, 1.0, trueSunDir.y, 0.5, false, false);
+    vec3 zenithSky = plagueGetSky(waterSky, 1.0, trueSunDir.y, 0.5, false, false) * atmColorMult;
     const float WATER_NOON_ZENITH_LUMA = 0.471;
     float bodyIllumination = clamp(dot(zenithSky, vec3(0.2126, 0.7152, 0.0722))
             / WATER_NOON_ZENITH_LUMA, 0.035, 1.25);
@@ -558,7 +570,7 @@ void main() {
         if (dot(uwExitRay, uwExitRay) > 1e-6) {
             vec3 uwExitDir = normalize(uwExitRay);
             uwDirectionalSky = plagueGetSky(waterSky, uwExitDir.y,
-                    dot(uwExitDir, trueSunDir), 0.5, false, false);
+                    dot(uwExitDir, trueSunDir), 0.5, false, false) * atmColorMult;
 
             // Stars ride uwExitDir directly (band-limited, so no wave-normal jitter to alias) —
             // also a correctness check: a starfield in the wrong hemisphere is obvious at a glance.
@@ -682,17 +694,8 @@ void main() {
         float fogDither = fract(52.9829189
                 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
 
-        // ATM_COLOR_MULTS (M0): identity vec3(1.0) when the option is off.
-        vec3 atmColorMult = vec3(1.0);
-#ifdef ATM_COLOR_MULTS
-        atmColorMult = plagueAtmColorMult(lighting.noonFactor, lighting.sunVisibility2,
-                rainFactor,
-                vec3(u_AtmMorningR, u_AtmMorningG, u_AtmMorningB) * u_AtmMorningI,
-                vec3(u_AtmNoonR, u_AtmNoonG, u_AtmNoonB) * u_AtmNoonI,
-                vec3(u_AtmNightR, u_AtmNightG, u_AtmNightB) * u_AtmNightI,
-                vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
-#endif
-
+        // atmColorMult is computed at the top of the pass (see there) so this fog term agrees
+        // with the zenith and underwater-exit sky samples above.
         surface = plagueApplyFog(surface, worldPos, skyLight, u_CameraSkyLight.x,
                                  renderDistance, u_CameraAbs.y,
                                  fogDither, fogSky, lighting, fogSunDir,

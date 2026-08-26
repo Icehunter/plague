@@ -219,6 +219,34 @@ float plagueFogAirOpacity(float dist, PlagueFogDrive d, float renderDistance) {
     return 1.0 - exp(-tau);
 }
 
+// Rayleigh coefficient (atmosphere.glsl PLAGUE_RAYLEIGH_SCATTER, beta ~ lambda^-4), normalised so
+// its luminance-weighted mean is 1.0: moves the aerial term's chroma only, never its clear-air
+// brightness, so the k/lambda/damp fits above stay valid. Blue extinguishes ~3.3x faster than red,
+// matching the sky palette's own R<G<B scattering order.
+const vec3 PLAGUE_FOG_RAYLEIGH_NORM = vec3(0.6399, 0.9944, 2.1152);
+
+// Per-channel twin of plagueFogAirOpacity: same Weibull CDF, tau scaled per channel by the
+// normalised Rayleigh coefficient, so distant terrain loses red before blue instead of greying
+// out uniformly. clouds.glsl and water_environment.fsh keep the grey scalar twin: a cloud deck
+// does not fade to sky per channel.
+vec3 plagueFogAirOpacity3(float dist, PlagueFogDrive d, float renderDistance) {
+    if (dist <= 0.0) {
+        return vec3(0.0);
+    }
+
+    float r = d.rain;
+    float k = (PLAGUE_FOG_K_C0 + PLAGUE_FOG_K_C1 * r + PLAGUE_FOG_K_C2 * r * r) * d.kScale;
+    float lambda = (PLAGUE_FOG_LAMBDA_C0 + PLAGUE_FOG_LAMBDA_C1 * r
+                  + PLAGUE_FOG_LAMBDA_C2 * r * r + PLAGUE_FOG_LAMBDA_C3 * r * r * r)
+                 * d.lambdaScale;
+
+    float rdScale = min(PLAGUE_FOG_RD_REF / max(renderDistance, PLAGUE_FOG_MIN_RENDER_DISTANCE),
+                        1.0);
+
+    vec3 tau = pow(vec3(dist / lambda), vec3(k)) * rdScale * d.tauScale * PLAGUE_FOG_RAYLEIGH_NORM;
+    return vec3(1.0) - exp(-tau);
+}
+
 // Scale-height profile, saturated below sea level: full density at/below y=63 (humidity pools in
 // low ground), falling off above it.
 float plagueFogHeightWeight(float y, float H) {
@@ -297,6 +325,25 @@ float plagueAtmosphericFog(float rayLength, float fragAltitude, float cameraAlti
 
     return raw * damp * density * access
          * plagueFogAltitudeWeight(cameraAltitude, fragAltitude, d);
+}
+
+// Per-channel twin: the gate, damp, density and altitude factors are properties of the extinction
+// process, not of wavelength, so they stay scalar; only `raw` carries the Rayleigh split. The
+// gate's handover distance matches the grey model.
+vec3 plagueAtmosphericFog3(float rayLength, float fragAltitude, float cameraAltitude,
+                           float renderDistance, PlagueFogDrive d, float density,
+                           float skyAccess) {
+    vec3 raw = plagueFogAirOpacity3(rayLength, d, renderDistance);
+    float pathAir = plagueFogAirOpacity(rayLength - PLAGUE_FOG_SKY_LIGHT_REACH, d,
+                                        renderDistance);
+    float access = mix(skyAccess, 1.0, pathAir);
+
+    float damp = PLAGUE_FOG_DAMP_C0 + PLAGUE_FOG_DAMP_C1 * d.rain
+               + PLAGUE_FOG_DAMP_C2 * d.rain * d.rain;
+    damp = 1.0 - (1.0 - damp) * (1.0 - d.dampBoost);
+
+    return raw * (damp * density * access
+         * plagueFogAltitudeWeight(cameraAltitude, fragAltitude, d));
 }
 
 // Border dissolve: a Kumaraswamy CDF on distance/renderDistance, chosen because its terminal

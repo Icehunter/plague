@@ -1230,11 +1230,12 @@ Each time of day gets its own R/G/B/Intensity sliders below. Everything defaults
 changes nothing. You can push one time of day warmer or dimmer without touching the others."""
 
 ATM_COLOR_MULTS = """
-Fine-tune the colour of the sky and distance haze by hand, separately for morning, noon, night \
-and rain.
+Fine-tune the colour of the sky by hand, separately for morning, noon, night and rain.
 
-The same idea as Light Colour Multipliers, applied to the sky and the haze instead of the light. \
-Everything defaults to 1.00, which changes nothing."""
+Moves the sky dome, the aerial haze and edge fog terrain fades into, the cloud deck's fade-to-sky, \
+and sky reflections all together, so the horizon never disagrees with the haze in front of it. \
+The same idea as Light Colour Multipliers, applied to the sky instead of the sun. Everything \
+defaults to 1.00, which changes nothing."""
 
 BLOOM_ENABLED = """
 The glow that bleeds out of very bright things, the way it does in a camera or your own eyes.
@@ -1743,82 +1744,76 @@ How bright the light is while it is raining, without changing its colour.
 Rain already darkens the world; this decides by how much."""
 
 # --- Atmosphere colour multipliers (Fog screen, Sky Color Tuning) --------------------------------
-# The same four time-of-day slots, applied to the ambient and sky-derived light instead of the sun.
+# The same four time-of-day slots, applied to the SKY: the dome itself, the aerial haze and edge
+# fog terrain fades into, the cloud deck's own fade-to-sky, and sky reflections. NOT the ambient
+# light that fills shadow and indoor space; that is Ambient Noon/Night/Rain R/G/B on the Lighting
+# screen (CUSTOM_LIGHT_COLORS). Raising one of these sliders moves the whole sky and everything
+# that fades into or reflects it together, so the horizon never disagrees with the haze in front
+# of it.
 
 u_AtmMorningR = """
-Tints the ambient dawn light red. This is the light in shade, not the sunlight.
+Tints the sky and haze red at dawn.
 
-Sunlit faces are untouched. This is what colours the side of a building the sun cannot reach."""
+Moves the dome, the aerial haze terrain fades into, the render-distance edge, cloud fade and sky \
+reflections together."""
 
 u_AtmMorningG = """
-Tints the ambient dawn light green.
-
-Shows up in shadow and indoors, where there is no direct sun to overpower it."""
+Tints the sky and haze green at dawn."""
 
 u_AtmMorningB = """
-Tints the ambient dawn light blue.
+Tints the sky and haze blue at dawn.
 
-Shade at dawn is naturally blue because it is lit by sky rather than sun. Lower this to fight \
-that; raise it to lean into it."""
+Dawn sky leans blue on its own; lower this to fight that, raise it to lean into it."""
 
 u_AtmMorningI = """
-How bright the ambient dawn light is, without changing its colour.
-
-Lowering it deepens shadows at sunrise and sunset while leaving lit surfaces alone."""
+How bright the sky and haze are at dawn, without changing their colour."""
 
 u_AtmNoonR = """
-Tints the ambient midday light red.
+Tints the sky and haze red at midday.
 
-Midday ambient is what fills shadow and indoor space when the sun is high."""
+Moves the dome, the aerial haze terrain fades into, the render-distance edge, cloud fade and sky \
+reflections together."""
 
 u_AtmNoonG = """
-Tints the ambient midday light green.
+Tints the sky and haze green at midday.
 
-A useful counterweight if a scene reads too magenta in shade."""
+A useful counterweight if the sky reads too magenta."""
 
 u_AtmNoonB = """
-Tints the ambient midday light blue.
+Tints the sky and haze blue at midday.
 
-The pack's shade is sky-coloured, so this is the most direct control over how blue shadows go \
-at noon."""
+The most direct control over how blue the sky and distant haze go at noon."""
 
 u_AtmNoonI = """
-How bright the ambient midday light is, without changing its colour.
-
-Raise it for open, airy shadows; lower it for hard, contrasty ones."""
+How bright the sky and haze are at midday, without changing their colour."""
 
 u_AtmNightR = """
-Tints the ambient night light red.
-
-Ambient is most of what you see at night, so this reads more strongly than its daytime twin."""
+Tints the sky and haze red at night."""
 
 u_AtmNightG = """
-Tints the ambient night light green."""
+Tints the sky and haze green at night."""
 
 u_AtmNightB = """
-Tints the ambient night light blue.
+Tints the sky and haze blue at night.
 
-Raising it gives the classic silver-blue night; lowering it makes darkness read as plain black."""
+Raising it gives the classic silver-blue night sky; lowering it makes it read closer to black."""
 
 u_AtmNightI = """
-How bright the ambient night light is, without changing its colour.
-
-Opens down to 0.01 alongside its sunlight twin, for a night that is genuinely dark."""
+How bright the sky and haze are at night, without changing their colour."""
 
 u_AtmRainR = """
-Tints the ambient light red while it is raining."""
+Tints the sky and haze red while it is raining."""
 
 u_AtmRainG = """
-Tints the ambient light green while it is raining."""
+Tints the sky and haze green while it is raining."""
 
 u_AtmRainB = """
-Tints the ambient light blue while it is raining.
+Tints the sky and haze blue while it is raining.
 
-Rain light is nearly all ambient, so this is the main control over whether a storm reads cold \
-or warm."""
+The main control over whether an overcast sky reads cold or warm."""
 
 u_AtmRainI = """
-How bright the ambient light is while it is raining, without changing its colour."""
+How bright the sky and haze are while it is raining, without changing their colour."""
 
 # --- Water screen -------------------------------------------------------------------------------
 # Every distance and depth slider on this page is measured in CHUNKS (16 blocks), the way a player
