@@ -20,6 +20,7 @@ uniform sampler2D u_Input3; // builtin.waterDepth: translucent boundary depth, r
 uniform sampler2D u_Input4; // exposure: 1x1 smoothed scene luma accumulator (exposure_measure.fsh), 0.0 if unrun
 uniform sampler2D u_Input5; // underwaterBlurred: half-resolution scene Gaussian
 uniform sampler2D u_Input6; // builtin.noise, the camera water transition mask
+uniform sampler2D u_Input7; // waterVolumeShaftsResolved: full-resolution linear shaft radiance
 
 // Only u_Param3 is read here; the trailing sun/celestial fields other passes append are left
 // undeclared, since the engine binds the full u_PassParams buffer regardless of block coverage.
@@ -296,6 +297,13 @@ void main() {
         hdr = mix(hdr, bloom, u_BloomStrength);
     }
 #endif
+
+    // Shafts join after the underwater Gaussian and bloom pyramid, so neither spatial filter can
+    // spread them across a terrain edge. They remain before the final exposure multiplier below.
+    vec3 resolvedShafts = max(texture(u_Input7, frameUv).rgb, vec3(0.0));
+    if (!any(isnan(resolvedShafts)) && !any(isinf(resolvedShafts))) {
+        hdr += resolvedShafts;
+    }
 
 #ifdef AUTO_EXPOSURE
     // Grey-world auto-exposure (0.18 mid-grey target over exposure_measure.fsh's luma), MULTIPLIED

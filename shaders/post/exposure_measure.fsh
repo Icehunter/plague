@@ -1,9 +1,9 @@
 #version 330
 
 // Auto-exposure measurement: writes the 1x1 exposure accumulator. Grid-samples sceneHdrRefracted
-// (the same finished composite tonemap.fsh reads) for the log-average scene luminance (Reinhard
-// et al. 2002, "Photographic Tone Reproduction for Digital Images", eq. 1), then exponentially
-// blends against last frame's value for smooth eye adaptation.
+// for log-average scene luminance (Reinhard et al. 2002, "Photographic Tone Reproduction for
+// Digital Images", eq. 1), then exponentially blends against last frame's value for smooth eye
+// adaptation. Shaft radiance joins after this measurement and receives its resulting multiplier.
 //
 // Two adaptation rates, not one, matching real eyes: brightening is near-instant (cones), darkening
 // is slow (rods), so a single speed slider can't fit both directions.
@@ -12,8 +12,7 @@
 // sentinel 0.0 stays unambiguous — a linear-light scene at luma 1.0 (log2 == 0.0) is a common
 // operating point, and exp2(avgLogLuma) is always > 0.
 
-uniform sampler2D u_Input0; // sceneHdrRefracted: the same finished linear composite tonemap.fsh
-                            // itself tonemaps, so this measures exactly what will be displayed
+uniform sampler2D u_Input0; // sceneHdrRefracted: the base signal that establishes auto exposure
 uniform sampler2D u_Input1; // exposure.history (previous frame's smoothed avg LINEAR luma; 0.0 =
                             // no data yet / frame-1 sentinel, unambiguous since real luma is > 0)
 

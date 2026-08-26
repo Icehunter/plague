@@ -116,7 +116,7 @@ vec3 plagueWaterShaftIntervalDebug(
     if (encodedRevision != PLAGUE_WATER_MEDIUM_REVISION) {
         return vec3(1.0, 1.0, 0.0);
     }
-    if (reason <= 0.0 || reason >= 1.0) {
+    if (!plagueWaterVolumePackedNormalYValid(reason)) {
         return vec3(0.0, 0.25, 1.0);
     }
     float encodedEntry = encodedInterval.r > 0.0 ? 0.0

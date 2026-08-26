@@ -1,11 +1,11 @@
 #version 330
 
-// Adds direct celestial single-scatter to the accepted submerged scene after refraction and before
-// the existing underwater blur/bloom. Unsupported pixels preserve the refracted scene exactly.
+// Resolves direct celestial single-scatter into a separate full-resolution shaft field. The base
+// scene remains separate so the underwater Gaussian cannot carry shaft energy across silhouettes.
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:water_volume.glsl>
 
-uniform sampler2D u_Input0; // sceneHdrRefractedTransport
+uniform sampler2D u_Input0; // sceneHdrRefracted, dependency-only base-scene edge
 uniform sampler2D u_Input1; // waterVolumeScatter
 uniform sampler2D u_Input2; // waterVolumeInterval
 uniform sampler2D u_Input3; // builtin.depth
@@ -109,7 +109,10 @@ bool plagueWaterSubmergedFullInterval(
     }
 
     fullInterval.exitDistance = min(opticalEnd, min(surfaceExit, opaqueExit));
-    fullInterval.boundaryNormal = plagueWaterVolumeSafeNormal(waterNormalSample.xyz);
+    bool surfaceTerminator = visibleWaterSurface
+            && surfaceExit < min(opticalEnd, opaqueExit);
+    fullInterval.boundaryNormal = plagueWaterVolumeTerminatorNormal(
+            surfaceTerminator, waterNormalSample.xyz);
     fullInterval.valid = plagueWaterVolumeFinite(fullInterval.exitDistance)
             && fullInterval.exitDistance
                     > fullInterval.entryDistance + PLAGUE_WATER_INTERVAL_EPSILON;
@@ -174,11 +177,10 @@ bool plagueWaterSubmergedUpsample(
 }
 
 void main() {
-    vec4 refractedScene = texture(u_Input0, texCoord);
-    fragColor = refractedScene;
+    fragColor = vec4(0.0);
 
 #if PLAGUE_UNDERWATER && WATER_SCATTERING_QUALITY != 0
-    if (!plagueWaterVolumeFinite(refractedScene) || !plagueWaterVolumeFinite(texCoord)
+    if (!plagueWaterVolumeFinite(texCoord)
             || !plagueWaterVolumeFinite(u_WaterState.x) || u_WaterState.x <= 0.5) {
         return;
     }
@@ -189,14 +191,11 @@ void main() {
     }
 
     vec3 scatter;
-    if (!plagueWaterSubmergedUpsample(fullInterval, scatter)) {
+    if (!plagueWaterSubmergedUpsample(fullInterval, scatter)
+            || !plagueWaterVolumeFinite(scatter)) {
         return;
     }
 
-    vec3 additiveShafts = refractedScene.rgb + scatter;
-    if (!plagueWaterVolumeFinite(additiveShafts)) {
-        return;
-    }
-    fragColor = vec4(refractedScene.rgb + scatter, refractedScene.a);
+    fragColor = vec4(scatter, 0.0);
 #endif
 }

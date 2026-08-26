@@ -8,8 +8,9 @@
 // Coarse march only, no bisection refinement or backface test: an occlusion test only needs yes/no,
 // unlike ssr_trace_water.fsh's mirror hit which needs a precise position.
 //
-// One result serves both glints (air-side glitter and underwater glint): whether light reaches this
-// water point from the sun/moon at all is the same fact for both.
+// The target carries independent active-light, true-sun, and true-moon visibility. The active lane
+// remains for air-side glitter, while underwater glint must not inherit the active moon's occlusion
+// during the sun-disc horizon handoff.
 //
 // Screen-space only, deliberately: can't see geometry off-screen or behind the camera.
 
@@ -24,16 +25,14 @@ layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
     float u_Param2;
     float u_Param3;
-    // Byte-identical field order to water_composite.fsh's u_PassParams (std140 lockstep). Reads the
-    // engine's real already-blended light direction; a prior local "flip toward the moon" derivation
-    // assumed antipodal sun/moon and was confirmed wrong in-game (moon glitter never appeared).
+    // Byte-identical field order to water_composite.fsh's u_PassParams (std140 lockstep). The active
+    // direction drives the air-side lane; true celestial directions come from globals.glsl.
     vec4  u_SunDirection;
 };
 
 in vec2 texCoord;
-// r: 1.0 visible, 0.0 occluded/no-light — the only channel water_composite.fsh reads. gba: lightDir,
-// always written for readback/debugging even though the real consumer ignores it.
-// r=-1.0/gba=0 is a distinct sentinel for "not a water texel", set before lightDir exists.
+// r/g/b: active-light / true-sun / true-moon visibility. a is one for a valid water texel.
+// r=-1.0/gba=0 is a distinct sentinel for "not a water texel", set before any source exists.
 out vec4 fragColor;
 
 // Same geometric-growth shape as ssr_trace_water.fsh's march (step *= 1.4, start 0.5 blocks): reaches
@@ -67,6 +66,26 @@ float behindAt(vec3 screen) {
     return length(worldPosAt(screen.xy, screen.z)) - length(scenePos);
 }
 
+float plagueGlintVisibility(vec3 origin, vec3 waveNormal, vec3 lightDir) {
+    if (lightDir.y <= 0.0) {
+        return 0.0;
+    }
+
+    // Distance-scaled bias clears the water surface before the first sample, avoiding
+    // self-intersection up close and undershoot at range.
+    vec3 rayPos = origin + waveNormal * (0.025 * length(origin) + 0.05);
+    vec3 step = 0.5 * lightDir;
+    vec3 travelled = vec3(0.0);
+    for (int i = 0; i < GLINT_MARCH_SAMPLES; i++) {
+        step *= 1.4;
+        travelled += step;
+        if (behindAt(projectToScreen(rayPos + travelled)) > 0.0) {
+            return 0.0;
+        }
+    }
+    return 1.0;
+}
+
 void main() {
     vec4 waterSample = texture(u_Input0, texCoord);
     vec3 waveNormal;
@@ -86,30 +105,13 @@ void main() {
 
     vec3 origin = worldPosAt(texCoord, waterDepth);
 
-    vec3 lightDir = u_SunDirection.xyz; // unit length by construction, no zero-guard needed
+    vec3 activeLightDir = u_SunDirection.xyz; // unit length by construction, no zero-guard needed
+    vec3 trueSunDir = dot(u_SkyCelestial.xyz, u_SkyCelestial.xyz) > 1e-6
+            ? normalize(u_SkyCelestial.xyz) : vec3(0.0, 1.0, 0.0);
+    vec3 moonDir = -trueSunDir;
 
-    if (lightDir.y <= 0.0) {
-        // Both bodies below horizon: nothing to occlude against. water_composite.fsh's own gates
-        // already zero the glint here regardless, so this 0.0 is real, not a sentinel.
-        fragColor = vec4(0.0, lightDir);
-        return;
-    }
-
-    // Distance-scaled bias clears the water surface before the first sample, avoiding self-intersect
-    // up close and undershoot at range — same shape as ssr_trace_water.fsh's rayPos.
-    vec3 rayPos = origin + waveNormal * (0.025 * length(origin) + 0.05);
-
-    vec3 step = 0.5 * lightDir;
-    vec3 travelled = vec3(0.0);
-    bool occluded = false;
-    for (int i = 0; i < GLINT_MARCH_SAMPLES; i++) {
-        step *= 1.4;
-        travelled += step;
-        if (behindAt(projectToScreen(rayPos + travelled)) > 0.0) {
-            occluded = true;
-            break;
-        }
-    }
-
-    fragColor = vec4(occluded ? 0.0 : 1.0, lightDir);
+    float activeVisibility = plagueGlintVisibility(origin, waveNormal, activeLightDir);
+    float trueSunVisibility = plagueGlintVisibility(origin, waveNormal, trueSunDir);
+    float moonVisibility = plagueGlintVisibility(origin, waveNormal, moonDir);
+    fragColor = vec4(activeVisibility, trueSunVisibility, moonVisibility, 1.0);
 }

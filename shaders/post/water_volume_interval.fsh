@@ -95,7 +95,6 @@ void main() {
     bool waterSurface = waterDepth > 0.0 && abs(waterNormalSample.a) >= 0.5;
     // Reversed-Z: opaque wins a tie, matching the surface composite's occlusion rule.
     bool visibleWaterSurface = waterSurface && (!opaquePresent || opaqueDepth < waterDepth);
-    vec3 boundaryNormal = plagueWaterVolumeSafeNormal(waterNormalSample.xyz);
     vec3 sigmaT = plagueWaterSigmaT(u_WaterClarity);
     vec3 opticalDistance = plagueWaterOpticalDistance(sigmaT, PLAGUE_WATER_INTERVAL_EPSILON);
     float opticalEnd = max(max(opticalDistance.x, opticalDistance.y), opticalDistance.z);
@@ -126,7 +125,10 @@ void main() {
             return;
         }
         interval.exitDistance = min(opticalEnd, min(surfaceExit, opaqueExit));
-        interval.boundaryNormal = boundaryNormal;
+        bool surfaceTerminator = visibleWaterSurface
+                && surfaceExit < min(opticalEnd, opaqueExit);
+        interval.boundaryNormal = plagueWaterVolumeTerminatorNormal(
+                surfaceTerminator, waterNormalSample.xyz);
         interval.valid = interval.exitDistance > interval.entryDistance + PLAGUE_WATER_INTERVAL_EPSILON;
     } else if (visibleWaterSurface) {
         if (!plagueWaterIntervalDistanceAt(texCoord, waterDepth, interval.entryDistance)) {
@@ -141,7 +143,8 @@ void main() {
             return;
         }
         interval.exitDistance = min(interval.entryDistance + opticalEnd, opaqueExit);
-        interval.boundaryNormal = boundaryNormal;
+        interval.boundaryNormal = plagueWaterVolumeTerminatorNormal(
+                true, waterNormalSample.xyz);
         interval.valid = interval.exitDistance > interval.entryDistance + PLAGUE_WATER_INTERVAL_EPSILON;
     }
 #endif

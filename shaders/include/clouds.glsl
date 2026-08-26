@@ -98,6 +98,10 @@
 #define PLAGUE_CLOUD_SUN_TAPS   0
 #endif
 
+// Step count multiplier ceiling for a deck deeper than clear sky. Bounds a tall storm deck to
+// 3x the tier's own step count.
+const float PLAGUE_CLOUD_DEPTH_STEP_CAP = 3.0;
+
 // ------------------------------------------------------------------------------------------------
 // Constants
 // ------------------------------------------------------------------------------------------------
@@ -422,7 +426,11 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
 
     // --- Step sizing ----------------------------------------------------------------------------
     float span = tFar - tNear;
-    float stepLen = deck.depth / float(PLAGUE_CLOUD_SLAB_STEPS);
+    // Cumulus depth at the current Cloud Size, the baseline PLAGUE_CLOUD_SLAB_STEPS is tuned for.
+    float clearDepth = PLAGUE_CLOUD_CUMULUS_DEPTH * max(u_CloudScale, 0.05);
+    float slabSteps = float(PLAGUE_CLOUD_SLAB_STEPS)
+                    * clamp(deck.depth / max(clearDepth, 1e-3), 1.0, PLAGUE_CLOUD_DEPTH_STEP_CAP);
+    float stepLen = deck.depth / slabSteps;
     int steps = max(int(ceil(span / stepLen)), 1);
 
     // When the cap binds, the step grows rather than the ray truncating: truncating would draw a

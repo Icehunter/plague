@@ -13,6 +13,10 @@ const vec3 PLAGUE_WATER_SIGMA_S = vec3(0.015);
 const vec3 PLAGUE_WATER_SIGMA_A = vec3(0.2916, 0.0447, 0.01011);
 const float PLAGUE_WATER_INTERVAL_EPSILON = 1e-3;
 const float PLAGUE_WATER_MEDIUM_REVISION = 2.0;
+// Binary16 has a 2^-9 spacing around revision 2.  These exact powers of two reserve the alpha
+// normal lane [revision + 1/4, revision + 3/4], leaving a 128-ULP integer-boundary margin.
+const float PLAGUE_WATER_INTERVAL_ALPHA_NORMAL_OFFSET = 0.25;
+const float PLAGUE_WATER_INTERVAL_ALPHA_NORMAL_SCALE = 0.5;
 const float PLAGUE_WATER_RECONSTRUCTION_ENTRY_TOLERANCE = 1.00;
 const float PLAGUE_WATER_RECONSTRUCTION_EXIT_TOLERANCE = 2.00;
 const float PLAGUE_WATER_RECONSTRUCTION_NORMAL_DOT_MIN = 0.85;
@@ -60,6 +64,16 @@ vec3 plagueWaterVolumeSafeNormal(vec3 normal) {
             : vec3(0.0, 1.0, 0.0);
 }
 
+vec3 plagueWaterVolumeTerminatorNormal(
+        bool surfaceTerminator,
+        vec3 surfaceNormal) {
+    // Opaque/optical termination has no visible water interface. Preserve that fact with the
+    // canonical no-surface normal rather than borrowing a normal from water behind the terminator.
+    return surfaceTerminator
+            ? plagueWaterVolumeSafeNormal(surfaceNormal)
+            : vec3(0.0, 1.0, 0.0);
+}
+
 vec2 plagueWaterVolumeSignNotZero(vec2 value) {
     return vec2(value.x < 0.0 ? -1.0 : 1.0, value.y < 0.0 ? -1.0 : 1.0);
 }
@@ -83,14 +97,30 @@ vec3 plagueWaterVolumeOctDecode(vec2 encoded) {
     return plagueWaterVolumeSafeNormal(normal);
 }
 
+float plagueWaterVolumePackNormalY(float normalY) {
+    return PLAGUE_WATER_INTERVAL_ALPHA_NORMAL_OFFSET
+            + clamp(normalY, 0.0, 1.0) * PLAGUE_WATER_INTERVAL_ALPHA_NORMAL_SCALE;
+}
+
+float plagueWaterVolumeUnpackNormalY(float packedNormalY) {
+    return clamp((packedNormalY - PLAGUE_WATER_INTERVAL_ALPHA_NORMAL_OFFSET)
+                    / PLAGUE_WATER_INTERVAL_ALPHA_NORMAL_SCALE,
+            0.0, 1.0);
+}
+
+bool plagueWaterVolumePackedNormalYValid(float packedNormalY) {
+    return packedNormalY >= PLAGUE_WATER_INTERVAL_ALPHA_NORMAL_OFFSET
+            && packedNormalY <= PLAGUE_WATER_INTERVAL_ALPHA_NORMAL_OFFSET
+                    + PLAGUE_WATER_INTERVAL_ALPHA_NORMAL_SCALE;
+}
+
 vec4 plagueEncodeWaterVolumeInterval(PlagueWaterVolumeInterval interval) {
     if (!interval.valid) {
         return vec4(0.0);
     }
 
     vec2 octNormal = plagueWaterVolumeOctEncode(interval.boundaryNormal);
-    // Kept clear of both integer boundaries so half-float filtering can't push it across one.
-    float packedNormalY = 0.001 + clamp(octNormal.y, 0.0, 1.0) * 0.998;
+    float packedNormalY = plagueWaterVolumePackNormalY(octNormal.y);
     float signedEntry = (interval.submerged ? 1.0 : -1.0)
             * (max(interval.entryDistance, 0.0) + PLAGUE_WATER_INTERVAL_EPSILON);
     return vec4(signedEntry, interval.exitDistance, octNormal.x,
@@ -123,14 +153,14 @@ PlagueWaterVolumeInterval plagueDecodeWaterVolumeInterval(vec4 encoded) {
     interval.exitDistance = encoded.g;
     interval.revision = floor(encoded.a);
     float packedNormalY = fract(encoded.a);
-    if (packedNormalY <= 0.0 || packedNormalY >= 1.0
+    if (!plagueWaterVolumePackedNormalYValid(packedNormalY)
             || interval.revision != PLAGUE_WATER_MEDIUM_REVISION
             || (!interval.submerged && interval.entryDistance < 0.0)
             || interval.exitDistance <= interval.entryDistance) {
         return interval;
     }
 
-    float normalY = clamp((packedNormalY - 0.001) / 0.998, 0.0, 1.0);
+    float normalY = plagueWaterVolumeUnpackNormalY(packedNormalY);
     interval.boundaryNormal = plagueWaterVolumeOctDecode(vec2(encoded.b, normalY));
     interval.valid = true;
     return interval;

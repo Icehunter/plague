@@ -537,8 +537,9 @@ enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
 inputs = ["ssrWaterRaw", "ssrWater.history", "builtin.waterDepth", "builtin.waterNormal"]
 outputs = ["ssrWater"]
 
-# rgba16f, not r8: water_composite only reads .r, but .gba carries lightDir for
-# EnvSpecularRatioReadback's debug instrument (see glint_occlusion.fsh's fragColor comment).
+# rgba16f, not r8: r/g/b carry active-light / true-sun / true-moon visibility. The three lanes let
+# water_composite keep the air-side active-light glitter while its underwater celestial lobes test
+# their own source directions; target format, scale, pass order, and positional inputs stay fixed.
 [targets.glintOcclusion]
 format = "rgba16f"
 scale = 1.0
@@ -612,10 +613,11 @@ outputs = ["sceneHdrTemporal"]
 format = "rgba16f"
 scale = 1.0
 
-[targets.sceneHdrRefractedTransport]
+# Ungated because tonemap consumes it unconditionally. Allocation clears to transparent zero; the
+# active submerged writer also writes zero for every invalid or dry pixel.
+[targets.waterVolumeShaftsResolved]
 format = "rgba16f"
 scale = 1.0
-enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
 
 [[pass]]
 name = "underwater_refraction"
@@ -631,15 +633,15 @@ type = "fullscreen"
 shader = "shaders/post/underwater_refraction.fsh"
 enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
 inputs = ["sceneHdrTemporal", "builtin.depth", "builtin.noise", "builtin.waterDepth"]
-outputs = ["sceneHdrRefractedTransport"]
+outputs = ["sceneHdrRefracted"]
 
 [[pass]]
 name = "water_volume_composite_submerged"
 type = "fullscreen"
 shader = "shaders/post/water_volume_composite_submerged.fsh"
 enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
-inputs = ["sceneHdrRefractedTransport", "waterVolumeScatter", "waterVolumeInterval", "builtin.depth", "builtin.waterDepth", "builtin.waterNormal"]
-outputs = ["sceneHdrRefracted"]
+inputs = ["sceneHdrRefracted", "waterVolumeScatter", "waterVolumeInterval", "builtin.depth", "builtin.waterDepth", "builtin.waterNormal"]
+outputs = ["waterVolumeShaftsResolved"]
 
 # Refraction must run first: the blur consumes sceneHdrRefracted. Tonemap reconstructs the half-res
 # blur against full-resolution depth so silhouettes stay sealed.
@@ -818,7 +820,7 @@ shader = "shaders/post/tonemap.fsh"
 # Reads the finished two-pass blur (underwaterBlurred) rather than computing a disc kernel inline.
 # Inputs are positional — append only, never insert.
 inputs = ["sceneHdrRefracted", "builtin.depth", "bloomFinal", "builtin.waterDepth", "exposure",
-          "underwaterBlurred", "builtin.noise"]
+          "underwaterBlurred", "builtin.noise", "waterVolumeShaftsResolved"]
 outputs = ["builtin.output"]
 
 # NO SNOW ACCUMULATION / COMPUTE PASS, deliberately: a deferred blend can only paint colour, not

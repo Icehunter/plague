@@ -109,12 +109,39 @@ const float PLAGUE_CLOUD_CONDENSE = 0.45;
 //     both, floor 0.30           45%       28%         23%     <- shipped
 //
 // 0.30 is where the wispy share peaks without the solid share falling below the mid one.
+//
+// Both tables are relative-height measurements, sampled at a fixed fraction of a column's own
+// plateau. PLAGUE_CLOUD_PARCEL_MIN_TOP below does not change them.
 const float PLAGUE_CLOUD_VIGOUR_FLOOR = 0.30;
 
+// Fraction of the slab a marginal column reaches. A strong column reaches 1.0. A column's own
+// field strength stands in for how deep its updraught went, the quantity PLAGUE_CLOUD_VIGOUR_FLOOR
+// already reads for density.
+//
+// 900x900 sample, shipped cumulus row: 0.35 gives median cloud-top height 0.45 of slab depth,
+// coefficient of variation 0.30.
+const float PLAGUE_CLOUD_PARCEL_MIN_TOP = 0.35;
+
 /**
- * The coverage field, thresholded at the deck's solved cutoff and remapped back to 0..1. The remap
- * matters: without it density steps from nothing to `1 - cut` the instant the field crosses
- * threshold, drawing a hard edge exactly where the silhouette should be softest.
+ * The vertical shape, from a flat sheet at convective 0 to a deep tower at convective 1.
+ *
+ * @param h          fractional height through the column's own envelope, 0 at base, 1 at top
+ * @param convective the genus's own selector, see cloud_types.glsl for how each row got its value
+ *
+ * Two smoothsteps and two mixes: cheap because this runs once per marched sample and once per sun
+ * tap. Shape lives entirely in where the two smoothstep edges sit.
+ */
+float plagueCloudHeightProfile(float h, float convective) {
+    float c = clamp(convective, 0.0, 1.0);
+    float baseSpan = mix(PLAGUE_CLOUD_SHEET_BASE, PLAGUE_CLOUD_TOWER_BASE, c);
+    float topOnset = mix(PLAGUE_CLOUD_SHEET_TOP, PLAGUE_CLOUD_TOWER_TOP, c);
+    return smoothstep(0.0, baseSpan, h) * (1.0 - smoothstep(topOnset, 1.0, h));
+}
+
+/**
+ * The coverage field, thresholded at the deck's solved cutoff and remapped back to 0..1, then
+ * shaped vertically. Without the remap, density steps from nothing to `1 - cut` the instant the
+ * field crosses threshold, drawing a hard edge exactly where the silhouette should be softest.
  *
  * The region enters as the threshold, not a multiplier: multiplying would thin a cloud toward
  * transparency at a system's edge while leaving its footprint the same, breaking the coverage figure
@@ -126,45 +153,33 @@ const float PLAGUE_CLOUD_VIGOUR_FLOOR = 0.30;
  * one-field and two-field constructions agree to within 0.011 on every alpha threshold, confirming
  * the second scale changes how the sky is organised and not how much of it is covered.
  *
- * @param octaves the caller's choice: the full field for the marched density, a cheap two for the
- *                sun march. See PLAGUE_CLOUD_COVERAGE_OCTAVES_COARSE.
- * @param region  from plagueCloudRegion, hoisted by the caller because the sun march reuses one
- *                value across all five of its taps
+ * @param octaves    the caller's choice: the full field for the marched density, a cheap two for
+ *                   the sun march. See PLAGUE_CLOUD_COVERAGE_OCTAVES_COARSE.
+ * @param region     from plagueCloudRegion, hoisted by the caller because the sun march reuses one
+ *                   value across all five of its taps
+ * @param h          fractional height through the slab, 0 at the base, 1 at the ceiling
+ * @param convective the genus's own height-profile selector, see cloud_types.glsl
  */
 float plagueCloudCoverage(vec2 q, PlagueCloudDeck deck, int octaves, float region,
-                          float profile) {
+                          float h, float convective) {
     float cut = mix(PLAGUE_CLOUD_FIELD_CLOSED, deck.cut, region);
     float n = plagueCloudFieldFbm(q, octaves);
     float span = max(PLAGUE_CLOUD_FIELD_TOP - cut, PLAGUE_CLOUD_MIN_SPAN);
     // Linear position across the surviving range, then the condensation curve (PLAGUE_CLOUD_CONDENSE).
     float raw = clamp((n - cut) / span, 0.0, 1.0);
 
-    // The height profile multiplies the field position BEFORE the condensation curve, not the
-    // result after it: applied after, every height gets the same footprint and only opacity fades
-    // (a lozenge). Applied before, a low profile pushes marginal columns back under threshold, so
-    // the FOOTPRINT itself narrows, giving the cloud a real 3D shape.
-    float edge = smoothstep(0.0, PLAGUE_CLOUD_CONDENSE, raw);
+    // Column's own ceiling: PLAGUE_CLOUD_PARCEL_MIN_TOP for a marginal column, 1.0 for a strong core.
+    float top = mix(PLAGUE_CLOUD_PARCEL_MIN_TOP, 1.0, raw);
+    float profile = plagueCloudHeightProfile(min(h / max(top, 1e-3), 1.0), convective);
+
+    // Profile applies before the condensation edge. A marginal column's value drops under
+    // threshold as h nears its own top, closing the footprint to zero with no shared ceiling.
     raw *= profile;
+    float edge = smoothstep(0.0, PLAGUE_CLOUD_CONDENSE, raw);
     // edge is boundary SHARPNESS (a phase change, same for every cloud); vigour is DENSITY (varies
     // per cloud). Multiplying keeps crisp edges on a wispy cloud instead of fading both ends.
     float vigour = mix(PLAGUE_CLOUD_VIGOUR_FLOOR, 1.0, raw);
     return edge * vigour;
-}
-
-/**
- * The vertical shape, from a flat sheet at convective 0 to a deep tower at convective 1.
- *
- * @param h          fractional height through the slab: 0 at the base, 1 at the top
- * @param convective the genus's own selector, see cloud_types.glsl for how each row got its value
- *
- * Two smoothsteps and two mixes: cheap because this runs once per marched sample and once per sun
- * tap. Shape lives entirely in where the two smoothstep edges sit.
- */
-float plagueCloudHeightProfile(float h, float convective) {
-    float c = clamp(convective, 0.0, 1.0);
-    float baseSpan = mix(PLAGUE_CLOUD_SHEET_BASE, PLAGUE_CLOUD_TOWER_BASE, c);
-    float topOnset = mix(PLAGUE_CLOUD_SHEET_TOP, PLAGUE_CLOUD_TOWER_TOP, c);
-    return smoothstep(0.0, baseSpan, h) * (1.0 - smoothstep(topOnset, 1.0, h));
 }
 
 /**
@@ -236,7 +251,7 @@ float plagueCloudDensityAt(vec3 worldPos, PlagueCloudDeck deck, vec2 drift, out 
     }
 
     float shaped = plagueCloudCoverage(q, deck, PLAGUE_CLOUD_COVERAGE_OCTAVES, region,
-                                       plagueCloudHeightProfile(h, deck.convective));
+                                       h, deck.convective);
     if (shaped <= 0.0) {
         return 0.0;
     }
@@ -269,7 +284,7 @@ float plagueCloudDensityCoarseIn(vec3 worldPos, PlagueCloudDeck deck, vec2 drift
     }
     vec2 q = plagueCloudSampleCoord(worldPos.xz, deck, drift);
     return plagueCloudCoverage(q, deck, PLAGUE_CLOUD_COVERAGE_OCTAVES_COARSE, region,
-                               plagueCloudHeightProfile(h, deck.convective));
+                               h, deck.convective);
 }
 
 /**

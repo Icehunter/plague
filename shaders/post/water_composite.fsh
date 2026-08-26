@@ -36,9 +36,8 @@ uniform sampler2D u_Input2; // ssrWater: rgb = reflection, a = confidence
 uniform sampler2D u_Input3; // builtin.depth, OPAQUE scene depth, for the occlusion re-test
 uniform sampler2D u_Input4; // builtin.noise
 uniform sampler2D u_Input5; // causticsTexture
-// Real screen-space sun/moon occlusion raymarch (glint_occlusion.fsh), replacing an earlier
-// shadow-map-based kill-switch that was unreliable at low elevation (the shadow map's own "wedge"
-// content defect).
+// Screen-space active-light / true-sun / true-moon occlusion (glint_occlusion.fsh). The separate
+// underwater lanes prevent a sunset handoff from borrowing the active moon's visibility.
 uniform sampler2D u_Input6; // glintOcclusion
 // Vanilla's sun + 8-moon-phase sprite atlas, same resource gbuffer_resolve.fsh paints the primary
 // sky's discs from; see plagueUnderwaterCelestialDiscs.
@@ -162,8 +161,9 @@ vec2 plagueFoamParallax(sampler2D heightTex, vec2 uv, vec3 viewDirWorld, float h
 }
 
 // Underwater glint debug readback, ordinals 35-39 (continuing past GLINT_OCCLUSION_QUERY's own 34).
-// RGB only, A pinned to 1.0 since this pass blends. Confirm against the live GBufferDebugView enum
-// before reusing.
+// 35 is true-sun alignment / moon alignment / interface Fresnel; 37 is the matching two glint
+// lobes / configured strength. RGB only, A pinned to 1.0 since this pass blends. Confirm against
+// the live GBufferDebugView enum before reusing.
 #define DBG_UW_GLINT_1 35
 #define DBG_UW_GLINT_2 36
 #define DBG_UW_GLINT_3 37
@@ -318,10 +318,12 @@ void main() {
             ? clamp(glitterLightDir.y + 0.375, 0.0, 0.75) / 0.75
             : clamp(glitterLightDir.y + 0.03125, 0.0, 0.0625) / 0.0625;
 
-    // Real screen-space occlusion raymarch (glint_occlusion.fsh) against opaque depth, replacing a
-    // shadow-map kill-switch unreliable at low elevation. Serves both the surface and underwater
-    // glint terms.
-    float glintShadowVis = texture(u_Input6, texCoord).r;
+    // Real screen-space occlusion raymarch (glint_occlusion.fsh) against opaque depth. The air-side
+    // glitter keeps the active-light lane; underwater celestial lobes select their own direction.
+    vec3 glintVisibility = texture(u_Input6, texCoord).rgb;
+    float glintShadowVis = glintVisibility.r;
+    float uwSunShadowVis = glintVisibility.g;
+    float uwMoonShadowVis = glintVisibility.b;
 
     // The mean normal chooses a reflection direction; unresolved wave slopes choose the width of
     // the prefiltered environment lobe. This keeps sub-pixel detail as reflection width instead of
@@ -538,15 +540,12 @@ void main() {
     // never converted to emissive slope shading (a prior arm's slope-band emission saturated to a
     // constant wash across the whole surface).
     if (u_WaterState.x > 0.5) {
-        // WAVE NORMAL SIGN: not always +Y here, and that's correct. Sodium's fluid mesher emits two
-        // oppositely-wound quads at the water top surface (one facing up, one facing down when
-        // swimmable-from-below), and backface culling picks whichever one the current camera sees —
-        // so waveNormal genuinely points toward the camera on both sides. NdotV already equals the
-        // correct cos-incidence for whichever quad is live; refract() below must NOT re-negate it.
-        // Confirmed against sodium-mc26.2-0.9.1-fabric.jar's DefaultFluidRenderer.render() and
-        // NormI8.flipPacked.
+        // Decoded mesh winding is not a safe optical-interface convention; using different normals
+        // for Fresnel and refraction silently collapses the glint on an oppositely-wound surface.
         vec3 uwEyeRay = normalize(worldPos); // camera -> water surface, inside water
-        float uwCosIncident = NdotV; // == clamp(dot(-uwEyeRay, waveNormal), 0.0, 1.0); one source of truth
+        vec3 uwInterfaceNormal = dot(uwEyeRay, waveNormal) > 0.0
+                ? -waveNormal : waveNormal;
+        float uwCosIncident = clamp(dot(-uwEyeRay, uwInterfaceNormal), 0.0, 1.0);
         float uwFresnel = plagueDielectricFresnel(uwCosIncident, 1.333, 1.0);
 
         // Downwelling sky radiance along the refracted eye ray — real directional structure, not a
@@ -554,7 +553,7 @@ void main() {
         // arbitrary ray).
         float uwCameraDepth = max(u_WaterState.z - u_CameraAbs.y, 0.0);
         vec3 uwEyeFilter = exp(-uwCameraDepth * vec3(0.20, 0.08, 0.04));
-        vec3 uwExitRay = refract(uwEyeRay, waveNormal, 1.333);
+        vec3 uwExitRay = refract(uwEyeRay, uwInterfaceNormal, 1.333);
         vec3 uwDirectionalSky = plagueWaterFogColor(lighting);
         if (dot(uwExitRay, uwExitRay) > 1e-6) {
             vec3 uwExitDir = normalize(uwExitRay);
@@ -596,20 +595,30 @@ void main() {
                              clamp(reflSample.a, 0.0, 1.0) * 0.88)
                        * u_WaterReflectionStrength;
 
-        // Two bounded lobes approximate a finite sun disc plus a tighter core (a single narrow pow()
-        // vanished at noon, subpixel against the sampling). Moving noise modulates coverage only
-        // after physical alignment — no wave slope becomes emission.
-        vec3 uwSunCandidate = vec3(glitterLightDir.x, max(glitterLightDir.y, 0.0),
-                                   glitterLightDir.z);
-        vec3 uwSunAbove = dot(uwSunCandidate, uwSunCandidate) > 1e-6
-                ? normalize(uwSunCandidate) : vec3(0.0, 1.0, 0.0);
-        float uwGlint = 0.0;
+        // The source directions remain tied to the true celestial pair. u_SunDirection becomes
+        // the moon at sunset, so using it here would snap a still-visible sun glint across the
+        // sky. The fade spans the existing sun-disc angular support: no new artistic horizon band.
+        float uwSunHorizonSupport = sin(PLAGUE_SUN_DISC_RADIUS);
+        float uwSunHorizonFade = smoothstep(-uwSunHorizonSupport, uwSunHorizonSupport, trueSunDir.y);
+        float uwMoonHorizonFade = 1.0 - uwSunHorizonFade;
+        vec3 uwMoonDir = -trueSunDir;
+
+        // Two bounded lobes approximate each finite celestial disc plus a tighter core (a single
+        // narrow pow() vanished at noon, subpixel against the sampling). Moving noise modulates
+        // coverage only after physical alignment — no wave slope becomes emission.
         float uwSunAlignment = 0.0;
+        float uwMoonAlignment = 0.0;
         float uwSolarLobe = 0.0;
-        if (dot(uwExitRay, uwExitRay) > 1e-6 && glitterLightDir.y > 0.0) {
-            uwSunAlignment = clamp(dot(normalize(uwExitRay), uwSunAbove), 0.0, 1.0);
+        float uwMoonLobe = 0.0;
+        float uwSunGlint = 0.0;
+        float uwMoonGlint = 0.0;
+        if (dot(uwExitRay, uwExitRay) > 1e-6) {
+            uwSunAlignment = clamp(dot(normalize(uwExitRay), trueSunDir), 0.0, 1.0);
+            uwMoonAlignment = clamp(dot(normalize(uwExitRay), uwMoonDir), 0.0, 1.0);
             uwSolarLobe = 0.72 * pow(uwSunAlignment, 72.0)
                         + 0.28 * pow(uwSunAlignment, 384.0);
+            uwMoonLobe = 0.72 * pow(uwMoonAlignment, 72.0)
+                       + 0.28 * pow(uwMoonAlignment, 384.0);
             vec2 uwGlintUv = (worldPos.xz + u_CameraAbs.xz) * 0.19;
             float uwGlintTime = u_SkyState.w / 20.0;
             float uwMicroA = texture(u_Input4,
@@ -617,20 +626,22 @@ void main() {
             float uwMicroB = texture(u_Input4,
                     uwGlintUv * 1.83 + vec2(-0.013, 0.019) * uwGlintTime).r;
             float uwMicroCoverage = smoothstep(0.48, 0.88, mix(uwMicroA, uwMicroB, 0.43));
-            uwGlint = uwSolarLobe * mix(0.32, 1.10, uwMicroCoverage) * (1.0 - uwFresnel)
-                    * glintShadowVis;
+            float uwMicroGlint = mix(0.32, 1.10, uwMicroCoverage) * (1.0 - uwFresnel);
+            uwSunGlint = uwSolarLobe * uwSunHorizonFade * uwMicroGlint * uwSunShadowVis;
+            uwMoonGlint = uwMoonLobe * uwMoonHorizonFade * uwMicroGlint * uwMoonShadowVis;
         }
 
-        vec3 uwSunFiltered = glitterRadiance * uwEyeFilter;
-        vec3 uwGlintContribution = uwSunFiltered * uwGlint * 2.0 * u_UnderwaterSunGlitterStrength
-                * skyVis;
+        vec3 uwSunFiltered = plagueSunColor(glitterAirEyePos, trueSunDir) * uwEyeFilter;
+        vec3 uwMoonFiltered = plagueMoonColor(glitterAirEyePos, uwMoonDir) * uwEyeFilter;
+        vec3 uwGlintContribution = (uwSunFiltered * uwSunGlint + uwMoonFiltered * uwMoonGlint)
+                * 2.0 * u_UnderwaterSunGlitterStrength * skyVis;
 
         surface = mix(uwInside, uwOutside, uwFresnel) + uwGlintContribution;
         // Overrides the air-side alpha computed above: it described the wrong side of the interface.
         opacity = mix(0.74, 0.98, uwFresnel);
 
         if (debugView == DBG_UW_GLINT_1) {
-            fragColor = vec4(uwSunAlignment, uwSolarLobe, uwFresnel, 1.0);
+            fragColor = vec4(uwSunAlignment, uwMoonAlignment, uwFresnel, 1.0);
             return;
         }
         if (debugView == DBG_UW_GLINT_2) {
@@ -638,7 +649,7 @@ void main() {
             return;
         }
         if (debugView == DBG_UW_GLINT_3) {
-            fragColor = vec4(skyVis, uwGlint, u_UnderwaterSunGlitterStrength, 1.0);
+            fragColor = vec4(uwSunGlint, uwMoonGlint, u_UnderwaterSunGlitterStrength, 1.0);
             return;
         }
         if (debugView == DBG_UW_GLINT_4) {
