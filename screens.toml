@@ -117,6 +117,7 @@ sliders = [
     "u_CloudAmount",
     "u_CloudScale",
     "u_CloudSpeed",
+    "u_CloudWeatherResponse",
     "u_NebulaIntensity",
     "u_NebulaZoom",
     "u_NebulaAmount",
@@ -288,6 +289,7 @@ elements = [
     "u_CloudAmount|requires:CLOUDS_VOLUMETRIC",
     "u_CloudScale|requires:CLOUDS_VOLUMETRIC",
     "u_CloudSpeed|requires:CLOUDS_VOLUMETRIC",
+    "u_CloudWeatherResponse|requires:CLOUDS_VOLUMETRIC",
     "CLOUD_SHADOWS|requires:CLOUDS_VOLUMETRIC",
 ]
 
@@ -2181,7 +2183,8 @@ through them."""
 u_CloudAmount = """
 How much of the sky is covered.
 
-0 is a clear day whatever the weather. Weather still moves this on top of whatever you set."""
+0 is a clear day whatever the weather. Rain still raises this a little on top of whatever you \
+set, see Weather Response."""
 
 u_CloudScale = """
 How large individual clouds are.
@@ -2192,6 +2195,12 @@ u_CloudSpeed = """
 How fast clouds move across the sky.
 
 0 freezes them in place."""
+
+u_CloudWeatherResponse = """
+How much rain changes the clouds.
+
+0 holds the sky at a fair-weather cumulus deck regardless of weather. At 1, rain builds the deck \
+taller, darker and slightly more covered, the way a real sky thickens before a storm."""
 
 SHADOWS = """
 Whether the sun and moon cast real shadows.

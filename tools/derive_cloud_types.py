@@ -231,6 +231,20 @@ def main():
               (name, pad, oktas / 8.0, oktas))
         print()
 
+    # Cumulus congestus: a SPECIES of the cumulus genus (WMO ICA), not an eighth row. Not composited
+    # independently; plagueCloudLowDeck interpolates depth and tau toward this point as rain
+    # builds. Cell and shear stay cumulus's own (see cloud_density.glsl's sample-coordinate
+    # constraint), so this point carries no cell/shear of its own.
+    congestus_thick_m = 1000.0             # WMO ICA congestus typical thickness
+    congestus_wp = 120.0                   # standard observational water path
+    congestus_tau = optical_depth(congestus_wp, GENERA["CUMULUS"][3], ice=False)
+    print("--- cumulus congestus (a species, not a genus row; rain interpolates toward this) ---")
+    print()
+    print("const float PLAGUE_CLOUD_CONGESTUS_DEPTH = %9.2f;   // %.0f m" %
+          (blocks(congestus_thick_m), congestus_thick_m))
+    print("const float PLAGUE_CLOUD_CONGESTUS_TAU   = %9.4f;" % congestus_tau)
+    print()
+
     failures = [n for n, v in ((("cirrus tau"), ok), ("cb tau", ok2),
                                ("cell width", cell_ok),
                                *((label, held) for label, held in ordering))

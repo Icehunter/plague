@@ -5,8 +5,9 @@
 // International Cloud Atlas and standard water-path/effective-radius tables via
 // tau = 3 WP / (2 rho r_eff). Do not hand-edit the pasted block below; re-run the script instead.
 //
-// All seven rows exist now so the mid and high decks are table lookups when they land; only
-// cumulus is resolved today. `convective` (below the table) is authored, not derived.
+// All seven rows exist now so the mid and high decks are table lookups when they land; only the
+// low deck is resolved today, moving between cumulus and cumulus congestus with rain. `convective`
+// (below the table) is authored, not derived.
 
 // --- Options ----------------------------------------------------------------------------------
 //
@@ -43,6 +44,10 @@
 //
 // Floor of 0.20 is set by clouds.glsl's traversal step cap, not by cloud/erosion size ratio.
 #define u_CloudScale 0.30 //[0.20..2.00 step 0.05] runtime "Cloud Size"
+
+// Strength of the rain -> congestus interpolation in plagueCloudLowDeck. 0 holds the deck at
+// cumulus regardless of weather, for bisecting the weather response against a static sky.
+#define u_CloudWeatherResponse 1.0 //[0.00..1.00 step 0.05] runtime "Weather Response"
 
 // --- One resolved deck --------------------------------------------------------------------------
 
@@ -130,6 +135,12 @@ const float PLAGUE_CLOUD_CUMULONIMBUS_CELL  =   1536.00;   // 8000 m
 const float PLAGUE_CLOUD_CUMULONIMBUS_TAU   =   90.0000;
 const float PLAGUE_CLOUD_CUMULONIMBUS_SHEAR =    4.0000;
 const float PLAGUE_CLOUD_CUMULONIMBUS_COVER =    0.6250;   // 5 oktas
+
+// Cumulus congestus: a species of the cumulus genus, not a genus row of its own. Not composited
+// independently; plagueCloudLowDeck interpolates depth and tau toward this point as rain builds.
+// Cell and shear stay cumulus's own, so this point carries neither.
+const float PLAGUE_CLOUD_CONGESTUS_DEPTH =    192.00;   // 1000 m
+const float PLAGUE_CLOUD_CONGESTUS_TAU   =   18.0000;
 
 // --- end of the derived block -------------------------------------------------------------------
 
@@ -277,40 +288,50 @@ const int PLAGUE_PRECIP_NONE = 0;
 const int PLAGUE_PRECIP_RAIN = 1;
 const int PLAGUE_PRECIP_SNOW = 2;
 
+// Cover ceiling at full storm response: 5 oktas, broken-to-overcast, short of stratus's solid 8.
+// Authored: WMO carries no separate coverage figure for congestus. Coverage near 1.0 merges every
+// cloud into its neighbours and erases silhouettes, so the ceiling stays well clear of it.
+const float PLAGUE_CLOUD_STORM_COVER = 0.6250;
+
 /**
- * The low deck, resolved for this instant. Currently returns cumulus unconditionally; a later pass
- * replaces this body with the weather driver. The full driver signature is taken now, with the
- * unused half accepted and ignored, so landing the driver is an edit to this function only, not to
- * every call site (including the cloud-shadow site in the resolve, the one nobody remembers).
+ * The low deck, resolved for this instant. Interpolates cumulus toward cumulus congestus on
+ * rainFactor: depth, tau and cover grow; cell, shear and convective never move (see
+ * plagueCloudSampleCoord's world-origin constraint in cloud_density.glsl). thunderFactor,
+ * precipitation, sunElevation and worldTime are accepted and ignored; a later pass extends the
+ * interpolation toward cumulonimbus and snow decks.
  *
- * @param rainFactor     u_SkyState.x, 0..1. Will drive cover up and the genus toward stratus.
- * @param thunderFactor  0..1. The only path to cumulonimbus.
- * @param wetness        smoothed surface-wetness state, 0..1. Will lag rainFactor.
- * @param precipitation  PLAGUE_PRECIP_*. Snow forms under a shallower, flatter deck than rain.
- * @param sunElevation   sin(sun elevation), u_SunDirection.w. Will drive diurnal convection.
- * @param worldTime      world clock, seconds. Will drive the slow weather walk.
+ * @param rainFactor     u_SkyState.x, 0..1. Drives cover, depth and tau toward congestus.
+ * @param thunderFactor  0..1. Not yet wired; the path to cumulonimbus.
+ * @param wetness        smoothed surface-wetness state, 0..1. Not used: rainFactor is instantaneous,
+ *                       wetness lags it by minutes in both directions.
+ * @param precipitation  PLAGUE_PRECIP_*. Not yet wired; snow forms under a shallower, flatter deck.
+ * @param sunElevation   sin(sun elevation), u_SunDirection.w. Not yet wired.
+ * @param worldTime      world clock, seconds. Not yet wired.
  */
 PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float wetness,
                                    int precipitation, float sunElevation, float worldTime) {
     PlagueCloudDeck deck;
 
+    float storm = clamp(rainFactor, 0.0, 1.0) * clamp(u_CloudWeatherResponse, 0.0, 1.0);
+
     // See u_CloudScale: both dimensions scale together; tau does not.
     float scale     = max(u_CloudScale, 0.05);
-    deck.depth      = PLAGUE_CLOUD_CUMULUS_DEPTH * scale;
+    deck.depth      = mix(PLAGUE_CLOUD_CUMULUS_DEPTH, PLAGUE_CLOUD_CONGESTUS_DEPTH, storm) * scale;
     deck.cell       = PLAGUE_CLOUD_CUMULUS_CELL * scale;
     deck.shear      = PLAGUE_CLOUD_CUMULUS_SHEAR;
-    deck.tau        = PLAGUE_CLOUD_CUMULUS_TAU;
+    deck.tau        = mix(PLAGUE_CLOUD_CUMULUS_TAU, PLAGUE_CLOUD_CONGESTUS_TAU, storm);
     deck.convective = PLAGUE_CLOUD_CUMULUS_CONVECTIVE;
 
     // Shift, not assignment: see plagueCloudLowDeckShift.
     deck.base = plagueCloudEngineBase() + plagueCloudLowDeckShift();
 
-    deck.cover = clamp(PLAGUE_CLOUD_CUMULUS_COVER * max(u_CloudAmount, 0.0), 0.0, 1.0);
+    float rowCover = mix(PLAGUE_CLOUD_CUMULUS_COVER, PLAGUE_CLOUD_STORM_COVER, storm);
+    deck.cover = clamp(rowCover * max(u_CloudAmount, 0.0), 0.0, 1.0);
 
     // rowLocal reads off the genus row, not `cover`, so cloud size doesn't change as the slider
     // moves. max() is the saturating arm: once the region is fully covered, further coverage has to
     // raise localCover instead. See PLAGUE_CLOUD_REGION_DENSITY.
-    float rowLocal   = min(PLAGUE_CLOUD_CUMULUS_COVER * PLAGUE_CLOUD_REGION_DENSITY, 1.0);
+    float rowLocal   = min(rowCover * PLAGUE_CLOUD_REGION_DENSITY, 1.0);
     deck.localCover  = max(rowLocal, deck.cover);
     // 1e-3 floor: avoids a divide-by-zero at zero coverage; unreachable otherwise since localCover
     // is always >= the row's cover.
