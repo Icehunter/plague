@@ -42,6 +42,7 @@ sliders = [
     "u_Exposure",
     "u_AutoExposureMin",
     "u_AutoExposureMax",
+    "u_ExposureStormDarkening",
     "u_ExposureAdaptSpeedDarken",
     "u_ExposureAdaptSpeedBrighten",
     "u_BloomStrength",
@@ -577,6 +578,7 @@ elements = [
     "AUTO_EXPOSURE",
     "u_AutoExposureMin|requires:AUTO_EXPOSURE",
     "u_AutoExposureMax|requires:AUTO_EXPOSURE",
+    "u_ExposureStormDarkening|requires:AUTO_EXPOSURE",
     "u_ExposureAdaptSpeedDarken|requires:AUTO_EXPOSURE",
     "u_ExposureAdaptSpeedBrighten|requires:AUTO_EXPOSURE",
     "u_TmContrast",
@@ -1282,6 +1284,13 @@ The brightest Auto Exposure is allowed to make the picture.
 
 Stops a cave or deep water from being brightened all the way to daylight, so dark places stay \
 recognisably dark."""
+
+u_ExposureStormDarkening = """
+How much of a storm's darker sky survives Auto Exposure.
+
+Auto Exposure normally brightens the picture back up to compensate for a darker sky, which can \
+make rain and thunder look barely different from a clear day. Raising this holds some of that \
+darkening back, like your eyes only partly adjusting. 0 turns it off."""
 
 u_ExposureAdaptSpeedDarken = """
 How quickly your view adjusts when the scene gets darker.

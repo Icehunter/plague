@@ -72,6 +72,25 @@ const float PLAGUE_UW_VIEW_PHASE_Y = 1.57079632679;
 #define u_AutoExposureMin 0.25 //[0.1..1.0 step 0.05] runtime "Auto Exposure Min"
 #define u_AutoExposureMax 2.5 //[1.0..8.0 step 0.5] runtime "Auto Exposure Max"
 
+// Grey-world metering otherwise cancels a darker sky: halve the scene and the multiplier doubles
+// straight back. This holds part of that darkening back instead. 0 restores full compensation.
+#define u_ExposureStormDarkening 1.0 //[0.00..1.00 step 0.05] runtime "Storm Darkening"
+// AUTHORED against partial, not total, eye adaptation.
+const float PLAGUE_EXPOSURE_RAIN_HOLD = 0.55;
+const float PLAGUE_EXPOSURE_STORM_HOLD = 0.35;
+
+#ifdef AUTO_EXPOSURE
+// Shared by the composite and the DBG_EXPOSURE debug view so they can't diverge. Scales the
+// TARGET, not the result, so u_AutoExposureMin/Max still bound what their labels say.
+float plagueAutoExposure(float luma) {
+    float rain = clamp(u_SkyState.x, 0.0, 1.0);
+    float thunder = clamp(u_FrameState.z, 0.0, 1.0);
+    float hold = mix(1.0, PLAGUE_EXPOSURE_RAIN_HOLD, rain * u_ExposureStormDarkening);
+    hold = mix(hold, PLAGUE_EXPOSURE_STORM_HOLD, thunder * u_ExposureStormDarkening);
+    return clamp(0.18 * hold / max(luma, 1e-4), u_AutoExposureMin, u_AutoExposureMax);
+}
+#endif
+
 vec2 plagueTonemapDepthPair(vec2 uv) {
     return vec2(texture(u_Input1, uv).r, texture(u_Input3, uv).r);
 }
@@ -220,8 +239,7 @@ void main() {
     if (debugView == 15) {
         float dbgExposureLuma = texture(u_Input4, vec2(0.5)).r;
 #ifdef AUTO_EXPOSURE
-        float dbgAutoExposure = clamp(0.18 / max(dbgExposureLuma, 1e-4),
-                u_AutoExposureMin, u_AutoExposureMax);
+        float dbgAutoExposure = plagueAutoExposure(dbgExposureLuma);
 #else
         float dbgAutoExposure = 1.0;
 #endif
@@ -306,16 +324,15 @@ void main() {
     }
 
 #ifdef AUTO_EXPOSURE
-    // Grey-world auto-exposure (0.18 mid-grey target over exposure_measure.fsh's luma), MULTIPLIED
-    // into hdr here rather than folded into tonemap.glsl's u_Exposure: that slider is a user's
-    // manual trim that must stay meaningful as a bias, and forward draws share plagueTonemapAndGrade
-    // but have no exposure texture, so this factor must never reach that shared entry point.
+    // Auto-exposure (plagueAutoExposure, over exposure_measure.fsh's smoothed luma), MULTIPLIED into
+    // hdr here rather than folded into tonemap.glsl's u_Exposure: that slider is a user's manual trim
+    // that must stay meaningful as a bias, and forward draws share plagueTonemapAndGrade but have no
+    // exposure texture, so this factor must never reach that shared entry point.
     //
     // plagueUntonemapApprox cannot invert this factor (it never reaches a forward-draw shader), so a
     // forward fog blend carries a bounded error, up to how far the clamped factor strays from 1.0.
     float exposureLuma = texture(u_Input4, vec2(0.5)).r;
-    float autoExposure = clamp(0.18 / max(exposureLuma, 1e-4), u_AutoExposureMin, u_AutoExposureMax);
-    hdr *= autoExposure;
+    hdr *= plagueAutoExposure(exposureLuma);
 #endif
 
     // Exposure, operator, display encode, grade: all in tonemap.glsl. Forward draws call this same

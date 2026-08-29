@@ -21,6 +21,12 @@ working notes; what is here is what a reader needs to know the limitation exists
 - **The climate signal snaps at biome borders**, so fog character can change abruptly across a line.
 - **Thunder is not its own fog driver.** Heavy weather reads as ordinary rain.
 
+## Clouds
+
+- **A distant cloud can render in front of a nearer one.** An opacity/transparency issue, not the
+  separately tracked boxy/grid allocation-lattice shape issue. Root cause not found; likely
+  grazing-angle step undersampling in `shaders/include/clouds.glsl`'s march.
+
 ## Particles
 
 - **Forward-translucent draws (particles, banner patterns) do not warp with the water-entry/exit

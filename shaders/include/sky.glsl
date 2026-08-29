@@ -117,10 +117,19 @@ const vec3 PLAGUE_SKY_DAY_ZENITH = vec3(0.2731, 0.3865, 0.8815);
 const vec3 PLAGUE_SKY_DAY_HORIZON = vec3(1.3994, 1.4541, 1.7448);
 const vec3 PLAGUE_SKY_DAY_SUNWARD = vec3(1.5034, 1.5689, 1.8802);
 
-// Overcast: what the dome is dragged toward, and how far. Grey and flat, because a cloud deck is
-// what you are actually looking at and it has no gradient of its own worth speaking of.
+// Overcast target chromaticity (~6500K); the ratio/level constants below turn it into a real
+// overcast gradient instead of one flat grey.
 const vec3 PLAGUE_SKY_OVERCAST = vec3(0.30, 0.32, 0.35);
-const float PLAGUE_SKY_RAIN_FLATTEN = 0.80;
+// CIE Standard Overcast Sky (Moon & Spencer 1942): horizon is exactly a third of the zenith.
+const float PLAGUE_SKY_OVERCAST_HORIZON_RATIO = 0.33333333;
+// AUTHORED: an overcast sky still shows a bright patch behind the sun, not a full clear-sky halo.
+const float PLAGUE_SKY_OVERCAST_SUNWARD_LIFT = 1.15;
+// AUTHORED against real illuminance ratios (clear/overcast/storm ~100k/10k/1k lx), not applied
+// literally, so a rainy horizon stays above the night sky's own key.
+const float PLAGUE_SKY_OVERCAST_RAIN_LEVEL = 0.55;
+const float PLAGUE_SKY_OVERCAST_STORM_LEVEL = 0.35;
+// Safe close to 1 now the target carries a gradient instead of being a dead grey card.
+const float PLAGUE_SKY_RAIN_FLATTEN = 0.94;
 
 // The one number here that is not a look value: solved so the dome's cosine-weighted average at
 // noon matches the pack's fixed exposure (the average, not any single direction, since a palette
@@ -279,20 +288,23 @@ PlagueSkyColors plagueSkyColors(vec3 skyColor, vec3 lightDirTrue, float sunVisib
     // right on the horizon.
     c.dayWeight = clamp(phase - 1.0, 0.0, 1.0);
 
-    // Halo takes the sunward HUE, normalised then scaled by the horizon key's own luminance —
-    // not to unit luminance, which made the moon's halo ~40x brighter than the sky around it (night
-    // sky ~0.007, day sky ~1.5). Scaling by horizon luminance makes both sliders mean the same
-    // thing at any hour: what fraction of the sky's own brightness the halo peaks at.
+    // Drags the palette itself toward overcast rather than overlaying a sheet, so a rainy sunset
+    // stays a dull orange, not orange behind grey. Thunder deepens the level on top of rain.
+    float thunder = clamp(u_FrameState.z, 0.0, 1.0);
+    float overcastLevel = mix(PLAGUE_SKY_OVERCAST_RAIN_LEVEL, PLAGUE_SKY_OVERCAST_STORM_LEVEL, thunder);
+    float flatten = rain * PLAGUE_SKY_RAIN_FLATTEN;
+    vec3 overcastZenith = PLAGUE_SKY_OVERCAST * overcastLevel * max(c.dayWeight, 0.04);
+    vec3 overcastHorizon = overcastZenith * PLAGUE_SKY_OVERCAST_HORIZON_RATIO;
+    vec3 overcastSunward = overcastZenith * PLAGUE_SKY_OVERCAST_SUNWARD_LIFT;
+    c.zenith = mix(c.zenith, overcastZenith, flatten);
+    c.horizon = mix(c.horizon, overcastHorizon, flatten);
+    c.sunward = mix(c.sunward, overcastSunward, flatten);
+
+    // Halo takes the sunward HUE after the flatten above, so it dims and greys with the storm like
+    // the dome does. Scaled by horizon luminance, not unit luminance, so both sliders mean the same
+    // peak fraction of sky brightness at any hour.
     float skyLevel = max(dot(c.horizon, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
     c.glow = c.sunward / max(dot(c.sunward, vec3(0.2126, 0.7152, 0.0722)), 1e-4) * skyLevel;
-
-    // Drags the palette's keys themselves toward flat grey rather than laying a sheet over the
-    // top, so a rainy sunset is a dull orange rather than an orange behind grey.
-    float flatten = rain * PLAGUE_SKY_RAIN_FLATTEN;
-    vec3 overcast = PLAGUE_SKY_OVERCAST * max(c.dayWeight, 0.04);
-    c.zenith = mix(c.zenith, overcast, flatten);
-    c.horizon = mix(c.horizon, overcast, flatten);
-    c.sunward = mix(c.sunward, overcast, flatten);
 
     // Faded out by the colour's own MAGNITUDE, not clamped per channel — per-channel clamping hits
     // the floor at different moments for each channel (blue above it, red already pinned) and the

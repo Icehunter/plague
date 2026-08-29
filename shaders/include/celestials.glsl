@@ -65,7 +65,9 @@ const float PLAGUE_DISC_FEATHER = 0.17;
 float plagueDiscCoverage(vec3 texel, float rainFactor) {
     float brightness = dot(texel, vec3(0.2126, 0.7152, 0.0722));
     float feather = PLAGUE_DISC_FEATHER * (1.0 + 2.0 * rainFactor);
-    return smoothstep(PLAGUE_DISC_EDGE - feather, PLAGUE_DISC_EDGE + feather, brightness);
+    // Clamped at 0: past rainFactor ~0.32 the unclamped edge goes negative, so background
+    // brightness (0) stops mapping to exactly zero coverage, tinting the disc's whole quad.
+    return smoothstep(max(PLAGUE_DISC_EDGE - feather, 0.0), PLAGUE_DISC_EDGE + feather, brightness);
 }
 
 vec3 plagueShadeSunDisc(vec3 texel, vec2 discUv, vec3 sunRadiance, float rainFactor) {
