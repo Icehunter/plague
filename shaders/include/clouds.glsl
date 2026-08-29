@@ -503,9 +503,13 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
             msEnergy[n] = a;
             // Both lobes flatten together per octave; the blend further down (per-sample, on
             // light transmittance) is a different, separate question.
+            // Compressing only one lobe leaves the raw multi lobe outswinging the bounded forward
+            // one, so scattered() peaks at lightT 0.76 rather than 1.0: away from the light, a
+            // half-shadowed sample outshines a fully lit one and the deck reads flat.
             float rawPhaseFwd = plagueCloudPhase(cosLight, PLAGUE_CLOUD_PHASE_FORWARD * c);
+            float rawPhaseIso = plagueCloudPhase(cosLight, PLAGUE_CLOUD_PHASE_MULTI * c);
             msPhaseFwd[n] = mix(1.0, rawPhaseFwd, PLAGUE_CLOUD_PHASE_ANISOTROPY);
-            msPhaseIso[n] = plagueCloudPhase(cosLight, PLAGUE_CLOUD_PHASE_MULTI * c);
+            msPhaseIso[n] = mix(1.0, rawPhaseIso, PLAGUE_CLOUD_PHASE_ANISOTROPY);
             a *= PLAGUE_CLOUD_MS_ENERGY;
             c *= PLAGUE_CLOUD_MS_PHASE;
         }
