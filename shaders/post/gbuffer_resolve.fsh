@@ -51,6 +51,14 @@ uniform sampler2D u_Input14; // sunShadowMapRaw (raw, non-comparison. Debug only
 // CLOUDS_VOLUMETRIC/u_CloudAltitude/u_CloudAmount/u_CloudSpeed/CLOUD_QUALITY, byte-identical to
 // clouds_march.fsh's own copy (the option scanner merges same-name declarations).
 #define PLAGUE_CLOUD_NOISE(uv) texture(u_Input10, uv)
+// This pass's cloud-shadow query (plagueCloudDensityCoarse, below) cannot bind a real sampler3D:
+// Vulkan's fullscreen-pipeline shader-reflection step refuses any non-2D/Cube sampler outright, so
+// only the compute-based direct-view march samples the real 3D volumes. This uses the same ALU
+// approximation as the region field (plagueSkyFbm), folding height into the 2D coordinate for some
+// vertical variance. A lower-fidelity stand-in for a shadow query, never a bare constant; see
+// clouds.glsl's own noise-hook contract doc for why.
+#define PLAGUE_CLOUD_NOISE_3D(uvw) vec4(plagueSkyFbm((uvw).xz + (uvw).y, 4))
+#define PLAGUE_CLOUD_DETAIL_3D(uvw) vec4(plagueSkyFbm((uvw).xz * 3.0 + (uvw).y, 2))
 #moj_import <fornax_runtime:clouds.glsl>
 
 // Debug view selection arrives live from the engine (u_PassParams.u_Param3, a GBufferDebugView
@@ -552,7 +560,7 @@ int debugView = int(u_Param3 + 0.5);
             // Additive, not blended: stars are emitters seen through the atmosphere, so a bright
             // sky washes them out via the day/night term inside plagueGetStars.
             float invNoonFactor = 1.0 - lighting.noonFactor;
-            float syncedTime = u_SkyState.w * 0.05;  // ticks to seconds; see stars.glsl's header
+            float syncedTime = u_SkyState.w * 0.05;
             vec2 starCoord = plagueStarCoord(viewRay, PLAGUE_STAR_SPHERENESS, syncedTime);
             skyOut += plagueGetStars(starCoord, VdotU, VdotS, 1.0, 0.0,
                                      invNoonFactor * invNoonFactor,
@@ -823,14 +831,11 @@ int debugView = int(u_Param3 + 0.5);
     if (sunDir.y > 1e-3) {
         vec3 fragAbsPos = u_CameraAbs.xyz + worldPos;
         float syncedTime = u_SkyState.w * 0.05;
-        // The same deck the march resolves, from the same signals, so a shadow can never fall from a
-        // cloud that is not in the sky. This is the call site the driver signature was fixed early
-        // to protect, since it is the one nobody remembers to update.
-        PlagueCloudDeck shadowDeck = plagueCloudLowDeck(
+        PlagueCloudDeck shadowDeck = plagueCloudActiveDeck(
                 rainFactor,
                 clamp(u_FrameState.z, 0.0, 1.0),
                 clamp(u_FrameState.w, 0.0, 1.0),
-                int(u_CameraSkyLight.y + 0.5),
+                int(u_CameraSkyLight.y + 0.5) == 2 ? 1.0 : 0.0,
                 u_SunDirection.w,
                 syncedTime);
         vec2 shadowDrift = plagueCloudDrift(shadowDeck, syncedTime);

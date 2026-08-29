@@ -35,7 +35,12 @@ CONTEXT_PARTS=()
 # ==============================================================================
 if [[ "$TOOL_NAME" == "Bash" ]]; then
     case "$COMMAND" in
-        *runClient*|*"open -a Minecraft"*|*"open -a PrismLauncher"*|*"Minecraft.app"*|*prismlauncher*|*"ModrinthApp"*)
+        *runClient*|*"open -a Minecraft"*|*"open -a PrismLauncher"*|*"open -a"*"ModrinthApp"*|*"Minecraft.app/Contents/MacOS"*|*"ModrinthApp.app/Contents/MacOS"*|*prismlauncher*)
+            # Matches an actual launch invocation: open -a, a direct execution of the app's own
+            # binary, or the Fabric/Loom dev-launch task name. A bare `*"ModrinthApp"*` substring
+            # match also catches this pack's own crash logs, which live under that same profile
+            # directory, and blocks reading them with the same "never launch" message. This check
+            # is only for launching the app, not for touching its support files.
             emit_deny "CLAUDE.md: never launch Minecraft. Live verification comes from the user's own sessions -- they launch, they report. If this task needs in-game evidence, say so and stop."
             ;;
     esac

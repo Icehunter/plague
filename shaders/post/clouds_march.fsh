@@ -16,9 +16,10 @@
 uniform sampler2D u_Input0; // builtin.depth
 uniform sampler2D u_Input1; // builtin.noise, 512x512 tileable RGBA, bound LINEAR + REPEAT
 
-// Defined by the PASS, not the include: an include can't declare a sampler at a slot two different
-// passes bind differently. Must come after u_Input1 and before the import; see clouds.glsl's header.
-#define PLAGUE_CLOUD_NOISE(uv) texture(u_Input1, uv)
+// Fullscreen pipelines cannot bind the true sampler3D volumes the live compute march uses. These
+// ALU base/detail approximations keep this arm real and compile-checked instead of dead source.
+#define PLAGUE_CLOUD_NOISE_3D(uvw) vec4(plagueSkyFbm((uvw).xz + (uvw).y, 4))
+#define PLAGUE_CLOUD_DETAIL_3D(uvw) vec4(plagueSkyFbm((uvw).xz * 3.0 + (uvw).y, 2))
 #moj_import <fornax_runtime:clouds.glsl>
 
 layout(std140) uniform u_PassParams {
@@ -104,7 +105,7 @@ void main() {
             rainFactor,
             clamp(u_FrameState.z, 0.0, 1.0),
             clamp(u_FrameState.w, 0.0, 1.0),
-            int(u_CameraSkyLight.y + 0.5),
+            int(u_CameraSkyLight.y + 0.5) == PLAGUE_PRECIP_SNOW ? 1.0 : 0.0,
             u_SunDirection.w,
             syncedTime);
 
@@ -122,9 +123,10 @@ void main() {
             vec3(u_AtmNightR, u_AtmNightG, u_AtmNightB) * u_AtmNightI,
             vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
 #endif
+    float ignoredCloudFrontDistance;
     fragColor = plagueGetClouds(viewDir, u_CameraAbs, terrainDist, dither,
                                 deck, skyColours, lighting, sunDirTrue, syncedTime,
-                                renderDistance, atmColorMult);
+                                renderDistance, atmColorMult, ignoredCloudFrontDistance);
 #else
     // Graph gates this pass off entirely when CLOUDS_VOLUMETRIC is 0; this arm only exists so
     // check_shaders.sh compiles both.

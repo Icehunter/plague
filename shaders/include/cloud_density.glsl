@@ -20,61 +20,199 @@ vec2 plagueCloudDrift(PlagueCloudDeck deck, float syncedTime) {
 }
 
 /**
- * World XZ to a coverage sample coordinate: cell-normalised, sheared along the wind, drifted.
+ * World XZ to a coverage sample coordinate: cell-normalised, sheared along the wind, drifted, then
+ * domain-warped to break the coverage/detail volumes' own exact periodicity.
  *
  * The shear divides the along-wind axis (dividing a sampling coordinate by s makes the sampled
  * feature s times longer, which is what shear physically does downwind). Drift is added AFTER the
  * shear, in the sheared frame, so a genus with shear s advects s times faster in world blocks than
- * the nominal wind speed — ten percent at the cumulus row's 1.10.
+ * the nominal wind speed: ten percent at the cumulus row's 1.10.
+ *
+ * Takes `cell`/`shear` explicitly so callers state the fixed coordinate frame they use. The active
+ * density paths pass the calm reference cell for every weather state: blending normalized
+ * coordinates would continuously rescale an absolute-world transform around world origin.
+ *
+ * Without the warp, `q` repeats the coverage/detail volumes' 48-texel tile exactly every one cell,
+ * since GL_REPEAT wraps a plain `worldXZ / cell` in lockstep and a grazing-angle view ray crosses
+ * dozens of repeats (PLAGUE_CLOUD_DISTANCE / cell is ~69 at the shipped Cloud Size): a perfectly
+ * periodic field viewed obliquely from one point is a textbook Moire generator. `plagueSkyFbm`
+ * (already used by the erosion curl, no new noise source) evaluated at PLAGUE_CLOUD_WEATHER_CLOUDS
+ * cells per cycle decorrelates repeats far enough apart to break the Moire pattern while barely
+ * moving within any one cell, leaving a single cloud's own silhouette untouched.
  */
-vec2 plagueCloudSampleCoord(vec2 worldXZ, PlagueCloudDeck deck, vec2 drift) {
-    vec2 q = worldXZ / max(deck.cell, 1e-3);
+vec2 plagueCloudAllocationCoord(vec2 worldXZ, float cell, float shear, vec2 drift) {
+    vec2 q = worldXZ / max(cell, 1e-3);
     float along = dot(q, PLAGUE_CLOUD_WIND_UNIT);
-    q += PLAGUE_CLOUD_WIND_UNIT * (along / max(deck.shear, 1e-3) - along);
-    return q + drift;
+    q += PLAGUE_CLOUD_WIND_UNIT * (along / max(shear, 1e-3) - along);
+    q += drift;
+    return q;
 }
 
-// ------------------------------------------------------------------------------------------------
-// The field's noise primitive
-// ------------------------------------------------------------------------------------------------
-//
-// The coverage and region fields run on sky_hash.glsl's ALU lattice, not a noise texture: measured
-// in game, swapping to texture fetches cost 12 fps rather than saving any, since an FBM's octave
-// coordinates are dependent and randomly addressed, so nothing prefetches. Texture noise still wins
-// for ONE tap at a coherent coordinate, which is why the erosion field below samples the texture.
-/**
- * The coverage/region field's FBM: gain 0.5, normalised by summed amplitude, rotated between
- * octaves, same shape as the hash version it replaces so the solved cutoffs still mean what they
- * say. Statistics measured in cloud_types.glsl.
- *
- * @param p       position in cell units: one unit is one lattice cell of the base octave
- * @param octaves the caller's choice: the full field for the marched density, a cheap two for the
- *                sun march
- */
-float plagueCloudFieldFbm(vec2 p, int octaves) {
-    return plagueSkyFbm(p, octaves);
+vec2 plagueCloudSampleCoord(vec2 worldXZ, float cell, float shear, vec2 drift) {
+    vec2 q = plagueCloudAllocationCoord(worldXZ, cell, shear, drift);
+
+    vec2 warpCoord = q / PLAGUE_CLOUD_WEATHER_CLOUDS;
+    vec2 warp = vec2(plagueSkyFbm(warpCoord, 2),
+                      plagueSkyFbm(warpCoord + vec2(31.7, 57.3), 2)) - 0.5;
+    return q + warp * PLAGUE_CLOUD_WARP_STRENGTH;
 }
 
-/**
- * Is this part of the world under a weather system at all: 0 clear, 1 cloudy, soft between. The
- * low-frequency half of the two-scale construction (cloud_types.glsl's PLAGUE_CLOUD_REGION_DENSITY
- * carries the coverage-split argument).
- *
- * Sampled in the same advected, sheared frame as the clouds, at a coarser zoom: `q` is
- * cell-normalised, so multiplying by `deck.cell` cancels the cell out of every term except shear and
- * drift, which are already cell-independent in world blocks — this coordinate is a pure function of
- * world position, time, wind and shear, so Cloud Size cannot reach it. Sampling in a static or
- * unsheared frame would let clouds die at an invisible line or slip apart from their weather system
- * over time (0.19 blocks/s at default speed).
- *
- * PLAGUE_CLOUD_DRIFT_WRAP keeps the drift jump on the noise lattice only at the default Cloud Size;
- * off it, the field becomes a different field once per 325 hours of continuous world time.
- */
-float plagueCloudRegion(vec2 q, PlagueCloudDeck deck) {
-    vec2 wq = q / PLAGUE_CLOUD_WEATHER_CLOUDS;
-    float w = plagueCloudFieldFbm(wq, PLAGUE_CLOUD_WEATHER_OCTAVES);
-    float band = PLAGUE_CLOUD_WEATHER_BAND * PLAGUE_CLOUD_WEATHER_SIGMA;
-    return smoothstep(deck.regionCut - band, deck.regionCut + band, w);
+// One candidate cell per four fixed lobe cells gives stable 230.4-block world-space addresses.
+// The 0.90 span was authored against the six 2026-08-28 high-altitude owner captures: +/-0.45
+// cells keeps each site inside its home cell while breaking the visible rows left by +/-0.18.
+const float PLAGUE_CLOUD_ALLOCATION_PERIOD = 4.0;
+const float PLAGUE_CLOUD_SITE_JITTER = 0.90;
+
+// Stable owner-local density potential authored against the owner's 2026-08-28 ring/base/storm
+// captures. It is deliberately NOT a support mask: the fixed world-space 3-D volume is sampled
+// after this potential and owns the visible isosurface. The three fixed lobes only organise that
+// density into a non-radial cloud identity. Weather may widen the morphology through
+// deck.footprint; Cloud Size may not scale any radius, offset, or sample coordinate.
+const float PLAGUE_CLOUD_MORPHOLOGY_RADIUS = 0.42;
+const float PLAGUE_CLOUD_MORPHOLOGY_ASPECT_MIN = 0.86;
+const float PLAGUE_CLOUD_MORPHOLOGY_ASPECT_MAX = 1.18;
+const vec2 PLAGUE_CLOUD_MORPHOLOGY_LOBE_OFFSET = vec2(0.42, 0.24);
+const float PLAGUE_CLOUD_MORPHOLOGY_CORE_RADIUS = 0.74;
+const float PLAGUE_CLOUD_MORPHOLOGY_SIDE_RADIUS = 0.64;
+const float PLAGUE_CLOUD_MORPHOLOGY_CROWN_RADIUS = 0.56;
+
+// A quadratic penalty of 0.36 raises the fixed 0.450656 cutoff beyond the measured 0.78005 field
+// ceiling at one nominal lobe radius. The sampled field therefore closes the edge before any
+// analytic boundary exists. The 0.24 Size gain was selected from the same capture sequence: over
+// the accepted 0.922..1.461 physical response it moves the nested isosurface by -0.028..+0.131,
+// enough to reveal new irregular density without moving the cloud's address.
+const float PLAGUE_CLOUD_MORPHOLOGY_PENALTY = 0.36;
+// 0.52 exceeds FIELD_TOP - CANDIDATE_CUTOFF plus maximum Size's +0.131 bias, so profile zero is
+// guaranteed empty before h reaches either hard endpoint. That keeps cloud tops irregular while
+// the per-owner h=0 plane remains the locally-flat condensation base.
+const float PLAGUE_CLOUD_MORPHOLOGY_VERTICAL_PENALTY = 0.52;
+const float PLAGUE_CLOUD_SIZE_DENSITY_GAIN = 0.24;
+
+// +/-6.144 blocks (eight percent of the reference cumulus depth), keyed by the existing owner
+// jitter hash. Each individual base is still a plane, while neighbouring clouds no longer share
+// the one global deck-base line visible in the owner's low-angle capture.
+const float PLAGUE_CLOUD_BASE_VARIATION = 0.08 * PLAGUE_CLOUD_CUMULUS_DEPTH;
+
+// These odd uints are the first little-endian 32-bit SHA-256 word of the stated project-domain
+// labels, with bit zero set: plague.cloud.candidate.{x,z,lane,seed,avalanche.0,avalanche.1}.
+// That is a reproducible in-repo derivation, not a borrowed hash. The authored 16/15/16 shifts
+// and two avalanche multiplies are pinned by the 3x3/5x5 and exact population verifier checks.
+const uint PLAGUE_CLOUD_HASH_X = 3145090451u;
+const uint PLAGUE_CLOUD_HASH_Z = 749339837u;
+const uint PLAGUE_CLOUD_HASH_LANE = 1193920015u;
+const uint PLAGUE_CLOUD_HASH_SEED = 2452362395u;
+const uint PLAGUE_CLOUD_HASH_MIX_0 = 1534486637u;
+const uint PLAGUE_CLOUD_HASH_MIX_1 = 2579079u;
+
+// First salt in the deterministic 0..2047 lexicographic integer-hash search whose fixed 24x24
+// probe gave the accepted uniform rank distribution. Keeping lane 2 separate from jitter lanes 0/1
+// prevents a site's position and ellipse from correlating with when Amount activates it.
+const ivec2 PLAGUE_CLOUD_RANK_SALT = ivec2(219, 718);
+
+uint plagueCloudCandidateHashBits(ivec2 cellId, uint lane) {
+    uint h = uint(cellId.x) * PLAGUE_CLOUD_HASH_X
+           + uint(cellId.y) * PLAGUE_CLOUD_HASH_Z
+           + lane * PLAGUE_CLOUD_HASH_LANE
+           + PLAGUE_CLOUD_HASH_SEED;
+    h ^= h >> 16u;
+    h *= PLAGUE_CLOUD_HASH_MIX_0;
+    h ^= h >> 15u;
+    h *= PLAGUE_CLOUD_HASH_MIX_1;
+    h ^= h >> 16u;
+    return h;
+}
+
+float plagueCloudCandidateHash(ivec2 cellId, uint lane) {
+    // float exactly represents every 24-bit integer; 2^-24 therefore avoids backend-dependent
+    // integer-to-float rounding while returning the same [0,1) value on every conforming GPU.
+    return float(plagueCloudCandidateHashBits(cellId, lane) >> 8u) * (1.0 / 16777216.0);
+}
+
+vec2 plagueCloudCandidateJitter(ivec2 cellId) {
+    return vec2(plagueCloudCandidateHash(cellId, 0u),
+                plagueCloudCandidateHash(cellId, 1u));
+}
+
+float plagueCloudPotentialLobe(vec2 local, vec2 centre, float radius) {
+    vec2 horizontal = (local - centre) / max(radius, 1e-3);
+    return dot(horizontal, horizontal);
+}
+
+float plagueCloudHeightProfile(float h, float family);
+
+/** Stable max-union of active owner density potentials. Each candidate's rank, site, base offset,
+ * lobe frame, and texture coordinates are fixed data. Increasing Amount can only raise the max;
+ * increasing Size raises the density potential but never dilates this analytic organisation.
+ * `ownerH` belongs to the winning potential and is used only for height-modulated erosion. */
+float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudDeck deck,
+                                    out float ownerH) {
+    ownerH = -1.0;
+    if (deck.population <= 0.0) {
+        return -1e6;
+    }
+
+    vec2 allocationP = allocationQ / PLAGUE_CLOUD_ALLOCATION_PERIOD;
+    ivec2 baseCell = ivec2(floor(allocationP));
+    float radius = PLAGUE_CLOUD_MORPHOLOGY_RADIUS * deck.footprint;
+    float sizeBias = PLAGUE_CLOUD_SIZE_DENSITY_GAIN * log2(max(deck.sizeRatio, 1e-3));
+    float bestPotential = -1e6;
+
+    for (int x = -1; x <= 1; x++) {
+        for (int z = -1; z <= 1; z++) {
+            ivec2 cellId = baseCell + ivec2(x, z);
+            float rank = plagueCloudCandidateHash(cellId + PLAGUE_CLOUD_RANK_SALT, 2u);
+            if (rank >= deck.population) {
+                continue;
+            }
+
+            vec2 jitter = plagueCloudCandidateJitter(cellId);
+            float candidateBase = deck.base
+                                + (jitter.y * 2.0 - 1.0) * PLAGUE_CLOUD_BASE_VARIATION;
+            float h = (worldY - candidateBase) / max(deck.depth, 1e-3);
+            if (h <= 0.0 || h >= 1.0) {
+                continue;
+            }
+
+            vec2 site = vec2(cellId) + 0.5
+                      + (jitter - 0.5) * PLAGUE_CLOUD_SITE_JITTER;
+            vec2 delta = allocationP - site;
+
+            // Reuse the position hashes as a stable ellipse orientation/aspect seed. Reciprocal
+            // axis scaling preserves support area while varying the silhouette.
+            vec2 axisSeed = jitter * 2.0 - 1.0;
+            vec2 axis = axisSeed * inversesqrt(max(dot(axisSeed, axisSeed), 1e-6));
+            vec2 perpendicular = vec2(-axis.y, axis.x);
+            float aspect = mix(PLAGUE_CLOUD_MORPHOLOGY_ASPECT_MIN,
+                               PLAGUE_CLOUD_MORPHOLOGY_ASPECT_MAX, jitter.x);
+            vec2 local = vec2(dot(delta, axis) / aspect,
+                              dot(delta, perpendicular) * aspect);
+
+            // Hash-derived signs mirror the same three-lobe potential per owner. Weather footprint
+            // scales this frame; Size is intentionally absent and reaches only sizeBias above.
+            vec2 lobeOffset = radius * PLAGUE_CLOUD_MORPHOLOGY_LOBE_OFFSET
+                            * vec2(jitter.x < 0.5 ? -1.0 : 1.0,
+                                   jitter.y < 0.5 ? -1.0 : 1.0);
+            vec2 crownOffset = vec2(-lobeOffset.y, lobeOffset.x);
+
+            float horizontalMetric = plagueCloudPotentialLobe(
+                    local, vec2(0.0), radius * PLAGUE_CLOUD_MORPHOLOGY_CORE_RADIUS);
+            horizontalMetric = min(horizontalMetric, plagueCloudPotentialLobe(
+                    local, lobeOffset, radius * PLAGUE_CLOUD_MORPHOLOGY_SIDE_RADIUS));
+            horizontalMetric = min(horizontalMetric, plagueCloudPotentialLobe(
+                    local, crownOffset, radius * PLAGUE_CLOUD_MORPHOLOGY_CROWN_RADIUS));
+
+            float profile = plagueCloudHeightProfile(h, deck.family);
+            float candidatePotential = sizeBias
+                                      - PLAGUE_CLOUD_MORPHOLOGY_PENALTY * horizontalMetric
+                                      - PLAGUE_CLOUD_MORPHOLOGY_VERTICAL_PENALTY
+                                      * (1.0 - profile);
+            if (candidatePotential > bestPotential) {
+                bestPotential = candidatePotential;
+                ownerH = h;
+            }
+        }
+    }
+    return bestPotential;
 }
 
 // HOW FAST AIR CONDENSES ONCE IT IS INSIDE A CLOUD, as a fraction of the field's surviving range.
@@ -96,7 +234,7 @@ float plagueCloudRegion(vec2 q, PlagueCloudDeck deck) {
 const float PLAGUE_CLOUD_CONDENSE = 0.45;
 
 // HOW WEAK THE WEAKEST CLOUD IS, as a fraction of a fully developed one's density.
-// The condensation curve alone saturates every cloud to solid — the missing quantity is the cloud's
+// The condensation curve alone saturates every cloud to solid: the missing quantity is the cloud's
 // own VIGOUR (how deep the convection that made it went), a property separate from boundary
 // sharpness. How far a column sits above the coverage threshold measures it, scaling the plateau
 // while the edge keeps its own fast rise.
@@ -122,59 +260,92 @@ const float PLAGUE_CLOUD_VIGOUR_FLOOR = 0.30;
 // coefficient of variation 0.30.
 const float PLAGUE_CLOUD_PARCEL_MIN_TOP = 0.35;
 
+// Third profile anchor: a deep tower whose top SPREADS before it cuts off, rather than tapering
+// uniformly, giving the anvil-adjacent shape a cumulonimbus needs. Authored the same way SHEET/TOWER
+// were: solved against the drawn silhouette. Wider base span than TOWER's own (a storm's updraught
+// core is broader relative to its own height than a fair-weather cumulus's) and a top onset well
+// below 1.0, leaving real room for the spreading band above it.
+const float PLAGUE_CLOUD_STORMTOP_BASE = 0.08;
+const float PLAGUE_CLOUD_STORMTOP_TOP  = 0.30;
+
 /**
- * The vertical shape, from a flat sheet at convective 0 to a deep tower at convective 1.
+ * The vertical shape, from a flat sheet at family 0 through a deep tower at family 1 to a
+ * spreading-top storm tower at family 2.
  *
- * @param h          fractional height through the column's own envelope, 0 at base, 1 at top
- * @param convective the genus's own selector, see cloud_types.glsl for how each row got its value
+ * @param h      fractional height through the column's own envelope, 0 at base, 1 at top
+ * @param family the genus's own selector, see cloud_types.glsl for how each row got its value
  *
  * Two smoothsteps and two mixes: cheap because this runs once per marched sample and once per sun
  * tap. Shape lives entirely in where the two smoothstep edges sit.
  */
-float plagueCloudHeightProfile(float h, float convective) {
-    float c = clamp(convective, 0.0, 1.0);
-    float baseSpan = mix(PLAGUE_CLOUD_SHEET_BASE, PLAGUE_CLOUD_TOWER_BASE, c);
-    float topOnset = mix(PLAGUE_CLOUD_SHEET_TOP, PLAGUE_CLOUD_TOWER_TOP, c);
+float plagueCloudHeightProfile(float h, float family) {
+    float f = clamp(family, 0.0, 2.0);
+    float t = f < 1.0 ? f : f - 1.0;
+    float baseSpan = f < 1.0
+            ? mix(PLAGUE_CLOUD_SHEET_BASE, PLAGUE_CLOUD_TOWER_BASE, t)
+            : mix(PLAGUE_CLOUD_TOWER_BASE, PLAGUE_CLOUD_STORMTOP_BASE, t);
+    float topOnset = f < 1.0
+            ? mix(PLAGUE_CLOUD_SHEET_TOP, PLAGUE_CLOUD_TOWER_TOP, t)
+            : mix(PLAGUE_CLOUD_TOWER_TOP, PLAGUE_CLOUD_STORMTOP_TOP, t);
     return smoothstep(0.0, baseSpan, h) * (1.0 - smoothstep(topOnset, 1.0, h));
 }
 
 /**
- * The coverage field, thresholded at the deck's solved cutoff and remapped back to 0..1, then
- * shaped vertically. Without the remap, density steps from nothing to `1 - cut` the instant the
- * field crosses threshold, drawing a hard edge exactly where the silhouette should be softest.
+ * World blocks one full cycle of the coverage/detail volumes' Y axis should span, independent of
+ * how tall weather has grown the deck. `h` (fractional slab height, 0..1) always spans exactly one
+ * noise cycle when used AS a texture coordinate directly: fine at the calm depth this is tuned
+ * against, but deck.depth grows up to 25x at full thunder (cloud_types.glsl) while the fixed XZ
+ * frame preserves the calm reference scale, and sampling the same one Y cycle across 25x the world
+ * depth would stretch every Worley cell into a near-continuous vertical column, reading as a
+ * radiating fan of light/dark rays at grazing angles.
  *
- * The region enters as the threshold, not a multiplier: multiplying would thin a cloud toward
- * transparency at a system's edge while leaving its footprint the same, breaking the coverage figure
- * the genus row states. Mixing the cutoff toward PLAGUE_CLOUD_FIELD_CLOSED instead makes an
- * out-of-region column exactly empty and expresses the crossing through the cell field's own lumps,
- * so a weather system's edge always thins out rather than drawing a line.
- *
- * Measured end to end (20,000 world positions, Balanced tier, cumulus at 0.375 coverage): the
- * one-field and two-field constructions agree to within 0.011 on every alpha threshold, confirming
- * the second scale changes how the sky is organised and not how much of it is covered.
- *
- * @param octaves    the caller's choice: the full field for the marched density, a cheap two for
- *                   the sun march. See PLAGUE_CLOUD_COVERAGE_OCTAVES_COARSE.
- * @param region     from plagueCloudRegion, hoisted by the caller because the sun march reuses one
- *                   value across all five of its taps
- * @param h          fractional height through the slab, 0 at the base, 1 at the ceiling
- * @param convective the genus's own height-profile selector, see cloud_types.glsl
+ * Candidate Size changes slab depth and the selected density isosurface only. Keeping this world
+ * period fixed means larger whole clouds reveal more unchanged 3D density rather than stretching
+ * one texture lobe or rephasing the field around world origin.
  */
-float plagueCloudCoverage(vec2 q, PlagueCloudDeck deck, int octaves, float region,
-                          float h, float convective) {
-    float cut = mix(PLAGUE_CLOUD_FIELD_CLOSED, deck.cut, region);
-    float n = plagueCloudFieldFbm(q, octaves);
+float plagueCloudHeightRef(PlagueCloudDeck deck) {
+    return PLAGUE_CLOUD_CUMULUS_DEPTH;
+}
+
+// Four retains several generated volume cells through the cumulus depth. The horizontal scale is
+// derived, not independently authored: 4 * 76.8 / 57.6 = 5.3333 makes one organization texture
+// unit span the same 307.2 world blocks on X/Z and Y at the accepted reference. This removes the
+// 0.148 vertical:horizontal broad-field bias measured in the six 2026-08-28 owner captures.
+const float PLAGUE_CLOUD_ORGANIZATION_VERTICAL_SCALE = 4.0;
+const float PLAGUE_CLOUD_ORGANIZATION_SCALE =
+        PLAGUE_CLOUD_ORGANIZATION_VERTICAL_SCALE * PLAGUE_CLOUD_CUMULUS_DEPTH
+        / (PLAGUE_CLOUD_CUMULUS_CELL * PLAGUE_CLOUD_REFERENCE_SCALE);
+
+// At every Size, 0.20 leaves the local sample as edge/lobe breakup while the near-isotropic broad
+// sample owns the density masses inside the owner-local dome; selected from the same captures.
+const float PLAGUE_CLOUD_PRIMARY_WEIGHT = 0.20;
+
+/** Coarse-volume density at fixed local plus broad/medium true-3D scales. */
+float plagueCloudBaseShape(vec3 p, PlagueCloudDeck deck) {
+    float primary = PLAGUE_CLOUD_NOISE_3D(p).r;
+    vec3 organizationP = vec3(p.x / PLAGUE_CLOUD_ORGANIZATION_SCALE,
+                              0.5 + (p.y - 0.5) / PLAGUE_CLOUD_ORGANIZATION_VERTICAL_SCALE,
+                              p.z / PLAGUE_CLOUD_ORGANIZATION_SCALE);
+    float organization = PLAGUE_CLOUD_NOISE_3D(organizationP).r;
+    return mix(organization, primary, PLAGUE_CLOUD_PRIMARY_WEIGHT);
+}
+
+/**
+ * Condense one already-sampled world-space base value through the winning candidate's density
+ * potential. Candidate organisation moves the cutoff, not the coordinate and not final alpha, so
+ * the sampled irregular 3-D isosurface always owns the visible silhouette.
+ *
+ * @param n         the two-volume base field at a fixed world-space coordinate
+ * @param potential stable max candidate potential; Size raises it monotonically
+ */
+float plagueCloudCoverage(float n, PlagueCloudDeck deck, float potential) {
+    if (deck.population <= 0.0) {
+        return 0.0;
+    }
+    float cut = deck.cut - potential;
     float span = max(PLAGUE_CLOUD_FIELD_TOP - cut, PLAGUE_CLOUD_MIN_SPAN);
     // Linear position across the surviving range, then the condensation curve (PLAGUE_CLOUD_CONDENSE).
     float raw = clamp((n - cut) / span, 0.0, 1.0);
-
-    // Column's own ceiling: PLAGUE_CLOUD_PARCEL_MIN_TOP for a marginal column, 1.0 for a strong core.
-    float top = mix(PLAGUE_CLOUD_PARCEL_MIN_TOP, 1.0, raw);
-    float profile = plagueCloudHeightProfile(min(h / max(top, 1e-3), 1.0), convective);
-
-    // Profile applies before the condensation edge. A marginal column's value drops under
-    // threshold as h nears its own top, closing the footprint to zero with no shared ceiling.
-    raw *= profile;
     float edge = smoothstep(0.0, PLAGUE_CLOUD_CONDENSE, raw);
     // edge is boundary SHARPNESS (a phase change, same for every cloud); vigour is DENSITY (varies
     // per cloud). Multiplying keeps crisp edges on a wispy cloud instead of fading both ends.
@@ -182,31 +353,41 @@ float plagueCloudCoverage(vec2 q, PlagueCloudDeck deck, int octaves, float regio
     return edge * vigour;
 }
 
-/**
- * One tap of the three-dimensional erosion field, built from the two-dimensional noise texture.
- * Two horizontal slices, each offset into a different part of the tile by the R2 sequence and
- * smoothstep-interpolated between, avoid the vertical streaks a 2D pattern extruded upward gives.
- * No fract() wrap on the UV: the sampler repeats and the texture is tileable, so the hardware wrap
- * is exact.
- */
+/** One tap of the 3D erosion/detail volume (tools/generate_cloud_noise.py). */
 float plagueCloudDetail(vec3 p) {
-    float slice = floor(p.y);
-    float f = p.y - slice;
-    f = f * f * (3.0 - 2.0 * f);
-
-    vec2 offLo = fract(slice * PLAGUE_CLOUD_SLICE_R2) * PLAGUE_CLOUD_NOISE_TEXELS;
-    vec2 offHi = fract((slice + 1.0) * PLAGUE_CLOUD_SLICE_R2) * PLAGUE_CLOUD_NOISE_TEXELS;
-
-    float lo = PLAGUE_CLOUD_NOISE((p.xz + offLo) / PLAGUE_CLOUD_NOISE_TEXELS).a;
-    float hi = PLAGUE_CLOUD_NOISE((p.xz + offHi) / PLAGUE_CLOUD_NOISE_TEXELS).a;
-    return mix(lo, hi, f);
+    return PLAGUE_CLOUD_DETAIL_3D(p).r;
 }
 
 /**
- * How many erosion cells the field carries. The design value, unconditionally — not clamped against
- * the march step. Cloud Size scales the slab's DEPTH along with its width, so the field stays
- * self-similar under the slider without needing a resolution-driven clamp; the tiers' own per-pixel
- * dither and temporal resolve already converge detail finer than one march step.
+ * 2D curl noise (a divergence-free vector field) derived from plagueSkyFbm's own gradient via
+ * finite differences, offset 90 degrees between the two components: the standard construction,
+ * since curl of a scalar potential in 2D is just the perpendicular gradient. Bends the erosion
+ * sample position so eroded edges wander rather than following the noise lattice's own straight
+ * isolines, with no new texture: it reuses the ALU field the coordinate warp already samples.
+ */
+vec2 plagueCloudCurl(vec2 p, float epsilon) {
+    float n1 = plagueSkyFbm(p + vec2(0.0, epsilon), 2);
+    float n2 = plagueSkyFbm(p - vec2(0.0, epsilon), 2);
+    float n3 = plagueSkyFbm(p + vec2(epsilon, 0.0), 2);
+    float n4 = plagueSkyFbm(p - vec2(epsilon, 0.0), 2);
+    float dx = (n1 - n2) / (2.0 * epsilon);
+    float dy = (n3 - n4) / (2.0 * epsilon);
+    return vec2(dy, -dx);
+}
+
+// Curl warp scale: small relative to one erosion cell, enough to visibly bend an eroded edge
+// without displacing it into a neighbouring cell's own detail. Authored, retune against a render.
+const float PLAGUE_CLOUD_CURL_STRENGTH = 0.35;
+const float PLAGUE_CLOUD_CURL_EPSILON  = 0.1;
+
+// How much erosion survives at the very base of a column, as a fraction of full strength.
+// Authored: a real cumulus base is sharp almost to the ground, so this stays low.
+const float PLAGUE_CLOUD_EROSION_BASE_FLOOR = 0.25;
+
+/**
+ * How many erosion cells the fixed-frequency field carries. The design value is unconditional and
+ * not clamped against the march step; Cloud Size changes morphology and physical depth without
+ * changing the XZ erosion coordinate.
  *
  * Kept as a function rather than folded into its callers so a genus wanting different roughness has
  * one place to say so when 7b lands.
@@ -215,11 +396,28 @@ float plagueCloudErosionCells(PlagueCloudDeck deck) {
     return PLAGUE_CLOUD_EROSION_CELLS;
 }
 
-/** Two octaves of it, weighted so the coarse one sets the lobes and the fine one only roughens them. */
-float plagueCloudErosion(vec3 p) {
-    return plagueCloudDetail(p) * 0.66667
-         + plagueCloudDetail(p * PLAGUE_CLOUD_EROSION_LACUNARITY + PLAGUE_CLOUD_EROSION_OFFSET)
-           * 0.33333;
+/**
+ * Two octaves, weighted so the coarse one sets the lobes and the fine one only roughens them,
+ * curl-warped so the eroded edge wanders rather than following the noise lattice's own straight
+ * lines, and height-modulated: softened near the base (a real cumulus base stays sharp almost to
+ * the ground), applied more directly near the top (the wispy, broken upper surface).
+ *
+ * @param h fractional height through the column's own envelope (0 at base, 1 at that column's own
+ *          top): the same normalised height plagueCloudCoverage already computes, passed through
+ *          rather than recomputed
+ */
+float plagueCloudErosion(vec3 p, float h) {
+    vec2 warp = plagueCloudCurl(p.xz, PLAGUE_CLOUD_CURL_EPSILON) * PLAGUE_CLOUD_CURL_STRENGTH;
+    vec3 warped = vec3(p.x + warp.x, p.y, p.z + warp.y);
+    float detail = plagueCloudDetail(warped) * 0.66667
+                 + plagueCloudDetail(warped * PLAGUE_CLOUD_EROSION_LACUNARITY + PLAGUE_CLOUD_EROSION_OFFSET)
+                   * 0.33333;
+    // Base floor stays flat: erosion softened toward h=0. Top stays wispy: erosion at full strength
+    // toward h=1. Authored curve shape (not linear) so the transition sits mostly in the upper half
+    // of the column, matching how a real cumulus base stays sharp much closer to its own ceiling
+    // than a naive linear fade would give.
+    float heightMod = mix(PLAGUE_CLOUD_EROSION_BASE_FLOOR, 1.0, smoothstep(0.0, 0.6, h));
+    return detail * heightMod;
 }
 
 /**
@@ -230,71 +428,69 @@ float plagueCloudErosion(vec3 p) {
  * @param worldPos absolute world position, not camera-relative (the field is anchored to the world)
  * @param drift    from plagueCloudDrift, hoisted by the caller: it is constant along a ray
  *
- * Four early-outs in increasing cost order: outside the slab, outside every weather system, below
- * the coverage cutoff, zero after the height profile. The region is tested before the cell field so
- * the cheap 3-octave region check can reject the expensive 4-octave field and erosion fetches
- * entirely — rejecting 12-56% of samples depending on Cloud Amount, worth more the fuller the sky.
+ * One fixed calm/reference XZ coordinate frame serves every weather state. Rain and thunder change
+ * depth, family, optical depth, coverage and the top profile, while the broad organization lookup
+ * supplies the large-scale masses. This keeps the field phase anchored in world space throughout a
+ * weather transition and the density path at the two base-volume samples owned by
+ * plagueCloudBaseShape.
  */
-float plagueCloudDensityAt(vec3 worldPos, PlagueCloudDeck deck, vec2 drift, out float regionOut) {
-    regionOut = 0.0;
-    float h = (worldPos.y - deck.base) / max(deck.depth, 1e-3);
-    if (h <= 0.0 || h >= 1.0) {
+float plagueCloudDensityAt(vec3 worldPos, PlagueCloudDeck deck, vec2 drift) {
+    vec2 allocationQ = plagueCloudAllocationCoord(worldPos.xz, deck.cell, deck.shear, drift);
+    float ownerH;
+    float potential = plagueCloudCandidatePotential(allocationQ, worldPos.y, deck, ownerH);
+    if (potential <= deck.cut - PLAGUE_CLOUD_FIELD_TOP) {
         return 0.0;
     }
 
-    vec2 q = plagueCloudSampleCoord(worldPos.xz, deck, drift);
-
-    float region = plagueCloudRegion(q, deck);
-    regionOut = region;
-    if (region <= 0.0) {
-        return 0.0;
-    }
-
-    float shaped = plagueCloudCoverage(q, deck, PLAGUE_CLOUD_COVERAGE_OCTAVES, region,
-                                       h, deck.convective);
+    vec2 q = plagueCloudSampleCoord(worldPos.xz, deck.cell, deck.shear, drift);
+    // Absolute height above the shared reference base keeps the volume phase fixed while ownerH
+    // supplies each candidate's independent locally-flat base and vertical morphology.
+    float noiseY = (worldPos.y - deck.base) / plagueCloudHeightRef(deck);
+    float baseShape = plagueCloudBaseShape(vec3(q.x, noiseY, q.y), deck);
+    float shaped = plagueCloudCoverage(baseShape, deck, potential);
     if (shaped <= 0.0) {
         return 0.0;
     }
 
-    // The erosion coordinate rides the same sheared, drifted sample coordinate the coverage does, so
-    // the fray travels with the cloud it belongs to instead of sliding through it. Vertically it uses
-    // the fractional height, which is what gives the field the slab's aspect ratio. The cell count is
-    // the resolvable one rather than the nominal eight, see plagueCloudErosionCells.
-    vec3 e = vec3(q.x, h, q.y) * plagueCloudErosionCells(deck);
+    // The erosion coordinate rides the same fixed reference coordinate as coverage, so the fray
+    // stays phase-locked to the cloud through the weather transition. Vertically it reuses
+    // plagueCloudCoverage's own rescaled coordinate (see plagueCloudHeightRef) rather than the raw
+    // fractional height, which would stretch into vertical columns the same way the coverage sample
+    // would. Cell count is the resolvable one rather than the nominal eight; see
+    // plagueCloudErosionCells.
+    float erosionY = (worldPos.y - deck.base) / plagueCloudHeightRef(deck);
+    vec3 e = vec3(q.x, erosionY, q.y) * plagueCloudErosionCells(deck);
 
     float rest = 1.0 - shaped;
     float weight = PLAGUE_CLOUD_EROSION_PEAK * shaped * rest * rest;
-    float eaten = plagueCloudErosion(e) * PLAGUE_CLOUD_EROSION_STRENGTH * weight;
+    float eaten = plagueCloudErosion(e, ownerH) * PLAGUE_CLOUD_EROSION_STRENGTH * weight;
     return clamp(shaped - eaten, 0.0, 1.0);
 }
 
 /**
- * The same field with its two most expensive terms dropped: two coverage octaves, no erosion. For
- * the sun march only — it produces an optical depth (an integral), the one quantity that genuinely
- * does not care about high-frequency detail. Do not use where density itself is drawn: it is a
- * different, visibly smoother field.
- *
- * @param region taken as given rather than sampled, so a caller walking a short fan pays for the
- *               region field once. See plagueCloudLightTransmittance for the approximation's range.
+ * The same field with its most expensive term dropped: no erosion. For the sun march only, since it
+ * produces an optical depth (an integral), the one quantity that genuinely does not care about
+ * high-frequency detail. Do not use where density itself is drawn: it is a different, visibly
+ * smoother field.
  */
-float plagueCloudDensityCoarseIn(vec3 worldPos, PlagueCloudDeck deck, vec2 drift, float region) {
-    float h = (worldPos.y - deck.base) / max(deck.depth, 1e-3);
-    if (h <= 0.0 || h >= 1.0) {
+float plagueCloudDensityCoarseIn(vec3 worldPos, PlagueCloudDeck deck, vec2 drift) {
+    vec2 allocationQ = plagueCloudAllocationCoord(worldPos.xz, deck.cell, deck.shear, drift);
+    float ownerH;
+    float potential = plagueCloudCandidatePotential(allocationQ, worldPos.y, deck, ownerH);
+    if (potential <= deck.cut - PLAGUE_CLOUD_FIELD_TOP) {
         return 0.0;
     }
-    vec2 q = plagueCloudSampleCoord(worldPos.xz, deck, drift);
-    return plagueCloudCoverage(q, deck, PLAGUE_CLOUD_COVERAGE_OCTAVES_COARSE, region,
-                               h, deck.convective);
+    vec2 q = plagueCloudSampleCoord(worldPos.xz, deck.cell, deck.shear, drift);
+    float noiseY = (worldPos.y - deck.base) / plagueCloudHeightRef(deck);
+    float baseShape = plagueCloudBaseShape(vec3(q.x, noiseY, q.y), deck);
+    return plagueCloudCoverage(baseShape, deck, potential);
 }
 
 /**
- * The same, sampling the region at this position rather than being handed one. The entry point for
- * a caller with no fan to hoist out of: the resolve's cloud-shadow query, three isolated heights
- * above one fragment with no neighbouring taps to share a region with.
+ * Coarse entry point for secondary cloud-shadow and reflection consumers.
  */
 float plagueCloudDensityCoarse(vec3 worldPos, PlagueCloudDeck deck, vec2 drift) {
-    float region = plagueCloudRegion(plagueCloudSampleCoord(worldPos.xz, deck, drift), deck);
-    return plagueCloudDensityCoarseIn(worldPos, deck, drift, region);
+    return plagueCloudDensityCoarseIn(worldPos, deck, drift);
 }
 
 /**
@@ -303,10 +499,7 @@ float plagueCloudDensityCoarse(vec3 worldPos, PlagueCloudDeck deck, vec2 drift) 
  * instead since recomputing drift per sample would be wasted work.
  */
 float plagueCloudDensity(vec3 worldPos, PlagueCloudDeck deck, float syncedTime) {
-    // Region is an output of the density evaluation, discarded here rather than via a second entry
-    // point, which would be two versions of the same field free to drift apart.
-    float unusedRegion;
-    return plagueCloudDensityAt(worldPos, deck, plagueCloudDrift(deck, syncedTime), unusedRegion);
+    return plagueCloudDensityAt(worldPos, deck, plagueCloudDrift(deck, syncedTime));
 }
 
 #endif // PLAGUE_CLOUD_DENSITY

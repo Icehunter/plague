@@ -13,6 +13,14 @@ uniform sampler2D u_Input0; // builtin.noise: the cloud field's erosion lattice
 // The noise hook, per the contract at the top of clouds.glsl: defined over this pass's own input
 // slot, after the sampler's declaration and before the import.
 #define PLAGUE_CLOUD_NOISE(uv) texture(u_Input0, uv)
+// This pass's cloud imposter (plagueCloudDensityCoarse, below) cannot bind a real sampler3D:
+// Vulkan's fullscreen-pipeline shader-reflection step refuses any non-2D/Cube sampler outright, so
+// only the compute-based direct-view march samples the real 3D volumes. This uses the same ALU
+// approximation as the region field (plagueSkyFbm), folding height into the 2D coordinate for some
+// vertical variance. A lower-fidelity stand-in for a reflection probe, never a bare constant; see
+// clouds.glsl's own noise-hook contract doc for why.
+#define PLAGUE_CLOUD_NOISE_3D(uvw) vec4(plagueSkyFbm((uvw).xz + (uvw).y, 4))
+#define PLAGUE_CLOUD_DETAIL_3D(uvw) vec4(plagueSkyFbm((uvw).xz * 3.0 + (uvw).y, 2))
 #moj_import <fornax_runtime:clouds.glsl>
 
 #moj_import <fornax_runtime:light_options.glsl>
@@ -82,11 +90,11 @@ void main() {
     // structure: this is a 128x128 probe the mip chain prefilters and waves ripple apart anyway.
     if (direction.y > 0.02) {
         float syncedTime = u_SkyState.w * 0.05;
-        PlagueCloudDeck envDeck = plagueCloudLowDeck(
+        PlagueCloudDeck envDeck = plagueCloudActiveDeck(
                 rainFactor,
                 clamp(u_FrameState.z, 0.0, 1.0),
                 clamp(u_FrameState.w, 0.0, 1.0),
-                int(u_CameraSkyLight.y + 0.5),
+                int(u_CameraSkyLight.y + 0.5) == 2 ? 1.0 : 0.0,
                 u_SkyCelestial.y,
                 syncedTime);
         float midSlab = envDeck.base + 0.5 * envDeck.depth;

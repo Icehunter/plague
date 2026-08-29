@@ -17,7 +17,7 @@ all.
 
 ## The frame, in order
 
-`graph.toml` declares **54 passes** writing **39 targets**. They run in the order they appear in the
+`graph.toml` declares **54 passes** writing **41 targets**. They run in the order they appear in the
 file. Grouped by what they are for:
 
 ### 1. Geometry: 7 passes
@@ -52,9 +52,79 @@ laid over the result. It is by far the largest shader in the pack.
 
 ### 4. Clouds: 4 passes
 
-`clouds_march` → `clouds_composite`, with `clouds_march_full` / `clouds_composite_full` as the
-higher-quality pair. Marched volumetrically against the same sky model the dome uses, so the clouds
-and the light they cast agree.
+`clouds_march_volume` → `clouds_composite`, with
+`clouds_march_volume_full` / `clouds_composite_full` as the higher-quality pair. The compute march
+samples the pack's 3D shape volumes against the same sky model the dome uses, so the clouds and the
+light they cast agree. Global Minecraft rain and thunder strengths drive weather morphology, while
+the camera precipitation type selects rain versus snow. Each march writes paired targets:
+premultiplied colour in
+`cloudsVolumeCompute` and the first density-bearing ray distance in `cloudsVolumeDistance`, with
+full-resolution equivalents for the highest quality tier.
+
+The composite samples the destination pixel's reversed-Z terrain depth, reconstructs its terrain
+distance, and resolves the colour from four fixed diagonal cloud taps. Each tap fetches colour and
+front distance from the same exact source texel, because filtering the discontinuous zero-sentinel
+distance would break their depth ordering. A non-empty tap contributes only when its cloud front is
+in front of that destination geometry (or the destination is sky), and the sum is always divided by
+four. The resolve therefore neither borrows clouds from a neighbouring depth class nor expands them
+by renormalising the surviving taps at a silhouette.
+
+Cloud placement has two independent coordinate systems. The density volumes retain their fixed
+57.6-block world X/Z lobe frame, shear, wind and drift. A separate unwarped 230.4-block allocation
+grid searches a fixed 3x3 neighbourhood of deterministically jittered sites. Each active site
+contributes an owner-local potential made from a tall core, lower side boil and raised crown. That
+potential biases the cutoff of the sampled 3D density; it is never multiplied into final density
+and therefore cannot become a visible circle, ring or Voronoi boundary. Overlaps take the strongest
+potential without exposing the Cartesian allocation cells. `Cloud Amount` changes only the immutable-rank activation
+threshold. Zero amount is exactly empty, while the dry maximum is capped below full population so
+the complete lattice can never become visible. Rain and snow keep that candidate membership fixed,
+so a weather fade cannot cross a hard rank, pop in a complete cloud, and only then grow it. They
+continuously change deck depth, optical depth, horizontal footprint and profile instead; thunder may
+also add storm candidates while retaining the accepted full-thunder population endpoint. No weather
+state moves the candidate sites. Each site also
+owns a small stable base-height offset, so individual cumulus retain locally flat bases without the
+whole deck sharing one plane.
+
+`Cloud Size = 0.30` is the physical reference. Size changes physical depth and the isosurface bias
+inside each fixed owner potential; it never scales a radius, offset or noise coordinate. The real
+3D sampled field therefore owns the growing silhouette around a stable centre. Base and detail
+volume coordinates retain the reference 76.8-block Y period and fixed X/Z
+frame, and the base blend remains 20% local to 80% organizational. The broad organization lookup
+uses a derived 5.3333 X/Z scale, giving it the same 307.2-block period vertically and horizontally
+instead of a pancake-biased field. Rain broadens the existing owners into a seven-okta, low-family
+stratiform/congestus layer; snow selects a slightly shallower, flatter endpoint. Thunder widens the
+deck further and reaches the spreading-top storm family, rather than putting the calm cumulus
+footprint under a taller slab. Amount never reaches the per-cloud cutoff. The rain/snow cover lane
+also closes the cloud-lighting ambient aperture from its clear estimate toward 0.875, so the cloudy
+sky does not retain a mostly-sunny fill even while its visible bodies overlap.
+
+The coarse density path still takes exactly two base-shape volume samples, and the full path adds
+the same two detail samples as before. The nine owner-site tests are ALU-only: no sampler, target,
+pass, history, ray step or sun tap is added. At the reference setting the dry deck resolves to 76.8
+blocks, Balanced advances six slab steps, and grazing rays remain capped at 64 steps. These
+contracts target detached, flat-based cumulus groups with rounded vertical crowns rather than a
+continuous rolling layer. The morphology and control response remain subject to owner live
+acceptance.
+
+Cloud lighting treats the density as a participating medium rather than a normal-mapped surface.
+Each quality tier keeps its existing coarse direct-light fan. The fan's accumulated optical depth
+is extended toward the light-side slab exit with a bounded same-budget remainder estimate made from
+the current density and fan mean already in registers. Ambient sky fill keeps its established sky
+colour and height/coverage response. The strongly forward raw phase is energy-preservingly mixed
+10% away from isotropic response, reducing the two-octave lit forward/backward ratio from roughly
+385:1 to 7.79:1. Powder and ambient overburden are gated by direct-light transmittance, so lit crowns
+remain white while shadowed interiors retain cool optical-depth separation. A bounded direct-crown
+exposure applies only high in the parcel when the light path is open and the camera views the
+light-facing crown; lower, occluded and near-sun samples retain the established response. That
+clear-noon-only closure fades out with rain, preventing its artificial +100% cap from punching a
+sunny crown through the already-overcast light palette while leaving the accepted clear expression
+unchanged. Terrain,
+water and LabPBR normal maps do not participate in cloud transport. These changes add no density
+lookup, light tap, pass or history resource and remain subject to owner live acceptance.
+
+`plagueCloudActiveDeck` is the pack-owned contributor-selection seam shared by the direct compute
+march, cloud-shadow query, and reflected-sky probe. All three consume the same global rain,
+thunder, wetness, and camera rain/snow classification so their cloud morphology agrees.
 
 ### 5. Water: 13 passes, the deepest part of the graph
 
@@ -99,9 +169,9 @@ anything drawn afterwards.
 shaders/
 ├── blocks/    7 geometry stages, 14 files (.vsh + .fsh each)
 ├── post/      28 fullscreen passes
-├── compute/   4 compute stages
+├── compute/   5 compute stages
 ├── include/   32 shared includes
-└── textures/  4 pack-owned textures
+└── textures/  6 pack-owned textures
 ```
 
 Two engine rules constrain this and cannot be worked around:

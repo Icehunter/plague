@@ -6,8 +6,8 @@
 // tau = 3 WP / (2 rho r_eff). Do not hand-edit the pasted block below; re-run the script instead.
 //
 // All seven rows exist now so the mid and high decks are table lookups when they land; only the
-// low deck is resolved today, moving between cumulus and cumulus congestus with rain. `convective`
-// (below the table) is authored, not derived.
+// low deck is resolved today, moving cumulus through cumulus congestus to cumulonimbus with rain
+// and thunder. `family` (below the table) is authored, not derived.
 
 // --- Options ----------------------------------------------------------------------------------
 //
@@ -21,22 +21,18 @@
 // their relative altitudes once more than cumulus is resolved.
 #define u_CloudAltitude 192.0 //[96.0..384.0 step 4.0] runtime "Cloud Altitude"
 
-// Multiplier on the genus's own published coverage, spent on the region field (which map areas
-// have weather) rather than the cell threshold: thresholding one fractal field harder only shrinks
-// its blobs, it doesn't reduce their count. Measured mean cloud chord fell 181->98 blocks under the
-// old single-field approach across this slider's range; splitting the demand between two fields
-// (see PLAGUE_CLOUD_REGION_DENSITY) holds that drift to 214->239, 11% instead of 85%.
+// Candidate population. Stable owner ranks are compared with this response, so increasing Amount
+// reveals additional owner-local domes without moving or dilating an already-active cloud.
 #define u_CloudAmount 1.0 //[0.00..2.00 step 0.05] runtime "Cloud Amount"
 
-// Multiple of the genus's own derived cell size; the one slider that departs from the physics on
-// purpose. Physically-sized cumulus (1.0) subtend ~45 degrees overhead and read as weather systems,
-// not a "nice day" sky; 0.30 gives the small-puff look this pack ships by default.
+// Relative physical size around the accepted reference; the one slider that departs from the
+// genus-table scale on purpose. The accepted 0.30 setting keeps the table's 400 m cumulus depth
+// while smaller/larger values shrink/grow around that reference rather than applying 0.30 twice.
 //
-// Scales cell and depth together, not cell alone: scaling width only inverts the genus's aspect
-// ratio (a narrow column reading as fog) and desynchronises the march step, erosion and coverage
-// fields from the shrinking cloud, which measurably degraded ray-march sampling density at small
-// scale. Scaling both keeps the row's aspect ratio and holds march sampling density constant with
-// cloud size.
+// Raises/lowers the density isosurface inside each fixed candidate organisation and scales physical
+// depth in Y. The base/detail coordinates and local/broad blend stay fixed, so Size reveals more
+// irregular 3-D density rather than dilating an analytic support or stretching individual pieces.
+// It never changes a world-coordinate divisor: doing that rephases every cloud around world origin.
 //
 // `tau` (optical depth) is deliberately not scaled with it: geometric similarity would fade the
 // deck out as it shrinks, which is a second, unwanted departure from physics bundled into this one
@@ -52,13 +48,10 @@
 // --- One resolved deck --------------------------------------------------------------------------
 
 /**
- * One genus, resolved for this instant. Six fields are table rows; `convective` is authored (see
- * below); the last three are solved on-the-fly so nothing downstream can threshold with a number
- * that doesn't deliver what it claims.
- *
- * Two coverages at two scales: `cover` is the genus's whole-sky figure; `localCover` is coverage
- * inside a region that already has weather in it (higher), and is what an individual cloud's size
- * is set by. `regionCut` and `cut` are the field thresholds that deliver each.
+ * One genus, resolved for this instant. Six fields are table rows; `family` is authored (see
+ * below). `population` is the stable-rank activation threshold; `cover` is aggregate reporting for
+ * lighting only; `cut` is the fixed per-candidate interior threshold. `sizeRatio` is whole-cloud
+ * physical scale without changing the world-anchored lobe coordinates.
  */
 struct PlagueCloudDeck {
     float base;        // absolute world Y of the slab's underside, blocks
@@ -67,10 +60,11 @@ struct PlagueCloudDeck {
     float shear;        // along-wind stretch, dimensionless; 1.0 is isotropic
     float tau;         // optical depth straight down through the whole slab, dimensionless
     float cover;        // fraction of the whole plane the deck occupies, 0..1
-    float convective;   // height-profile selector: 0 flat stratiform sheet, 1 deep convective tower
-    float localCover;   // fraction of a cloudy region the deck occupies, 0..1; see REGION_DENSITY
-    float cut;          // cell-field threshold delivering `localCover`; see plagueCloudCutoff
-    float regionCut;    // region-field threshold; see plagueCloudRegionCutoff
+    float population;   // owner-rank activation threshold, 0..1
+    float family;       // height-profile selector: 0 flat sheet, 1 deep tower, 2 spreading-top tower
+    float cut;          // fixed per-candidate base-field threshold
+    float sizeRatio;    // whole-cloud physical scale around the accepted reference
+    float footprint;    // weather morphology's horizontal growth; independent of Cloud Size
 };
 
 // Traversal cap, blocks, horizontal. tools/derive_cloud_types.py checks its genus cell sizes
@@ -168,91 +162,18 @@ const float PLAGUE_CLOUD_CUMULONIMBUS_CONVECTIVE  = 1.00;  // the deepest convec
                                                            // anvil comes from the table's own shear
                                                            // of 4.0, not from this axis
 
-// --- Turning a coverage fraction into a threshold -----------------------------------------------
+// --- Base-volume calibration --------------------------------------------------------------------
 //
-// plagueSkyFbm's output is nowhere near uniform on 0..1 (octave averaging pulls it toward the
-// mean); the threshold that delivers a stated coverage has to be solved against its actual
-// distribution, not guessed. Measured at this file's octave count, 4M samples over a 6000-cell
-// square: mean 0.50002, sigma 0.13191, close enough to Gaussian to invert with a probit.
-const float PLAGUE_CLOUD_FIELD_MEAN  = 0.50002;
-const float PLAGUE_CLOUD_FIELD_SIGMA = 0.13191;
-// Remap ceiling: field's measured max is 0.9438 over 4M samples, so normalising against 1.0 would
-// mean no column ever saturates. The top 0.1% saturates instead.
-const float PLAGUE_CLOUD_FIELD_TOP   = 0.85000;
-// Threshold for "no weather here": 1.0 is above the field's measured max (0.9443), so an empty
-// column is exact rather than a few surviving specks. Depends on the field's octave count staying
-// at 4 (max rises to 0.9728 at 3 octaves, 0.9954 at 2) and would need re-measuring if that
-// changes.
-const float PLAGUE_CLOUD_FIELD_CLOSED = 1.0;
-
-/**
- * Standard normal upper-tail quantile (x with P(X > x) = p). Abramowitz & Stegun 26.2.23, rational
- * approximation in sqrt(-2 ln p), absolute error bound 4.5e-4.
- *
- * Clamped to [1e-4, 0.5] so cover = 0 lands on a finite threshold above the field's max rather than
- * an asymptote.
- */
-float plagueNormalUpperQuantile(float p) {
-    float q = clamp(min(p, 1.0 - p), 1e-4, 0.5);
-    float t = sqrt(-2.0 * log(q));
-    float num = 2.515517 + t * (0.802853 + t * 0.010328);
-    float den = 1.0 + t * (1.432788 + t * (0.189269 + t * 0.001308));
-    float x = t - num / den;
-    return p > 0.5 ? -x : x;
-}
-
-/**
- * Coverage-field threshold that delivers a given sky coverage. Measured against the 4-octave field,
- * worst error 1.5 percentage points (the field's departure from Gaussian, not the quantile bound).
- *
- * @param cover coverage to deliver: once more than the low deck resolves, this is the deck's
- *              `localCover`, not `cover` (see below).
- */
-float plagueCloudCutoff(float cover) {
-    return PLAGUE_CLOUD_FIELD_MEAN
-         + PLAGUE_CLOUD_FIELD_SIGMA * plagueNormalUpperQuantile(clamp(cover, 0.0, 1.0));
-}
-
-// --- The region field: which parts of the map have weather in them at all -----------------------
-//
-// Two independently-thresholded fractal fields, not one: thresholding a single field harder for
-// less coverage also shrinks every surviving cloud, since only a peak clears a raised bar. Follows
-// Schneider & Vos, SIGGRAPH 2015: a low-frequency weather field gating whether a region is cloudy,
-// a cell-scale field shaping the cloud inside it.
-//
-// The coverage figure is split between them: within an active region the genus covers
-// PLAGUE_CLOUD_REGION_DENSITY times its whole-sky average; the rest of the demand buys region area.
-// The product reproduces `cover` at any slider position. Once region area saturates, only local
-// density can still grow, and the two fields collapse back into the single-field case.
-const float PLAGUE_CLOUD_REGION_DENSITY = 1.5;
-
-// Region field's own distribution, measured at the octave count clouds.glsl samples it with (wider
-// than the 4-octave cell field, as fewer octaves pulls less toward the mean): 3 octaves, 4M samples,
-// mean 0.49997, sigma 0.14048.
-const float PLAGUE_CLOUD_WEATHER_MEAN  = 0.49997;
-const float PLAGUE_CLOUD_WEATHER_SIGMA = 0.14048;
-
-// Soft-edge half-width, in sigma. Not taste: measured so the region mask crosses 0.02->0.98 over
-// 447 blocks (2.3 cumulus cells), keeping a weather boundary at least two clouds thick rather than
-// a hard line.
-const float PLAGUE_CLOUD_WEATHER_BAND = 0.35;
-
-// Correction for the soft edge, subtracted from the threshold. The cell field's response through
-// the crossing is steeply convex (half the mask delivers a sixteenth of the cloud, not half), so a
-// region solved for area alone comes out short; 0.15 sigma of extra area puts delivered coverage
-// back on target (worst error 0.012, against 0.015 for the single-field construction it replaced).
-const float PLAGUE_CLOUD_WEATHER_BIAS = 0.15;
-
-/**
- * Region-field threshold delivering a given fraction of the map, biased for the soft edge.
- * Deliberately over-delivers area (bias buying back what the soft edge costs); the number that has
- * to land correctly is the coverage the two fields produce together, not either field's area alone.
- */
-float plagueCloudRegionCutoff(float regionFraction) {
-    return PLAGUE_CLOUD_WEATHER_MEAN
-         + PLAGUE_CLOUD_WEATHER_SIGMA * (plagueNormalUpperQuantile(clamp(regionFraction, 0.0, 1.0))
-                                         - PLAGUE_CLOUD_WEATHER_BIAS);
-}
+// The two-scale base-volume field is not uniform on 0..1. tools/verify_clouds.py takes 500,000
+// deterministic trilinear samples over the 24x24x1 joint domain at the accepted size ratio: mean
+// 0.51463, sigma 0.09489 after the centered fourfold organization-Y calibration. These statistics
+// pin the authored volume and catch accidental sampler/coordinate changes; candidate allocation no
+// longer derives a moving cutoff from aggregate coverage.
+const float PLAGUE_CLOUD_FIELD_MEAN  = 0.51463;
+const float PLAGUE_CLOUD_FIELD_SIGMA = 0.09489;
+// Remap ceiling: the same sample's 99.9th percentile is 0.78005, so the top 0.1% saturates rather
+// than normalising against an unreachable 1.0.
+const float PLAGUE_CLOUD_FIELD_TOP   = 0.78005;
 
 /**
  * How far u_CloudAltitude moves the low deck from the table's placement, blocks.
@@ -293,55 +214,154 @@ const int PLAGUE_PRECIP_SNOW = 2;
 // cloud into its neighbours and erases silhouettes, so the ceiling stays well clear of it.
 const float PLAGUE_CLOUD_STORM_COVER = 0.6250;
 
+// Precipitation endpoints authored against the owner's 2026-08-28 transition capture. Rain's 1.65
+// footprint and family 0.30 close the gaps into a broad stratiform/congestus layer instead of a
+// miniature vertical tower; snow is slightly shallower/flatter at 1.55 and family 0.15. The 0.875
+// lighting cover is seven oktas: visibly overcast while retaining occasional breaks. Thunder's
+// accepted 1.75/family-2 endpoint remains unchanged and overrides either precipitation endpoint.
+const float PLAGUE_CLOUD_RAIN_FOOTPRINT = 1.65;
+const float PLAGUE_CLOUD_SNOW_FOOTPRINT = 1.55;
+const float PLAGUE_CLOUD_CUMULONIMBUS_FOOTPRINT = 1.75;
+const float PLAGUE_CLOUD_RAIN_FAMILY = 0.30;
+const float PLAGUE_CLOUD_SNOW_FAMILY = 0.15;
+const float PLAGUE_CLOUD_PRECIPITATION_COVER = 0.875;
+
+// Accepted live/default Cloud Size whose existing 57.6-block cumulus coordinate frequency is
+// preserved. Measured from the owner's current working settings before stabilising the slider.
+const float PLAGUE_CLOUD_REFERENCE_SCALE = 0.30;
+
+// The owner-calibrated 0.20 exponent maps the full 0.20..2.00 UI span to 0.922..1.461 linear size.
+// That range changes each stable owner's density isosurface without changing texture-field periods.
+const float PLAGUE_CLOUD_SIZE_EXPONENT = 0.20;
+
+// Population response and ceiling authored against the six 2026-08-28 high-altitude owner
+// captures. A quarter response gives the default/max dry settings activation thresholds 0.50 and
+// 0.707; 0.72 leaves headroom for weather while guaranteeing no setting fills the complete
+// stratified lattice and exposes it as a grid.
+const float PLAGUE_CLOUD_POPULATION_RESPONSE = 0.25;
+const float PLAGUE_CLOUD_POPULATION_MAX = 0.72;
+
+// Fixed per-candidate interior threshold: the shipped two-volume field's measured 75% superlevel
+// cutoff. Amount owns population now, so this value must never move with aggregate coverage.
+const float PLAGUE_CLOUD_CANDIDATE_CUTOFF = 0.450656;
+
+// Measured over the fixed 24x24 owner calibration at reference Size: candidate potential area times
+// fixed-cut base occupancy. This is aggregate lighting/reporting data, never a density-shape input.
+const float PLAGUE_CLOUD_REFERENCE_OCCUPANCY = 0.34111;
+
+// Used only by clouds.glsl's reference step-budget expression; candidate density reads the fixed
+// table depth directly and never derives from this reciprocal.
+const float PLAGUE_CLOUD_CUMULUS_VERTICAL_ASPECT = 3.33333333;
+
 /**
- * The low deck, resolved for this instant. Interpolates cumulus toward cumulus congestus on
- * rainFactor: depth, tau and cover grow; cell, shear and convective never move (see
- * plagueCloudSampleCoord's world-origin constraint in cloud_density.glsl). thunderFactor,
- * precipitation, sunElevation and worldTime are accepted and ignored; a later pass extends the
- * interpolation toward cumulonimbus and snow decks.
+ * Midpoint of the clear cumulus reference deck, without resolving the full weather driver.
  *
- * @param rainFactor     u_SkyState.x, 0..1. Drives cover, depth and tau toward congestus.
- * @param thunderFactor  0..1. Not yet wired; the path to cumulonimbus.
- * @param wetness        smoothed surface-wetness state, 0..1. Not used: rainFactor is instantaneous,
- *                       wetness lags it by minutes in both directions.
- * @param precipitation  PLAGUE_PRECIP_*. Not yet wired; snow forms under a shallower, flatter deck.
+ * The direct compute march needs this only to choose one world-XZ weather sample before it knows
+ * the local rain/snow state. Calling plagueCloudActiveDeck once for that proxy and again for the
+ * real deck duplicates the whole driver in the generated Metal function; the Apple backend rejects
+ * that expanded compute pipeline. Keep this algebra identical to plagueCloudLowDeck's clear arm
+ * while leaving the full driver to the one result that is actually marched.
+ */
+float plagueCloudClearReferenceMidAltitude() {
+    float physicalScale = pow(max(u_CloudScale, 0.05) / PLAGUE_CLOUD_REFERENCE_SCALE,
+                              PLAGUE_CLOUD_SIZE_EXPONENT);
+    return plagueCloudEngineBase() + plagueCloudLowDeckShift()
+            + 0.5 * PLAGUE_CLOUD_CUMULUS_DEPTH * physicalScale;
+}
+
+/**
+ * The low deck, resolved for this instant. Interpolates cumulus toward congestus on rainFactor,
+ * then congestus toward cumulonimbus on thunderFactor. Rain/snow grow depth and tau while keeping
+ * candidate membership fixed; thunder may add storm cells. Cover reports expected aggregate
+ * occupancy for lighting. Cell, shear, and every
+ * texture coordinate stay fixed (see plagueCloudSampleCoord's world-origin constraint in
+ * cloud_density.glsl). Footprint and family are morphology data: rain broadens into congestus and
+ * thunder broadens again into the existing storm-top profile without rephasing the field.
+ * snowWeight continuously selects the rain/snow stratiform endpoint; sunElevation and worldTime are accepted
+ * and ignored for the future multi-deck driver.
+ *
+ * @param rainFactor     u_SkyState.x, 0..1. Grows existing candidates toward rain/snow morphology.
+ * @param thunderFactor  0..1. Drives depth and tau from congestus toward cumulonimbus.
+ * @param wetness        smoothed surface-wetness state, 0..1. Not used: it lags cloud weather.
+ * @param snowWeight     0 rain morphology, 1 snow morphology, continuous between.
  * @param sunElevation   sin(sun elevation), u_SunDirection.w. Not yet wired.
  * @param worldTime      world clock, seconds. Not yet wired.
  */
 PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float wetness,
-                                   int precipitation, float sunElevation, float worldTime) {
+                                   float snowWeight, float sunElevation, float worldTime) {
     PlagueCloudDeck deck;
 
-    float storm = clamp(rainFactor, 0.0, 1.0) * clamp(u_CloudWeatherResponse, 0.0, 1.0);
+    float response = clamp(u_CloudWeatherResponse, 0.0, 1.0);
+    float rainStorm = clamp(rainFactor, 0.0, 1.0) * response;
+    float thunderStorm = clamp(thunderFactor, 0.0, 1.0) * response;
+    float snowWeather = clamp(snowWeight, 0.0, 1.0);
 
-    // See u_CloudScale: both dimensions scale together; tau does not.
-    float scale     = max(u_CloudScale, 0.05);
-    deck.depth      = mix(PLAGUE_CLOUD_CUMULUS_DEPTH, PLAGUE_CLOUD_CONGESTUS_DEPTH, storm) * scale;
-    deck.cell       = PLAGUE_CLOUD_CUMULUS_CELL * scale;
+    float precipitationDepth = mix(PLAGUE_CLOUD_CONGESTUS_DEPTH,
+                                   PLAGUE_CLOUD_STRATOCUMULUS_DEPTH, snowWeather);
+    float precipitationTau = mix(PLAGUE_CLOUD_CONGESTUS_TAU,
+                                 PLAGUE_CLOUD_STRATOCUMULUS_TAU, snowWeather);
+    float precipitationFootprint = mix(PLAGUE_CLOUD_RAIN_FOOTPRINT,
+                                       PLAGUE_CLOUD_SNOW_FOOTPRINT, snowWeather);
+    float precipitationFamily = mix(PLAGUE_CLOUD_RAIN_FAMILY,
+                                    PLAGUE_CLOUD_SNOW_FAMILY, snowWeather);
+
+    // Two-stage mix: calm cumulus to the local rain/snow endpoint, then to cumulonimbus. Chaining
+    // keeps full thunder byte-for-byte independent of which precipitation endpoint it grew from.
+    float depthAfterRain = mix(PLAGUE_CLOUD_CUMULUS_DEPTH, precipitationDepth, rainStorm);
+    float tauAfterRain = mix(PLAGUE_CLOUD_CUMULUS_TAU, precipitationTau, rainStorm);
+
+    // The bounded perceptual response was fit over the five Size knots recorded by the cloud
+    // verifier. It grows physical depth and lowers a fixed-field density isosurface; it never
+    // scales an analytic candidate radius or a world-coordinate divisor.
+    float physicalScale = pow(max(u_CloudScale, 0.05) / PLAGUE_CLOUD_REFERENCE_SCALE,
+                              PLAGUE_CLOUD_SIZE_EXPONENT);
+    deck.depth      = mix(depthAfterRain, PLAGUE_CLOUD_CUMULONIMBUS_DEPTH, thunderStorm)
+                    * physicalScale;
+    deck.cell       = PLAGUE_CLOUD_CUMULUS_CELL * PLAGUE_CLOUD_REFERENCE_SCALE;
+    deck.sizeRatio  = physicalScale;
     deck.shear      = PLAGUE_CLOUD_CUMULUS_SHEAR;
-    deck.tau        = mix(PLAGUE_CLOUD_CUMULUS_TAU, PLAGUE_CLOUD_CONGESTUS_TAU, storm);
-    deck.convective = PLAGUE_CLOUD_CUMULUS_CONVECTIVE;
+    deck.tau        = mix(tauAfterRain, PLAGUE_CLOUD_CUMULONIMBUS_TAU, thunderStorm);
+    deck.footprint  = mix(mix(1.0, precipitationFootprint, rainStorm),
+                          PLAGUE_CLOUD_CUMULONIMBUS_FOOTPRINT, thunderStorm);
+    deck.family     = mix(mix(PLAGUE_CLOUD_CUMULUS_CONVECTIVE,
+                              precipitationFamily, rainStorm),
+                          2.0, thunderStorm);
 
     // Shift, not assignment: see plagueCloudLowDeckShift.
     deck.base = plagueCloudEngineBase() + plagueCloudLowDeckShift();
 
-    float rowCover = mix(PLAGUE_CLOUD_CUMULUS_COVER, PLAGUE_CLOUD_STORM_COVER, storm);
-    deck.cover = clamp(rowCover * max(u_CloudAmount, 0.0), 0.0, 1.0);
-
-    // rowLocal reads off the genus row, not `cover`, so cloud size doesn't change as the slider
-    // moves. max() is the saturating arm: once the region is fully covered, further coverage has to
-    // raise localCover instead. See PLAGUE_CLOUD_REGION_DENSITY.
-    float rowLocal   = min(rowCover * PLAGUE_CLOUD_REGION_DENSITY, 1.0);
-    deck.localCover  = max(rowLocal, deck.cover);
-    // 1e-3 floor: avoids a divide-by-zero at zero coverage; unreachable otherwise since localCover
-    // is always >= the row's cover.
-    float regionArea = min(deck.cover / max(deck.localCover, 1e-3), 1.0);
-
-    // Solved here, not cached, so both cutoffs stay in lockstep with `cover` as it starts moving.
-    deck.cut       = plagueCloudCutoff(deck.localCover);
-    deck.regionCut = plagueCloudRegionCutoff(regionArea);
+    // Amount owns clear/rain/snow membership, so precipitation cannot cross a hard rank and pop a
+    // new cloud into existence. Thunder retains its accepted extra storm-cell population endpoint.
+    float amount = max(u_CloudAmount, 0.0);
+    float thunderPopulation = mix(1.0,
+            PLAGUE_CLOUD_STORM_COVER / PLAGUE_CLOUD_CUMULUS_COVER, thunderStorm);
+    deck.population = amount <= 0.0
+            ? 0.0
+            : min(sqrt(max(PLAGUE_CLOUD_POPULATION_RESPONSE * amount * thunderPopulation, 0.0)),
+                  PLAGUE_CLOUD_POPULATION_MAX);
+    float clearCover = clamp(PLAGUE_CLOUD_REFERENCE_OCCUPANCY
+                             * min(sqrt(max(PLAGUE_CLOUD_POPULATION_RESPONSE * amount, 0.0)),
+                                   PLAGUE_CLOUD_POPULATION_MAX)
+                             * physicalScale * physicalScale, 0.0, 1.0);
+    float precipitationCover = mix(clearCover, PLAGUE_CLOUD_PRECIPITATION_COVER, rainStorm);
+    deck.cover = amount <= 0.0
+            ? 0.0
+            : clamp(mix(precipitationCover, PLAGUE_CLOUD_PRECIPITATION_COVER,
+                        thunderStorm), 0.0, 1.0);
+    deck.cut = PLAGUE_CLOUD_CANDIDATE_CUTOFF;
 
     return deck;
+}
+
+/**
+ * The single contributor-selection seam used by every live cloud integration path. Future weather
+ * types select their contributors here while the march, shadow, and reflection stay one path each.
+ * Today only the low deck is active, so this is deliberately an exact delegation.
+ */
+PlagueCloudDeck plagueCloudActiveDeck(float rainFactor, float thunderFactor, float wetness,
+                                      float snowWeight, float sunElevation, float worldTime) {
+    return plagueCloudLowDeck(rainFactor, thunderFactor, wetness, snowWeight, sunElevation,
+                              worldTime);
 }
 
 #endif // PLAGUE_CLOUD_TYPES

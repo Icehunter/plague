@@ -1,0 +1,129 @@
+#version 450
+
+// The direct-view cloud march, as a compute pass: Vulkan's shader-reflection step for
+// FULLSCREEN/geometry pipelines (GlslCompiler.addToBindGroup) refuses any sampled texture whose
+// SPIR-V dimension isn't 2D or Cube, so the real 3D coverage/detail volumes (cloud_density.glsl)
+// can only be bound here, never from a fullscreen pass. clouds_march.fsh stays compile-checked
+// with fullscreen-safe ALU field hooks but is not live in graph.toml.
+
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:light_and_ambient_colors.glsl>
+#moj_import <fornax_runtime:light_options.glsl>
+#moj_import <fornax_runtime:sky.glsl>
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Binding order mirrors graph.toml's declared inputs-then-outputs for this pass exactly:
+// 0 globals (above), 1 packOptions (auto-injected by the engine, no declaration needed here),
+// 2 cloudBaseShape, 3 cloudDetailShape, 4 colour, 5 cloud-front distance. Terrain visibility is
+// resolved against the destination pixel in clouds_composite, so this compute pass intentionally
+// has no unused 2D depth descriptor mixed into its 3D-volume descriptor set.
+layout(set = 0, binding = 2) uniform sampler3D u_CloudBaseShapeVolume;
+layout(set = 0, binding = 3) uniform sampler3D u_CloudDetailShapeVolume;
+layout(rgba16f, set = 0, binding = 4) uniform writeonly image2D u_OutClouds;
+layout(r32f, set = 0, binding = 5) uniform writeonly image2D u_OutCloudDistance;
+
+#define PLAGUE_CLOUD_NOISE_3D(uvw) texture(u_CloudBaseShapeVolume, uvw)
+#define PLAGUE_CLOUD_DETAIL_3D(uvw) texture(u_CloudDetailShapeVolume, uvw)
+#moj_import <fornax_runtime:clouds.glsl>
+
+void main() {
+    ivec2 outSize = imageSize(u_OutClouds);
+    ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(texelCoord, outSize))) {
+        return;
+    }
+#if CLOUDS_VOLUMETRIC
+    vec2 texCoord = (vec2(texelCoord) + 0.5) / vec2(outSize);
+
+    if (u_SkyState.z <= 0.5) {
+        imageStore(u_OutClouds, texelCoord, vec4(0.0));
+        imageStore(u_OutCloudDistance, texelCoord, vec4(0.0));
+        return;
+    }
+
+    // Same reversed-Z far-plane reconstruction clouds_march.fsh uses, and the same reasoning for
+    // why: unprojecting at the near plane puts the point centimeters from the eye, where view-bob
+    // swings the direction tens of degrees per footstep.
+    vec4 clipPos = vec4(texCoord * 2.0 - 1.0, 0.0001, 1.0);
+    vec4 worldH = u_InvProjModelView * clipPos;
+    vec3 viewDir = normalize(worldH.xyz / worldH.w);
+
+    const float goldenRatio = 1.61803398875;
+    float dither = 52.9829189
+            * fract(0.06711056 * float(texelCoord.x) + 0.00583715 * float(texelCoord.y));
+    dither = fract(dither + goldenRatio * mod(u_FrameState.x, 3600.0));
+
+    PlagueCustomPalette palette = PlagueCustomPalette(
+            u_AtmPaletteNoonExponent, u_AtmPaletteNoonBrightness,
+            vec3(u_AtmPaletteSunsetTintR, u_AtmPaletteSunsetTintG, u_AtmPaletteSunsetTintB),
+            vec3(u_AtmPaletteNightR, u_AtmPaletteNightG, u_AtmPaletteNightB),
+            vec3(u_AtmPaletteRainDayR, u_AtmPaletteRainDayG, u_AtmPaletteRainDayB),
+            vec3(u_AtmPaletteRainNightR, u_AtmPaletteRainNightG, u_AtmPaletteRainNightB),
+            vec3(u_LightPaletteNoonR, u_LightPaletteNoonG, u_LightPaletteNoonB),
+            vec3(u_LightPaletteSunsetR, u_LightPaletteSunsetG, u_LightPaletteSunsetB),
+            u_LightPaletteSunsetWarmth,
+            vec3(u_LightPaletteNightR, u_LightPaletteNightG, u_LightPaletteNightB),
+            vec3(u_LightPaletteRainDayR, u_LightPaletteRainDayG, u_LightPaletteRainDayB),
+            vec3(u_LightPaletteRainNightR, u_LightPaletteRainNightG, u_LightPaletteRainNightB),
+            u_LightPaletteRainMagnitude);
+
+    // Compute passes never receive the fullscreen PassParams push constant's derived sun-elevation
+    // sine: that push constant's base 32 bytes carry texelSize/param2/param3/sunDir.xyz only, per
+    // ComputePassRunner, and .w is never written for a compute dispatch. Re-derived here from the
+    // same true sun direction clouds_march.fsh itself already uses for sunDirTrue: the Y component
+    // of a unit direction vector is the sine of its elevation by definition, so this is the exact
+    // same value under a different name, not an approximation.
+    vec3 sunDirTrue = dot(u_SkyCelestial.xyz, u_SkyCelestial.xyz) > 1e-6
+            ? normalize(u_SkyCelestial.xyz) : vec3(0.0, 1.0, 0.0);
+    float sunElevationSine = sunDirTrue.y;
+
+    float syncedTime = u_SkyState.w * 0.05;
+
+    float localRain = clamp(u_SkyState.x, 0.0, 1.0);
+    float localThunder = clamp(u_FrameState.z, 0.0, 1.0);
+    float localSnowWeight = int(u_CameraSkyLight.y + 0.5) == 2 ? 1.0 : 0.0;
+
+    PlagueLighting lighting = plagueOverworldLighting(
+            max(u_SkyColor.rgb, vec3(0.0)), sunElevationSine, u_SkyState.y,
+            localRain, u_ScreenBrightness, palette);
+    PlagueSkyColors skyColours = plagueSkyColors(max(u_SkyColor.rgb, vec3(0.0)),
+            sunDirTrue, lighting.sunVisibility, localRain, u_CameraAbs.y);
+
+    PlagueCloudDeck deck = plagueCloudActiveDeck(
+            localRain,
+            localThunder,
+            clamp(u_FrameState.w, 0.0, 1.0),
+            localSnowWeight,
+            sunElevationSine,
+            syncedTime);
+
+    // u_Param2 is filled by the engine BY PASS NAME (see ComputePassRunner); this pass's name is
+    // not one the engine recognizes, so u_Param2 reads 0 here and this falls back to fog render
+    // distance exactly the way clouds_march.fsh's own fallback already does for that same case.
+    float renderDistance = max(u_RenderFog.y, 32.0);
+
+    vec3 atmColorMult = vec3(1.0);
+#ifdef ATM_COLOR_MULTS
+    atmColorMult = plagueAtmColorMult(lighting.noonFactor, lighting.sunVisibility2,
+            lighting.rainFactor,
+            vec3(u_AtmMorningR, u_AtmMorningG, u_AtmMorningB) * u_AtmMorningI,
+            vec3(u_AtmNoonR, u_AtmNoonG, u_AtmNoonB) * u_AtmNoonI,
+            vec3(u_AtmNightR, u_AtmNightG, u_AtmNightB) * u_AtmNightI,
+            vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
+#endif
+
+    float cloudFrontDistance;
+    vec4 clouds = plagueGetClouds(viewDir, u_CameraAbs, 0.0, dither,
+                                  deck, skyColours, lighting, sunDirTrue, syncedTime,
+                                  renderDistance, atmColorMult, cloudFrontDistance);
+
+    imageStore(u_OutClouds, texelCoord, clouds);
+    imageStore(u_OutCloudDistance, texelCoord, vec4(cloudFrontDistance));
+#else
+    imageStore(u_OutClouds, texelCoord, vec4(0.0));
+    imageStore(u_OutCloudDistance, texelCoord, vec4(0.0));
+#endif
+}
