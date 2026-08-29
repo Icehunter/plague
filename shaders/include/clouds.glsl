@@ -589,16 +589,11 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
             float crownExposure = smoothstep(0.5 * PLAGUE_CLOUD_PARCEL_MIN_TOP,
                                              PLAGUE_CLOUD_PARCEL_MIN_TOP, h)
                                 * lightT * lightT * crownBackView * crownBackView;
-            // The crown closure was authored for the owner's accepted clear-noon capture. The
-            // 2026-08-28 rain capture showed that same +100% cap punching clear-sky light through
-            // an otherwise overcast palette, so weather fades only this additive correction. Keep
-            // the clear arm as the original expression so accepted fair-weather transport is exact.
-            if (lighting.rainFactor <= 0.0) {
-                direct *= 1.0 + PLAGUE_CLOUD_CROWN_LIGHT_GAIN * crownExposure;
-            } else {
-                direct *= 1.0 + PLAGUE_CLOUD_CROWN_LIGHT_GAIN * crownExposure
-                                * (1.0 - lighting.rainFactor);
-            }
+            // Relative gain on a directRadiance the weather has already dimmed, so it scales the
+            // overcast palette rather than injecting clear-sky light into it. The term is also
+            // self-attenuating under rain: lightT falls as the deck's tau grows, and the gate is
+            // lightT squared.
+            direct *= 1.0 + PLAGUE_CLOUD_CROWN_LIGHT_GAIN * crownExposure;
             // Fitted against the seeded 24-direction final-density hemisphere holdout in
             // tools/verify_clouds.py. This is local Beer visibility, not a surface normal: the
             // coloured sky dome remains the incident light and gains no texture/density lookup.
