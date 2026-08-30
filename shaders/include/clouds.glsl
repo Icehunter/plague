@@ -209,6 +209,10 @@ const float PLAGUE_CLOUD_PHASE_ANISOTROPY = 0.10;
 // occluded interiors, side views and the near-sun forward lobe at or near identity.
 const float PLAGUE_CLOUD_CROWN_LIGHT_GAIN = 1.0;
 
+// Shortwave albedo of the surface under the deck. Between vegetated land (~0.2) and open water
+// (~0.06) for a mixed coastal view. Sets how grey a cloud base reads; 0 restores gap-lit bases.
+const float PLAGUE_CLOUD_GROUND_ALBEDO = 0.15;
+
 // Multiple-scattering correction (Wrenninge, Kulla & Lombardi, "Art-Directable Multiple
 // Volumetric Scattering", SIGGRAPH 2013 Talks): approximates the multiply-scattered field as a
 // sum of single-scattering evaluations at reduced extinction, energy and phase asymmetry per
@@ -523,9 +527,14 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // Evaluated once per ray: no per-sample direction to vary it by.
     vec3 ambientDome = plagueSkyHemisphere(skyColours, skyColours.lightUp);
 
-    // Fraction of the sky dome a cloud's base sees through the gaps in this deck. No ground-bounce
-    // term: this pass has no albedo signal to build one from.
+    // Fraction of the sky dome a cloud's base sees through the gaps in this deck.
     float ambientBase = 1.0 - deck.cover;
+
+    // The rest of what a base sees: sun and skylight off the surface below. Without it a grazing
+    // ray under a closed deck reads near-black. lightDir, not skyColours.lightUp, since the latter
+    // is the true sun and would zero the bounce against a moon directRadiance.
+    vec3 groundBounce = PLAGUE_CLOUD_GROUND_ALBEDO
+                      * (directRadiance * max(lightDir.y, 0.0) + ambientDome);
 
     // Reference length for the powder term: one erosion cell, the field's finest feature, read
     // through plagueCloudErosionCells so it tracks the Fast tier's coarsened cell size rather
@@ -603,7 +612,11 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
             // coloured sky dome remains the incident light and gains no texture/density lookup.
             float ambientVisibility = exp(-0.22 * density * deck.tau * (1.0 - h)
                                         * (1.0 - lightT));
-            vec3 ambient = ambientDome * mix(ambientBase, 1.0, h) * ambientVisibility;
+            // Same Beer visibility, depth mirrored: the sky dome is buried by cloud above a
+            // sample, the ground by cloud below it.
+            float bounceVisibility = exp(-0.22 * density * deck.tau * h * (1.0 - lightT));
+            vec3 ambient = ambientDome * mix(ambientBase, 1.0, h) * ambientVisibility
+                         + groundBounce * bounceVisibility;
 
             luminance += weight * (direct + ambient);
             distSum += weight * t;
