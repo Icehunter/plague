@@ -300,15 +300,15 @@ float plagueCloudClearReferenceMidAltitude() {
 }
 
 /**
- * How far the sky has changed genus: 0 convective, 1 stratiform. Thunder pulls it back to zero,
- * since a cumulonimbus is the storm itself rather than the sheet in front of one.
+ * How far the sky has changed genus: 0 convective, 1 stratiform. Thunder does NOT pull this back:
+ * a storm's overcast is the cumulonimbus base, which from underneath is a dark closed sheet, not
+ * visible towers. Zeroing it here reopened the sky at thunder, delivering 37% coverage against
+ * rain's 99%, so the heaviest weather had the emptiest sky.
  */
 float plagueCloudStratiformWeight(float rainFactor, float thunderFactor) {
     float response = clamp(u_CloudWeatherResponse, 0.0, 1.0);
     float rain = clamp(rainFactor, 0.0, 1.0) * response;
-    float thunder = clamp(thunderFactor, 0.0, 1.0) * response;
-    return smoothstep(PLAGUE_CLOUD_STRATIFORM_ONSET, PLAGUE_CLOUD_STRATIFORM_FULL, rain)
-         * (1.0 - thunder);
+    return smoothstep(PLAGUE_CLOUD_STRATIFORM_ONSET, PLAGUE_CLOUD_STRATIFORM_FULL, rain);
 }
 
 /**
@@ -410,16 +410,24 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
  * Its cell is constant, like the low deck's: the world-origin prohibition forbids a cell that moves
  * with time or a slider, not two decks holding different fixed ones.
  */
-PlagueCloudDeck plagueCloudNimbostratusDeck(float stratiformWeight) {
+PlagueCloudDeck plagueCloudNimbostratusDeck(float stratiformWeight, float thunderFactor) {
     PlagueCloudDeck deck;
 
     float physicalScale = pow(max(u_CloudScale, 0.05) / PLAGUE_CLOUD_REFERENCE_SCALE,
                               PLAGUE_CLOUD_SIZE_EXPONENT);
     float amount = max(u_CloudAmount, 0.0);
 
+    // Thunder deepens and lowers the sheet toward the table's own storm figures rather than
+    // handing the sky back to the convective deck. Same two-stage shape the low deck uses, so the
+    // storm endpoint is reached the same way whichever genus owns the sky.
+    float thunderStorm = clamp(thunderFactor, 0.0, 1.0)
+                       * clamp(u_CloudWeatherResponse, 0.0, 1.0);
+
     deck.base = plagueCloudEngineBase() + plagueCloudLowDeckShift()
-              + (PLAGUE_CLOUD_NIMBOSTRATUS_BASE - PLAGUE_CLOUD_CUMULUS_BASE);
-    deck.depth = PLAGUE_CLOUD_NIMBOSTRATUS_DEPTH * physicalScale;
+              + (mix(PLAGUE_CLOUD_NIMBOSTRATUS_BASE, PLAGUE_CLOUD_CUMULONIMBUS_BASE, thunderStorm)
+                 - PLAGUE_CLOUD_CUMULUS_BASE);
+    deck.depth = mix(PLAGUE_CLOUD_NIMBOSTRATUS_DEPTH, PLAGUE_CLOUD_CUMULONIMBUS_DEPTH,
+                     thunderStorm) * physicalScale;
     deck.cell = PLAGUE_CLOUD_NIMBOSTRATUS_CELL * PLAGUE_CLOUD_REFERENCE_SCALE;
     deck.shear = PLAGUE_CLOUD_NIMBOSTRATUS_SHEAR;
     // From zero, not from the cumulus figure. Optical depth is the sheet's water path, and a cloud
@@ -429,7 +437,8 @@ PlagueCloudDeck plagueCloudNimbostratusDeck(float stratiformWeight) {
     // Squared, not linear: a linear ramp reached opacity 0.98 by the time coverage was 0.8%, so a
     // handful of tiny patches went solid before the sheet had spread anywhere. Squaring keeps the
     // veil translucent while coverage builds, which is the order a front actually thickens in.
-    deck.tau = PLAGUE_CLOUD_NIMBOSTRATUS_TAU * stratiformWeight * stratiformWeight;
+    deck.tau = mix(PLAGUE_CLOUD_NIMBOSTRATUS_TAU, PLAGUE_CLOUD_CUMULONIMBUS_TAU, thunderStorm)
+             * stratiformWeight * stratiformWeight;
     deck.cover = PLAGUE_CLOUD_NIMBOSTRATUS_COVER;
     deck.family = PLAGUE_CLOUD_NIMBOSTRATUS_CONVECTIVE;
     deck.sizeRatio = physicalScale;
@@ -464,7 +473,7 @@ PlagueCloudDeck plagueCloudActiveDeck(float rainFactor, float thunderFactor, flo
                                       float snowWeight, float sunElevation, float worldTime) {
     float stratiform = plagueCloudStratiformWeight(rainFactor, thunderFactor);
     if (stratiform >= 0.5) {
-        return plagueCloudNimbostratusDeck(stratiform);
+        return plagueCloudNimbostratusDeck(stratiform, thunderFactor);
     }
     return plagueCloudLowDeck(rainFactor, thunderFactor, wetness, snowWeight, sunElevation,
                               worldTime);
@@ -481,7 +490,7 @@ float plagueCloudTransitionDecks(float rainFactor, float thunderFactor, float we
     convective = plagueCloudLowDeck(rainFactor, thunderFactor, wetness, snowWeight, sunElevation,
                                     worldTime);
     float weight = plagueCloudStratiformWeight(rainFactor, thunderFactor);
-    stratiform = plagueCloudNimbostratusDeck(weight);
+    stratiform = plagueCloudNimbostratusDeck(weight, thunderFactor);
     return weight;
 }
 
