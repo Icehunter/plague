@@ -155,7 +155,21 @@ float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudD
     ivec2 baseCell = ivec2(floor(allocationP));
     float radius = PLAGUE_CLOUD_MORPHOLOGY_RADIUS * deck.footprint;
     float sizeBias = PLAGUE_CLOUD_SIZE_DENSITY_GAIN * log2(max(deck.sizeRatio, 1e-3));
+
+    // A stratiform deck is a layer, not a scatter of candidates. Seeding the union with the deck's
+    // own floor keeps every position eligible so the base volume alone decides where the sheet is
+    // thick; candidates then ride on top of it as ragged base variation. The floor carries the same
+    // vertical penalty the candidates do, so the sheet closes at its own top and base instead of
+    // ending on a flat lid. A convective deck's floor is far below the early-out, which reproduces
+    // the candidate-only field exactly.
     float bestPotential = -1e6;
+    float sheetH = (worldY - deck.base) / max(deck.depth, 1e-3);
+    if (deck.sheetFloor > -1.0 && sheetH > 0.0 && sheetH < 1.0) {
+        bestPotential = deck.sheetFloor
+                      - PLAGUE_CLOUD_MORPHOLOGY_VERTICAL_PENALTY
+                      * (1.0 - plagueCloudHeightProfile(sheetH, deck.family));
+        ownerH = sheetH;
+    }
 
     for (int x = -1; x <= 1; x++) {
         for (int z = -1; z <= 1; z++) {

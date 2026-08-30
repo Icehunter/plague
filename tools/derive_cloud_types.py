@@ -42,17 +42,25 @@ GENERA = {
     "CUMULUS":        (1000.0,  400.0,  60.0,  10.0,  False, 3.0),
     "STRATOCUMULUS":  ( 800.0,  600.0, 150.0,  10.0,  False, 6.0),
     "STRATUS":        ( 300.0,  400.0, 100.0,   8.0,  False, 8.0),
+    # The precipitating stratiform genus. Base sits just under cumulus so the sheet reads as
+    # overhead rather than as a distant layer; 2000m of the WMO's 2000-4000m band, since the
+    # compression below turns the upper end into a slab deeper than the build height. 8 oktas is
+    # definitional: the WMO wording is "sufficiently thick throughout to blot out the sun".
+    "NIMBOSTRATUS":   ( 900.0, 2000.0, 400.0,  12.0,  False, 8.0),
     "CUMULONIMBUS":   ( 800.0,10000.0, 900.0,  15.0,  False, 5.0),
 }
 
 # Composite order: low-to-high, matching how the decks composite and how a sky is read.
 ORDER = ("CIRRUS", "CIRROCUMULUS", "ALTOCUMULUS",
-         "CUMULUS", "STRATOCUMULUS", "STRATUS", "CUMULONIMBUS")
+         "CUMULUS", "STRATOCUMULUS", "STRATUS", "NIMBOSTRATUS", "CUMULONIMBUS")
 
 DECK = {
     "CIRRUS": "HIGH", "CIRROCUMULUS": "HIGH",
     "ALTOCUMULUS": "MID",
     "CUMULUS": "LOW", "STRATOCUMULUS": "LOW", "STRATUS": "LOW", "CUMULONIMBUS": "LOW",
+    # WMO files nimbostratus as mid-etage, but its base hangs into the low one and this pack
+    # resolves it through the low deck's own altitude shift, so it is listed with the low genera.
+    "NIMBOSTRATUS": "LOW",
 }
 
 # WMO apparent angular width (degrees). Only cirrocumulus and altocumulus have CLOSED bands;
@@ -71,6 +79,9 @@ OBSERVED_CELL_M = {
     "CUMULUS":       1000.0,
     "STRATOCUMULUS": 2000.0,
     "STRATUS":       5000.0,
+    # Slightly finer than stratus: a rain sheet is structureless overall but carries ragged
+    # variation on its base, which stratus does not.
+    "NIMBOSTRATUS":  4000.0,
     "CUMULONIMBUS":  8000.0,
 }
 
@@ -83,6 +94,7 @@ SHEAR = {
     "CUMULUS":       1.1,   # "detached, generally dense, with sharp outlines ... rising mounds"
     "STRATOCUMULUS": 2.5,   # "patches or a layer ... having a rolled appearance"
     "STRATUS":       1.0,   # a featureless sheet has no preferred direction
+    "NIMBOSTRATUS":  1.0,   # "grey, often dark ... diffused" -- a sheet, no preferred direction
     "CUMULONIMBUS":  4.0,   # "the upper portion ... spread out in the shape of an anvil"
 }
 

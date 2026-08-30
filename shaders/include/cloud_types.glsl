@@ -65,7 +65,23 @@ struct PlagueCloudDeck {
     float cut;          // fixed per-candidate base-field threshold
     float sizeRatio;    // whole-cloud physical scale around the accepted reference
     float footprint;    // weather morphology's horizontal growth; independent of Cloud Size
+    float sheetFloor;   // stratiform baseline potential away from any candidate; far negative = none
 };
+
+// Baseline potential a stratiform deck carries everywhere, not just inside a candidate. Places the
+// mid-column cutoff at 0.30, about 2.3 sigma below the field's 0.51463 mean, so the layer is
+// continuous as its 8-okta genus row says while the base volume still sets its thickness. The
+// vertical penalty subtracts 0.52 at the slab's own top and base, taking it past the -0.329
+// early-out, so the sheet closes itself rather than ending on a flat lid.
+const float PLAGUE_CLOUD_SHEET_FLOOR = 0.15;
+
+// A convective deck has no sheet: this is far below the early-out, so every position away from a
+// candidate stays empty and the candidate-only field is reproduced exactly.
+const float PLAGUE_CLOUD_SHEET_NONE = -1e6;
+
+// Where the stratiform deck takes over from the convective one. Interim scaffolding for the hard
+// switch, replaced by the cross-dissolve; halfway up the ramp so neither genus owns the transition.
+const float PLAGUE_CLOUD_STRATIFORM_ONSET = 0.5;
 
 // Traversal cap, blocks, horizontal. tools/derive_cloud_types.py checks its genus cell sizes
 // against this so no cell fills the whole drawn region; the march's own visual horizon (from
@@ -122,6 +138,14 @@ const float PLAGUE_CLOUD_STRATUS_TAU        =   18.7500;
 const float PLAGUE_CLOUD_STRATUS_SHEAR      =    1.0000;
 const float PLAGUE_CLOUD_STRATUS_COVER      =    1.0000;   // 8 oktas
 
+// Nimbostratus, low deck, water
+const float PLAGUE_CLOUD_NIMBOSTRATUS_BASE  =    172.80;   // 900 m
+const float PLAGUE_CLOUD_NIMBOSTRATUS_DEPTH =    384.00;   // 2000 m
+const float PLAGUE_CLOUD_NIMBOSTRATUS_CELL  =    768.00;   // 4000 m
+const float PLAGUE_CLOUD_NIMBOSTRATUS_TAU   =   50.0000;
+const float PLAGUE_CLOUD_NIMBOSTRATUS_SHEAR =    1.0000;
+const float PLAGUE_CLOUD_NIMBOSTRATUS_COVER =    1.0000;   // 8 oktas
+
 // Cumulonimbus, low deck, water
 const float PLAGUE_CLOUD_CUMULONIMBUS_BASE  =    153.60;   // 800 m
 const float PLAGUE_CLOUD_CUMULONIMBUS_DEPTH =   1920.00;   // 10000 m
@@ -158,6 +182,10 @@ const float PLAGUE_CLOUD_STRATOCUMULUS_CONVECTIVE = 0.30;  // rolls and mounds t
 const float PLAGUE_CLOUD_STRATUS_CONVECTIVE       = 0.00;  // fog lifted off the ground, the
                                                            // stratiform end of the axis by
                                                            // definition, and the reason 0 exists
+const float PLAGUE_CLOUD_NIMBOSTRATUS_CONVECTIVE  = 0.00;  // "grey, often dark, its appearance
+                                                           // rendered diffuse by falling rain": a
+                                                           // sheet, so the same end of the axis as
+                                                           // stratus despite its far greater depth
 const float PLAGUE_CLOUD_CUMULONIMBUS_CONVECTIVE  = 1.00;  // the deepest convection there is; its
                                                            // anvil comes from the table's own shear
                                                            // of 4.0, not from this axis
@@ -349,6 +377,46 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
             : clamp(mix(precipitationCover, PLAGUE_CLOUD_PRECIPITATION_COVER,
                         thunderStorm), 0.0, 1.0);
     deck.cut = PLAGUE_CLOUD_CANDIDATE_CUTOFF;
+    deck.sheetFloor = PLAGUE_CLOUD_SHEET_NONE;
+
+    return deck;
+}
+
+/**
+ * The precipitating stratiform deck. Not a morph of the cumulus deck: rain does not fall from
+ * fatter cumulus, it falls from nimbostratus, which is its own genus with its own altitude, cell
+ * and shear. Resolved through the low etage's own altitude shift so Cloud Altitude still moves it,
+ * offset by the two genera's published base separation rather than assigned the slider outright.
+ *
+ * Its cell is constant, like the low deck's: the world-origin prohibition forbids a cell that moves
+ * with time or a slider, not two decks holding different fixed ones.
+ */
+PlagueCloudDeck plagueCloudNimbostratusDeck() {
+    PlagueCloudDeck deck;
+
+    float physicalScale = pow(max(u_CloudScale, 0.05) / PLAGUE_CLOUD_REFERENCE_SCALE,
+                              PLAGUE_CLOUD_SIZE_EXPONENT);
+    float amount = max(u_CloudAmount, 0.0);
+
+    deck.base = plagueCloudEngineBase() + plagueCloudLowDeckShift()
+              + (PLAGUE_CLOUD_NIMBOSTRATUS_BASE - PLAGUE_CLOUD_CUMULUS_BASE);
+    deck.depth = PLAGUE_CLOUD_NIMBOSTRATUS_DEPTH * physicalScale;
+    deck.cell = PLAGUE_CLOUD_NIMBOSTRATUS_CELL * PLAGUE_CLOUD_REFERENCE_SCALE;
+    deck.shear = PLAGUE_CLOUD_NIMBOSTRATUS_SHEAR;
+    deck.tau = PLAGUE_CLOUD_NIMBOSTRATUS_TAU;
+    deck.cover = PLAGUE_CLOUD_NIMBOSTRATUS_COVER;
+    deck.family = PLAGUE_CLOUD_NIMBOSTRATUS_CONVECTIVE;
+    deck.sizeRatio = physicalScale;
+    deck.cut = PLAGUE_CLOUD_CANDIDATE_CUTOFF;
+
+    // Amount still owns membership: at zero there is no sky to overcast. The candidates that
+    // survive ride on top of the sheet as ragged base variation rather than being the whole cloud.
+    deck.population = amount <= 0.0
+            ? 0.0
+            : min(sqrt(max(PLAGUE_CLOUD_POPULATION_RESPONSE * amount, 0.0)),
+                  PLAGUE_CLOUD_POPULATION_MAX);
+    deck.footprint = 1.0;
+    deck.sheetFloor = PLAGUE_CLOUD_SHEET_FLOOR;
 
     return deck;
 }
@@ -356,10 +424,19 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
 /**
  * The single contributor-selection seam used by every live cloud integration path. Future weather
  * types select their contributors here while the march, shadow, and reflection stay one path each.
- * Today only the low deck is active, so this is deliberately an exact delegation.
+ *
+ * Rain resolves the stratiform deck; thunder keeps the convective one, since a cumulonimbus is the
+ * storm rather than the sheet in front of it. The switch is a threshold for now: the cross-dissolve
+ * that replaces it marches both decks through the transition, which this seam cannot express by
+ * returning one deck.
  */
 PlagueCloudDeck plagueCloudActiveDeck(float rainFactor, float thunderFactor, float wetness,
                                       float snowWeight, float sunElevation, float worldTime) {
+    float response = clamp(u_CloudWeatherResponse, 0.0, 1.0);
+    if (clamp(rainFactor, 0.0, 1.0) * response > PLAGUE_CLOUD_STRATIFORM_ONSET
+            && clamp(thunderFactor, 0.0, 1.0) * response <= 0.0) {
+        return plagueCloudNimbostratusDeck();
+    }
     return plagueCloudLowDeck(rainFactor, thunderFactor, wetness, snowWeight, sunElevation,
                               worldTime);
 }
