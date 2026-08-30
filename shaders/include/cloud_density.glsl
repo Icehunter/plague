@@ -88,6 +88,15 @@ const float PLAGUE_CLOUD_MORPHOLOGY_PENALTY = 0.36;
 const float PLAGUE_CLOUD_MORPHOLOGY_VERTICAL_PENALTY = 0.52;
 const float PLAGUE_CLOUD_SIZE_DENSITY_GAIN = 0.24;
 
+// A stratiform layer's own feature size. deck.cell is 57.6 blocks, sized for cumulus, and cannot
+// change per form: a moving world-coordinate divisor rephases the field around world origin. The
+// sheet's large structure rides on top of it at 32 cells (~1840 blocks), the scale real stratus
+// varies thickness over. Without it a closed sheet is a flat lid over the volume's fine stipple.
+const float PLAGUE_CLOUD_SHEET_SCALE = 32.0;
+// Amplitude, against a floor whose whole range is 0.479 (early-out to SHEET_FLOOR). At 0.20 a
+// mid-strength sheet opens real holes while a full one only thins: breaking up versus overcast.
+const float PLAGUE_CLOUD_SHEET_VARIATION = 0.20;
+
 // +/-6.144 blocks (eight percent of the reference cumulus depth), keyed by the existing owner
 // jitter hash. Each individual base is still a plane, while neighbouring clouds no longer share
 // the one global deck-base line visible in the owner's low-angle capture.
@@ -165,7 +174,11 @@ float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudD
     float bestPotential = -1e6;
     float sheetH = (worldY - deck.base) / max(deck.depth, 1e-3);
     if (deck.sheetFloor > -1.0 && sheetH > 0.0 && sheetH < 1.0) {
+        // Per position, not a constant: a uniform floor is a flat lid. Drift rides in through
+        // allocationQ, so thick and thin regions advect with the deck.
+        float sheetVary = plagueSkyFbm(allocationQ / PLAGUE_CLOUD_SHEET_SCALE, 2);
         bestPotential = deck.sheetFloor
+                      - PLAGUE_CLOUD_SHEET_VARIATION * (1.0 - sheetVary)
                       - PLAGUE_CLOUD_MORPHOLOGY_VERTICAL_PENALTY
                       * (1.0 - plagueCloudHeightProfile(sheetH, deck.family));
         ownerH = sheetH;
@@ -216,7 +229,7 @@ float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudD
                     local, crownOffset, radius * PLAGUE_CLOUD_MORPHOLOGY_CROWN_RADIUS));
 
             float profile = plagueCloudHeightProfile(h, deck.family);
-            float candidatePotential = sizeBias
+            float candidatePotential = sizeBias + deck.convectiveLift
                                       - PLAGUE_CLOUD_MORPHOLOGY_PENALTY * horizontalMetric
                                       - PLAGUE_CLOUD_MORPHOLOGY_VERTICAL_PENALTY
                                       * (1.0 - profile);

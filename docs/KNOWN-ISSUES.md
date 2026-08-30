@@ -26,6 +26,16 @@ working notes; what is here is what a reader needs to know the limitation exists
 - **A distant cloud can render in front of a nearer one.** An opacity/transparency issue, not the
   separately tracked boxy/grid allocation-lattice shape issue. Root cause not found; likely
   grazing-angle step undersampling in `shaders/include/clouds.glsl`'s march.
+- **Cloud shadows only see one deck.** `shaders/post/gbuffer_resolve.fsh`'s shadow block resolves a
+  single deck through `plagueCloudActiveDeck` and takes three samples through it, so the low
+  stratiform layer casts nothing. Rain shadows correctly, because the precipitating deck is the one
+  the seam returns. The transmittances multiply, so the fix is a per-deck three-tap and a product,
+  not a redesign.
+- **A stratiform layer shows a flat horizontal seam where it thins.** Visible as a straight
+  light-toned line through the layer rather than a cloud edge. Suspected to be the slab's own top or
+  bottom plane appearing once the vertical profile saturates before it reaches the boundary. Matters
+  most for anything at eye level, so it must be understood before the march is reused for ground fog
+  or mist, which are viewed edge-on constantly.
 
 ## Particles
 

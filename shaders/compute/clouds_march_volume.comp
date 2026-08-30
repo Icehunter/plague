@@ -119,51 +119,76 @@ void main() {
             vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
 #endif
 
-    // One march at either end of the transition, two only while it is in progress. The endpoints
-    // are exact: at 0 and 1 the dissolve would weight the other contributor at zero anyway, so
-    // skipping it costs nothing and keeps the steady-state frame at its old budget.
-    float cloudFrontDistance;
-    vec4 clouds;
-    if (stratiform <= 0.0) {
-        clouds = plagueGetClouds(viewDir, u_CameraAbs, 0.0, dither,
-                                 convectiveDeck, skyColours, lighting, sunDirTrue, syncedTime,
-                                 renderDistance, atmColorMult, cloudFrontDistance);
-    } else if (stratiform >= 1.0) {
-        clouds = plagueGetClouds(viewDir, u_CameraAbs, 0.0, dither,
-                                 stratiformDeck, skyColours, lighting, sunDirTrue, syncedTime,
-                                 renderDistance, atmColorMult, cloudFrontDistance);
-    } else {
-        float convectiveFront;
-        float stratiformFront;
-        vec4 convectiveClouds = plagueGetClouds(viewDir, u_CameraAbs, 0.0, dither,
-                                 convectiveDeck, skyColours, lighting, sunDirTrue, syncedTime,
-                                 renderDistance, atmColorMult, convectiveFront);
-        // Half a step out of phase: both marches walk the same ray, and a shared dither would put
-        // their samples on the same planes and correlate the two genera's noise.
-        vec4 stratiformClouds = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.5),
-                                 stratiformDeck, skyColours, lighting, sunDirTrue, syncedTime,
-                                 renderDistance, atmColorMult, stratiformFront);
+    // Three contributors, each marched only when it has something to draw: the convective low
+    // deck, the low etage's smooth forms, the deep precipitating object. Compositing premultiplied
+    // in ray order IS the union 1 - prod(1 - a), so forms coexist rather than trade. The smooth
+    // forms need their own march because deck.cell is five times coarser for a sheet and cannot
+    // move: a world-coordinate divisor rephases the field around world origin.
+    PlagueCloudDeck sheetDeck;
+    float lowSheet = plagueCloudLowStratiform(localSnowWeight, sheetDeck);
 
-        // Composited, not dissolved. Mid-transition both genera are really there: cumulus still
-        // standing while the sheet grows in around and over it. A weighted blend would instead fade
-        // the whole sky between two states at once, which is the part that read as unnatural.
-        //
-        // Ordered per ray by which deck it actually reaches first, since the two slabs overlap in
-        // altitude and neither base decides it. Premultiplied over.
-        bool convectiveFirst = convectiveFront > 0.0
-                && (stratiformFront <= 0.0 || convectiveFront <= stratiformFront);
-        vec4 nearClouds = convectiveFirst ? convectiveClouds : stratiformClouds;
-        vec4 farClouds = convectiveFirst ? stratiformClouds : convectiveClouds;
-        clouds = nearClouds + farClouds * (1.0 - nearClouds.a);
+    vec4 layer[3];
+    float front[3];
+    layer[0] = vec4(0.0); front[0] = 0.0;
+    layer[1] = vec4(0.0); front[1] = 0.0;
+    layer[2] = vec4(0.0); front[2] = 0.0;
 
-        // The nearer contributor owns the terrain-occlusion gate; max() picks up the other when
-        // this ray missed one deck entirely, since a zero front distance reads as "no cloud" and
-        // would drop a pixel the surviving genus does cover.
-        cloudFrontDistance = convectiveFirst ? convectiveFront : stratiformFront;
-        if (cloudFrontDistance <= 0.0) {
-            cloudFrontDistance = max(convectiveFront, stratiformFront);
+    // Own dither phase each: they walk the same ray, and a shared offset would put their samples
+    // on the same planes and correlate independent fields.
+    if (stratiform < 1.0) {
+        layer[0] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, dither,
+                                   convectiveDeck, skyColours, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, atmColorMult, front[0]);
+    }
+    if (lowSheet > 0.0) {
+        layer[1] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.3333),
+                                   sheetDeck, skyColours, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, atmColorMult, front[1]);
+    }
+    if (stratiform > 0.0) {
+        layer[2] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.6667),
+                                   stratiformDeck, skyColours, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, atmColorMult, front[2]);
+    }
+
+    // Sorted by where the ray first meets material. A missed deck reports front 0 and zero alpha;
+    // treating 0 as infinitely far sorts it last, where zero alpha changes nothing.
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2 - i; j++) {
+            float nearer = front[j] > 0.0 ? front[j] : 1e30;
+            float farther = front[j + 1] > 0.0 ? front[j + 1] : 1e30;
+            if (farther < nearer) {
+                vec4 swapLayer = layer[j];
+                layer[j] = layer[j + 1];
+                layer[j + 1] = swapLayer;
+                float swapFront = front[j];
+                front[j] = front[j + 1];
+                front[j + 1] = swapFront;
+            }
         }
     }
+
+    vec4 clouds = layer[0];
+    clouds += layer[1] * (1.0 - clouds.a);
+    clouds += layer[2] * (1.0 - clouds.a);
+
+    // Weighted by each layer's contribution to the union, not the nearest that drew. A layer
+    // reports a front distance until its alpha reaches zero, so the nearest JUMPS to the next layer
+    // when the near one drops out; the composite gates the whole union on this against terrain
+    // depth, so that jump deletes every layer at once. Weighting retires a fading layer's distance
+    // continuously, and gives the mean distance of the drawn mass.
+    float frontTransmittance = 1.0;
+    float frontWeight = 0.0;
+    float cloudFrontDistance = 0.0;
+    for (int i = 0; i < 3; i++) {
+        float contribution = layer[i].a * frontTransmittance;
+        frontTransmittance *= 1.0 - layer[i].a;
+        if (front[i] > 0.0) {
+            cloudFrontDistance += front[i] * contribution;
+            frontWeight += contribution;
+        }
+    }
+    cloudFrontDistance = frontWeight > 0.0 ? cloudFrontDistance / frontWeight : 0.0;
 
     imageStore(u_OutClouds, texelCoord, clouds);
     imageStore(u_OutCloudDistance, texelCoord, vec4(cloudFrontDistance));

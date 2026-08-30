@@ -120,6 +120,8 @@ sliders = [
     "u_CloudScale",
     "u_CloudSpeed",
     "u_CloudWeatherResponse",
+    "u_CloudMoisture",
+    "u_CloudStability",
     "u_NebulaIntensity",
     "u_NebulaZoom",
     "u_NebulaAmount",
@@ -600,6 +602,11 @@ elements = [
     "<group:Aurora>",
     "PLAGUE_DEBUG_AURORA_ONLY",
     "u_AuroraDebugGain",
+
+    "<group:Clouds>",
+    "u_CloudFormHold|requires:CLOUDS_VOLUMETRIC",
+    "u_CloudMoisture|requires:CLOUDS_VOLUMETRIC",
+    "u_CloudStability|requires:CLOUDS_VOLUMETRIC",
 
     "<group:Water>",
     "PLAGUE_WATER_REFLECTION_DEBUG",
@@ -2225,6 +2232,26 @@ How much rain changes the clouds.
 
 0 holds the sky at a fair-weather cumulus deck regardless of weather. At 1, rain builds the deck \
 taller, darker and slightly more covered, the way a real sky thickens before a storm."""
+
+u_CloudFormHold = """
+Freezes the low cloud form where you put it.
+
+Off, the sky decides its own form from the time of day and the weather. On, the two sliders below \
+drive it directly, which is for looking at one form on purpose rather than waiting for it."""
+
+u_CloudMoisture = """
+How much of the low air is saturated.
+
+A cloud form is the shape of a saturated region, not a fixed type. Raising this saturates more of \
+the low layer; whether that becomes a flat blanket or rising heaps is Low Cloud Stability's job. \
+At 0 only the scattered cells the field already carries exist."""
+
+u_CloudStability = """
+Whether saturated low air spreads out or rises.
+
+At 0 the air is unstable and moisture builds heaped cumulus with flat bases. At 1 it is capped and \
+the same moisture spreads into a featureless stratus blanket. Between the two it flattens into \
+stratocumulus rolls. Paired with Low Cloud Moisture: stable air with nothing in it stays clear."""
 
 SHADOWS = """
 Whether the sun and moon cast real shadows.
