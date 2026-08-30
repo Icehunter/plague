@@ -109,10 +109,11 @@ vec3 plagueCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, sampler2D celestials,
         vec2 uv = plagueCelestialUv(viewRay, sunDirTrue, PLAGUE_SUN_DISC_RADIUS);
         if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
             vec4 texel = texture(celestials, mix(sunRect.xy, sunRect.zw, uv));
-            // ADDITIVE, rgb only, no alpha multiply: the art is opaque on black, and black is what
-            // makes the corners disappear under additive blending. Alpha-multiplying instead paints
-            // a visible square around the disc.
-            result += plagueShadeSunDisc(texel.rgb, uv, sunRadiance, 1.0 - invRainFactor)
+            // Additive, premultiplied by the sprite's alpha. Additive blending hides the corners
+            // only where the art is opaque on black; a disc on transparent carries white rgb in its
+            // transparent pixels, and adding rgb alone paints the whole sprite square. Opaque art
+            // has alpha 1 throughout, so the multiply is a no-op there.
+            result += plagueShadeSunDisc(texel.rgb * texel.a, uv, sunRadiance, 1.0 - invRainFactor)
                     * (u_SunDiscBrightness * invRainFactor);
         }
     }
@@ -122,9 +123,9 @@ vec3 plagueCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, sampler2D celestials,
         vec2 uv = plagueCelestialUv(viewRay, moonDir, PLAGUE_MOON_DISC_RADIUS);
         if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
             vec4 texel = texture(celestials, mix(moonRect.xy, moonRect.zw, uv));
-            // Same additive rule, more critical here: the phase itself is the unlit portion being
-            // black art, which only survives if black contributes nothing.
-            result += plagueShadeMoonDisc(texel.rgb, moonRadiance, 1.0 - invRainFactor)
+            // Same rule. The phase lives in the sprite, as black rgb or as zero alpha; the
+            // multiply honours either.
+            result += plagueShadeMoonDisc(texel.rgb * texel.a, moonRadiance, 1.0 - invRainFactor)
                     * (u_MoonDiscBrightness * moonGlow * invRainFactor);
         }
     }
