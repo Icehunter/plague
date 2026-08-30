@@ -30,6 +30,10 @@
 #define u_AuthoredEmission 1.0 //[0.0..1.0 step 0.05] runtime "Glowing Texture Strength"
 #define u_AOStrength 1.0 //[0.0..1.0 step 0.05] runtime "Texture AO Strength"
 
+// Slab thickness in metres. Minecraft blocks have no thickness, so nothing derives this and it is
+// set by eye. 0.32 is a starting point, not a measurement.
+#define u_RefractStrength 0.32 //[0.0..1.0 step 0.01] runtime "Glass Refraction Strength"
+
 #define u_SnowAmount 1.0 //[0.25..2.0 step 0.05] runtime "Snow Amount"
 #define u_SplashDensity 0.6 //[0.2..1.0 step 0.05] runtime "Splash Density"
 

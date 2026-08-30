@@ -14,6 +14,7 @@
 # owns them and they appear here, even though the shader that uses them could never declare them.
 
 sliders = [
+    "u_RefractStrength",
     "u_AmbientBounceWarmth",
     "u_SunsetSkyWarmth",
     "u_SunsetLightWarmth",
@@ -525,6 +526,8 @@ elements = [
     "u_BumpStrength",
     "u_AOStrength",
     "u_AuthoredEmission",
+    "PLAGUE_GLASS_REFRACTION",
+    "u_RefractStrength|requires:PLAGUE_GLASS_REFRACTION",
     "PLAGUE_WETNESS_PCT",
     "PLAGUE_PUDDLE_SHAPE",
     "PLAGUE_PUDDLE_RIPPLE_PCT",
@@ -1423,6 +1426,18 @@ Extends the snow dusting to leaves and bushes.
 Snow only settles on the parts of a tree that face the sky, so you get white on top with green \
 showing through, not one flat white slab. Grass and flowers are untouched, because snow cannot sit \
 on them."""
+
+u_RefractStrength = """
+How far glass bends what is behind it.
+
+Low is a thin window, high is a thick uneven slab. Set it while looking through a pane at something \
+with detail a few blocks behind it."""
+
+PLAGUE_GLASS_REFRACTION = """
+Bends the view through glass, ice and stained panes, the way real glass shifts what is behind it.
+
+How far it bends comes from the texture pack's own material maps. Set the amount with Glass \
+Refraction Strength below. Nearly transparent panes do not refract."""
 
 PLAGUE_WETNESS_PCT = """
 Makes rain wet the world: puddles in the low spots, and a darker, slicker look on everything the \

@@ -107,6 +107,8 @@ covers what the pack itself does, not the engine underneath it.
 - Discrete rain-splash rings on water and puddles, each on its own grid cell with its own timing,
   working by tilting the surface so they catch light and reflections.
 - Metals reflect with their own colour; grazing angles get their sheen.
+- Refraction through glass, ice and stained panes, bent by each pane's own labPBR F0. Packs that
+  paint no material map fall back to the format's glass entry rather than refracting nothing.
 
 ## Snow: *opt-in, default off*
 

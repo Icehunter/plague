@@ -38,6 +38,10 @@ const float PLAGUE_ATLAS_GHOST_DIST = 32.0;
 // Wave complexity is fixed at compile time; only strength (u_WaveStrength, bridged below) is a runtime scalar.
 #define PLAGUE_WATER_INTERACTION 1 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Quality" 2="Performance"}
 #define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Mesh Displacement" {0="Off" 1="Standard"}
+
+// Screen-space refraction on glass, ice and stained panes. A gate, not a magnitude: strength is
+// u_RefractStrength. Compile-time so Off drops the block and both its texture reads.
+#define PLAGUE_GLASS_REFRACTION 1 //[0 1] compile "Glass Refraction" {0="Off" 1="On"}
 // KEPT COMPILE, deliberately: `#if PLAGUE_PUDDLE_RIPPLE_PCT > 0` elides the whole impact evaluation,
 // and a runtime version would keep that code resident in the hottest shader in the pack.
 #define PLAGUE_PUDDLE_RIPPLE_PCT 100 //[0 50 100 150 200 300] compile "Puddle Ripples" {0="Off" 50="Subtle" 100="Standard" 150="Strong" 200="Heavy" 300="Extreme"}
@@ -69,6 +73,14 @@ uniform sampler2D u_GeomInput2;
 // waterWaveB.history: previous actor-centred (pressure, velocity, dPdx, dPdy). Appended after the
 // three established slots so every existing lookup keeps its index.
 uniform sampler2D u_GeomInput3;
+// sceneHdrComposited: scene-linear HDR, final for the frame by the translucent draw. The background
+// refraction bends. TRANSLUCENT ONLY: SOLID and CUTOUT share this shader and bind group but run
+// before the passes that write it, so they read last frame's colour with no error anywhere.
+uniform sampler2D u_GeomInput4;
+// builtin.depth_opaque: reversed-Z opaque depth, captured at the end of the graph so a translucent
+// draw can read it without touching the live attachment it tests against. Rejects a refracted sample
+// that landed in front of the pane. Same translucent-only rule as u_GeomInput4.
+uniform sampler2D u_GeomInput5;
 
 
 
@@ -176,6 +188,8 @@ layout(std140) uniform u_PbrSettings {
     float u_FogDryDistance;
     float u_FogDrySharpness;
     float u_PomShadowStrength;
+    // APPENDED LAST by the std140 ABI rule.
+    float u_RefractStrength;
 };
 
 // Import order is load-bearing: fog.glsl/tonemap.glsl declare these as #defines too, which the
@@ -733,8 +747,12 @@ void main() {
 
     // Water keeps its existing dedicated forward/deferred treatments. Applying terrain material
     // response here when SSR water is disabled would silently make water depend on `_n`/`_s`.
+    // Hoisted: the refraction block runs after fragColor is composited, so it cannot sit inside
+    // these branches. Identity values when nothing is authored.
+    vec3 forwardWorldNormal = faceNormal;
+    PlagueMaterial forwardMaterial = plagueDecodeMaterial(0.0, 0.0, 0.0);
+
     if (!isWater && forwardHasLabPbrSignal) {
-        vec3 forwardWorldNormal = faceNormal;
         float forwardBakedAo = 1.0;
 
         if (forwardNormalSignal) {
@@ -790,7 +808,7 @@ void main() {
         }
 
         if (forwardMaterialSignal) {
-            PlagueMaterial forwardMaterial = plagueDecodeMaterial(
+            forwardMaterial = plagueDecodeMaterial(
                     forwardMaterialSample.r, forwardMaterialSample.g,
                     forwardMaterialSample.b);
 
@@ -856,6 +874,74 @@ void main() {
         fragColor.rgb = clamp(plagueTonemapAndGrade(max(forwardScene, vec3(0.0)))
                 + forwardResidual, 0.0, 1.0);
     }
+
+    // --- Refraction on translucent terrain ------------------------------------------------------
+    // Bends the background by the pane's own `_s` green channel: F0 gives an IOR, an IOR gives the
+    // bend. Reads sceneHdrComposited, never the framebuffer this blends into (read-write hazard).
+#if PLAGUE_GLASS_REFRACTION
+    {
+        // The gain below is (1-a)/a, already 19x here. Lower alpha amplifies noise, not refraction.
+        const float PLAGUE_REFRACT_MIN_ALPHA = 0.05;
+
+        // Green 0 is unauthored, not ior 1.0: the format's table starts at 5. Taken literally, a
+        // pack that paints no `_s` refracts nothing. Falls back to the table's glass entry.
+        const float PLAGUE_REFRACT_F0_UNAUTHORED = 0.5 / 255.0;
+        const float PLAGUE_REFRACT_GLASS_F0 = 9.0 / 255.0;
+        float forwardF0 = forwardMaterial.f0 < PLAGUE_REFRACT_F0_UNAUTHORED
+                ? PLAGUE_REFRACT_GLASS_F0
+                : forwardMaterial.f0;
+
+        // Inverts F0 = ((n-1)/(n+1))^2, as plagueFresnelDielectric does, so the two agree.
+        float forwardSqrtF0 = min(sqrt(max(forwardF0, 0.0)), 0.99999);
+        float forwardIor = (1.0 + forwardSqrtF0) / (1.0 - forwardSqrtF0);
+        // Lateral shift through a thin slab scales with (1 - 1/ior).
+        float forwardBend = 1.0 - 1.0 / max(forwardIor, 1.0);
+
+        vec3 forwardDeviation = forwardWorldNormal - faceNormal;
+
+        if (!forwardMaterial.conductor
+                && forwardBend > 1e-4
+                && u_RefractStrength > 0.0
+                && forwardBase.a >= PLAGUE_REFRACT_MIN_ALPHA
+                && dot(forwardDeviation, forwardDeviation) > 1e-12) {
+            // mat3() drops translation: v_WorldPos is already camera-relative.
+            vec3 forwardViewDeviation = mat3(u_ModelViewMatrix) * forwardDeviation;
+
+            // Divide by distance, apply the projection's xy scales, halve for NDC to UV.
+            // sceneHdrComposited is scale = 1.0, so its own size is the render size.
+            float forwardViewDepth = max(length(v_WorldPos), 0.05);
+            vec2 forwardProjScale = vec2(u_ProjectionMatrix[0][0], u_ProjectionMatrix[1][1]);
+            vec2 forwardOffset = 0.5 * forwardProjScale * forwardViewDeviation.xy
+                    * (forwardBend * u_RefractStrength / forwardViewDepth);
+
+            vec2 forwardScreenTexel = 1.0 / vec2(textureSize(u_GeomInput4, 0));
+            vec2 forwardBaseUv = gl_FragCoord.xy * forwardScreenTexel;
+            vec2 forwardRefractUv = clamp(forwardBaseUv + forwardOffset, vec2(0.0), vec2(1.0));
+
+            // Drop a sample that landed in front of the pane. Reversed-Z: nearer reads greater.
+            float forwardFragDepth = gl_FragCoord.z;
+            float refractedDepth = texture(u_GeomInput5, forwardRefractUv).r;
+            if (refractedDepth > forwardFragDepth) {
+                forwardRefractUv = forwardBaseUv;
+            }
+
+            // Same display transform on both, so their difference is meaningful.
+            vec3 forwardBgRefracted = plagueTonemapAndGrade(
+                    max(texture(u_GeomInput4, forwardRefractUv).rgb, vec3(0.0)));
+            vec3 forwardBgDirect = plagueTonemapAndGrade(
+                    max(texture(u_GeomInput4, forwardBaseUv).rgb, vec3(0.0)));
+
+            // Sodium blends src*a + dst*(1-a) with dst unrefracted. Emitting the background
+            // difference scaled by (1-a)/a lands on glass*a + refracted*(1-a).
+            float forwardGain = (1.0 - forwardBase.a)
+                    / max(forwardBase.a, PLAGUE_REFRACT_MIN_ALPHA);
+            fragColor.rgb = clamp(
+                    fragColor.rgb + (forwardBgRefracted - forwardBgDirect) * forwardGain,
+                    0.0, 1.0);
+        }
+    }
+#endif
+
     fragColor.a = forwardBase.a;
 
     // --- Fog on translucent terrain -------------------------------------------------------------

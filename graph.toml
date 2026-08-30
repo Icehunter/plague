@@ -9,7 +9,10 @@ slot = "terrain"
 program = "shaders/blocks/terrain"
 # builtin.noise is THIRD (u_GeomInput2); terrain.fsh's puddle/ripple/splash/snow calls depend on that
 # position — append only, never insert.
-inputs = ["builtin.spriteBounds", "builtin.spriteHeightRange", "builtin.noise", "waterWaveB.history"]
+# sceneHdrComposited and builtin.depth_opaque are read by the TRANSLUCENT arm only. The opaque
+# sub-draws run before the passes that fill them and would read last frame's content with no error.
+inputs = ["builtin.spriteBounds", "builtin.spriteHeightRange", "builtin.noise", "waterWaveB.history",
+          "sceneHdrComposited", "builtin.depth_opaque"]
 outputs = []
 
 # Ships both vsh/fsh stages: vanilla's entity vertex shader consumes Normal and never forwards it, so
