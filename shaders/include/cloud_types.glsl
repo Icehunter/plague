@@ -64,9 +64,17 @@ const float PLAGUE_CLOUD_HEATING_PEAK = 0.32;
 // morning, so a fixed term sheets the sky over every day at the same hour.
 const float PLAGUE_CLOUD_DAWN_MOISTURE = 0.75;
 
-// Where a humid spell holds a layer independent of the hour; without it the sky is stratiform only
-// around sunrise. The 60th and 95th percentiles of the spell's measured distribution over 1000 days
-// (median 0.50, max 0.86): stratiform in reach on ~40% of days, overcast on ~1 in 20.
+// The humidity a dawn needs before the inversion closes the sky. Below the first figure the air
+// mass is too dry and the morning stays clear; by the second the dawn sheet is at full strength.
+// The 35th and 80th percentiles of the spell's dawn distribution over 1500 days: about a third of
+// mornings open clear, a fifth close over. A fixed floor here sheets 98% of mornings at the same
+// hour whatever the weather.
+const float PLAGUE_CLOUD_DAWN_ONSET = 0.495;
+const float PLAGUE_CLOUD_DAWN_FULL = 0.695;
+
+// Where a humid spell holds a layer independent of the hour, without which the sky is stratiform
+// only around sunrise. The 60th and 95th percentiles of the spell's measured distribution over 1000
+// days (median 0.50, max 0.97): stratiform in reach on ~40% of days, overcast on ~1 in 20.
 const float PLAGUE_CLOUD_SPELL_ONSET = 0.53;
 const float PLAGUE_CLOUD_SPELL_FULL = 0.70;
 // How far an unstable spell suppresses the cap, breaking a sheet up against the hour.
@@ -83,9 +91,41 @@ float plagueCloudMoisture(PlagueWeatherState w) {
     moisture = max(moisture, spell);
     // Dawn rides on the spell: a humid morning closes over, a dry one does not.
     moisture = max(moisture, w.morningWindow * PLAGUE_CLOUD_DAWN_MOISTURE
-                             * mix(0.25, 1.0, w.humidSpell) * w.dayVariance);
+                             * smoothstep(PLAGUE_CLOUD_DAWN_ONSET, PLAGUE_CLOUD_DAWN_FULL,
+                                          w.humidSpell) * w.dayVariance);
     moisture *= 1.0 - PLAGUE_CLOUD_ARID_DRYING * w.arid;
     return clamp(moisture, 0.0, 1.0);
+}
+
+/**
+ * Water available to shallow convection, 0..1.
+ *
+ * Not plagueCloudMoisture. That asks whether the air is saturated enough to spread a layer, the
+ * right bar for a sheet and far too high for a thermal: a cumulus forms over ground that is merely
+ * damp. Behind the stratiform threshold this term is zero for 45% of hours, for a median lift of
+ * 0.005 out of 0.10.
+ *
+ * The dawn window is excluded because that window IS the nocturnal inversion, which stops
+ * convection rather than feeding it.
+ */
+float plagueCloudSurfaceMoisture(PlagueWeatherState w) {
+    float moisture = max(max(w.rain, w.afterRain), w.humidSpell);
+    moisture *= 1.0 - PLAGUE_CLOUD_ARID_DRYING * w.arid;
+    return clamp(moisture, 0.0, 1.0);
+}
+
+/**
+ * The air mass's own stability, with the day's heating left out.
+ *
+ * A layer's genus, flat stratus against rolled stratocumulus, is a property of the air mass and
+ * changes over days. The full stability puts the diurnal heating term in charge, which flips the
+ * form Sc by day and St by night; the two genera sit at different published altitudes, so the deck
+ * descends 19 blocks each night. Heating changes how much cloud there is, not what kind.
+ */
+float plagueCloudAirMassStability(PlagueWeatherState w) {
+    float stability = 1.0 - PLAGUE_CLOUD_SPELL_INSTABILITY * w.unstableSpell;
+    stability = max(stability, w.rain);
+    return clamp(stability * (1.0 - w.thunder), 0.0, 1.0);
 }
 
 /** How strongly the low etage resists rising, 0 free convection to 1 capped. */
@@ -108,8 +148,8 @@ float plagueCloudStability(PlagueWeatherState w) {
 /** The world's own weather, read from the globals every cloud pass already has. */
 PlagueWeatherState plagueCloudWeather() {
     return plagueWeatherState(u_SkyState.x, u_FrameState.z, u_FrameState.w,
-                              u_CameraSkyLight.y, u_CameraAbs.xz, u_SkyState.y, u_SkyState.w,
-                              0.0);
+                              u_CameraSkyLight.y, u_CameraAbs.xz, u_SkyState.y,
+                              u_WorldClock.x, u_WorldClock.y, 0.0);
 }
 
 // --- One resolved deck --------------------------------------------------------------------------
@@ -149,6 +189,12 @@ const float PLAGUE_CLOUD_SHEET_FLOOR = 0.15;
 // down the whole tail: about half transparent by mask 0.06, nearly clear by 0.03.
 const float PLAGUE_CLOUD_SHEET_FADE = 0.40;
 
+// The stability endpoints of the St-Sc axis. Dawn stability spans 0.450 to 0.941 over a 1500-day
+// sample, so the axis is bracketed to that rather than a nominal 0..1: read straight, every morning
+// sits above 0.45 and stratocumulus never occurs at all.
+const float PLAGUE_CLOUD_SHEET_FORM_SC = 0.50;
+const float PLAGUE_CLOUD_SHEET_FORM_ST = 0.90;
+
 // Fraction of the cloud anchor below which no low-etage deck may sit. The genus table compresses
 // real metres by 0.192 against a 0 m datum, putting stratus's 300 m base at y=57.6, under the y=63
 // surface. 0.70 of the anchor is 134 blocks, clear of terrain and well under the 192 cumulus base;
@@ -158,6 +204,30 @@ const float PLAGUE_CLOUD_LOW_BASE_FLOOR = 0.70;
 // Moisture's lift on the cellular mask, the convective counterpart of the sheet floor. Gated on
 // (1 - stability) so the two masks divide the moisture rather than both claiming it.
 const float PLAGUE_CLOUD_MOISTURE_LIFT = 0.10;
+
+// Water a thermal needs before it condenses. Below the first figure the air carries too little for
+// a cloud to form; by the second, Amount is delivered in full. Bracketed against surface moisture's
+// distribution (min 0.10, p10 0.36, median 0.56), so an ordinary day sits where the slider asks and
+// only a dry spell thins out. A single floor at 0.35 sits under the whole distribution and leaves
+// 94% of hours at full Amount.
+const float PLAGUE_CLOUD_CONDENSATION_ONSET = 0.20;
+const float PLAGUE_CLOUD_CONDENSATION_FULL = 0.60;
+
+// How far dry air pushes the candidate cutoff the other way. This is the SAME lane as the moisture
+// lift, continued below zero, which is why dry air thins the sky instead of switching parts of it
+// off: the cutoff moves the isosurface, so clouds shrink and fade together. Measured against the
+// field: +0.10 covers 12.0% of sky, 0 covers 7.3%, -0.10 covers 3.0%, -0.20 covers 0.6%, with patch
+// opacity falling 0.61 -> 0.33 across that range. -0.20 is therefore an empty sky reached smoothly.
+//
+// deck.population must NOT carry this. It is a rank threshold, so a candidate is either active or
+// absent, and sweeping it with a continuous driver makes whole clouds appear and vanish at full
+// size. The verifier's "activation-only Amount lane" check guards that.
+const float PLAGUE_CLOUD_DRY_SUPPRESSION = 0.20;
+
+// Optical depth kept at full dryness. The cutoff alone leaves remnants at 0.33 patch opacity, and
+// a fragment still opaque when it falls under a pixel blinks rather than fades, the failure
+// PLAGUE_CLOUD_SHEET_FADE covers on the sheet. 0.35 puts those remnants at 0.17.
+const float PLAGUE_CLOUD_DRY_TAU_FLOOR = 0.35;
 
 // A convective deck has no sheet: this is far below the early-out, so every position away from a
 // candidate stays empty and the candidate-only field is reproduced exactly.
@@ -386,7 +456,8 @@ float plagueCloudClearReferenceMidAltitude() {
  * world-coordinate divisor rephases the field around world origin. Stability slides it along the
  * St-Sc axis; cell and shear hold fixed across that slide for the same reason.
  */
-PlagueCloudDeck plagueCloudLowStratiformDeck(float moisture, float stability, float snowWeight) {
+PlagueCloudDeck plagueCloudLowStratiformDeck(float moisture, float stability, float airMass,
+                                             float snowWeight) {
     PlagueCloudDeck deck;
 
     float physicalScale = pow(max(u_CloudScale, 0.05) / PLAGUE_CLOUD_REFERENCE_SCALE,
@@ -396,7 +467,10 @@ PlagueCloudDeck plagueCloudLowStratiformDeck(float moisture, float stability, fl
     float stable = clamp(stability, 0.0, 1.0);
 
     // 1 at fully capped stable air (stratus), 0 as the cap weakens toward stratocumulus rolls.
-    float sheetForm = stable;
+    // Mapped onto the stability the world actually reaches, not onto 0..1: read straight, the value
+    // never falls below 0.45 and stratocumulus never occurs at all. Driven by the air mass rather
+    // than the hour, so the genus and the altitude that follows it change over days.
+    float sheetForm = smoothstep(PLAGUE_CLOUD_SHEET_FORM_SC, PLAGUE_CLOUD_SHEET_FORM_ST, airMass);
 
     float anchor = plagueCloudEngineBase() + plagueCloudLowDeckShift();
     deck.base = max(anchor + (mix(PLAGUE_CLOUD_STRATOCUMULUS_BASE, PLAGUE_CLOUD_STRATUS_BASE,
@@ -477,7 +551,7 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
     // Moisture divides between the two low forms: what stable air spreads into a sheet, unstable
     // air builds into heaps instead. This deck owns the heaps, so it takes the instability half.
     PlagueWeatherState weather = plagueCloudWeather();
-    float lowMoisture = mix(plagueCloudMoisture(weather), clamp(u_CloudMoisture, 0.0, 1.0),
+    float lowMoisture = mix(plagueCloudSurfaceMoisture(weather), clamp(u_CloudMoisture, 0.0, 1.0),
                             clamp(u_CloudFormHold, 0.0, 1.0));
     float lowStability = mix(plagueCloudStability(weather), clamp(u_CloudStability, 0.0, 1.0),
                              clamp(u_CloudFormHold, 0.0, 1.0));
@@ -526,6 +600,10 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
     float amount = max(u_CloudAmount, 0.0);
     float thunderPopulation = mix(1.0,
             PLAGUE_CLOUD_STORM_COVER / PLAGUE_CLOUD_CUMULUS_COVER, thunderStorm);
+    // How much of the air's water actually condenses. Drives the cutoff and the optical depth,
+    // both continuous, never the candidate population.
+    float condensation = smoothstep(PLAGUE_CLOUD_CONDENSATION_ONSET,
+                                    PLAGUE_CLOUD_CONDENSATION_FULL, lowMoisture);
     deck.population = amount <= 0.0
             ? 0.0
             : min(sqrt(max(PLAGUE_CLOUD_POPULATION_RESPONSE * amount * thunderPopulation, 0.0)),
@@ -545,7 +623,11 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
     // than being a floor on this one. Moisture still reaches these candidates: moist unstable air
     // builds larger heaps, which is the convective half of the same saturation.
     deck.sheetFloor = PLAGUE_CLOUD_SHEET_NONE;
-    deck.convectiveLift = PLAGUE_CLOUD_MOISTURE_LIFT * lowConvective;
+    // One lane through zero: moist unstable air lifts the cutoff and builds heaps, dry air pushes
+    // it the other way until nothing clears it.
+    deck.convectiveLift = mix(-PLAGUE_CLOUD_DRY_SUPPRESSION,
+                              PLAGUE_CLOUD_MOISTURE_LIFT * lowConvective, condensation);
+    deck.tau *= mix(PLAGUE_CLOUD_DRY_TAU_FLOOR, 1.0, condensation);
 
     return deck;
 }
@@ -653,7 +735,8 @@ float plagueCloudLowStratiform(float snowWeight, out PlagueCloudDeck sheet) {
     float hold = clamp(u_CloudFormHold, 0.0, 1.0);
     float moist = mix(plagueCloudMoisture(weather), clamp(u_CloudMoisture, 0.0, 1.0), hold);
     float stable = mix(plagueCloudStability(weather), clamp(u_CloudStability, 0.0, 1.0), hold);
-    sheet = plagueCloudLowStratiformDeck(moist, stable, snowWeight);
+    sheet = plagueCloudLowStratiformDeck(moist, stable, plagueCloudAirMassStability(weather),
+                                         snowWeight);
     return moist * stable;
 }
 

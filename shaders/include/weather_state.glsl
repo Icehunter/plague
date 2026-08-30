@@ -24,8 +24,13 @@ struct PlagueWeatherState {
     float nightFactor;   // 0 by day, 1 at true midnight
 };
 
-// An air mass takes DAYS to cross, so the slow half is a continuous fbm over the world clock, not
-// a value redrawn at midnight: one draw per day can only make the same morning thicker or thinner,
+// The day count comes from u_WorldClock, not u_SkyState.w. That lane is getGameTime(), which counts
+// ticks since world creation and ignores /time set, doDaylightCycle and the clock rate: at 1000x the
+// sun cycles hundreds of times while it advances a fraction of a day, freezing every driver built on
+// it, silently. u_WorldClock carries the day index and the fraction through it, on the sun's clock.
+//
+// An air mass takes DAYS to cross, so the slow half is a continuous fbm over that day count, not a
+// value redrawn at midnight: one draw per day can only make the same morning thicker or thinner,
 // never give three overcast days and then a clear week. The two spells sample the same field far
 // apart so they drift independently. Three octaves, so a multi-day trend carries hourly wobble.
 const float PLAGUE_WEATHER_SPELL_DAYS = 3.0;
@@ -36,8 +41,7 @@ const int PLAGUE_WEATHER_SPELL_OCTAVES = 3;
 const vec2 PLAGUE_WEATHER_HUMID_LANE = vec2(0.0, 0.37);
 const vec2 PLAGUE_WEATHER_UNSTABLE_LANE = vec2(0.0, 61.83);
 
-float plagueWeatherSpell(float worldTicks, vec2 lane) {
-    float days = worldTicks / 24000.0;
+float plagueWeatherSpell(float days, vec2 lane) {
     return clamp(plagueSkyFbm(vec2(days / PLAGUE_WEATHER_SPELL_DAYS, 0.0) + lane,
                               PLAGUE_WEATHER_SPELL_OCTAVES) / PLAGUE_WEATHER_SPELL_NORM,
                  0.0, 1.0);
@@ -51,9 +55,11 @@ float plagueWeatherDayFrac(float sunAngleRadians) {
     return fract(sunAngleRadians * 0.15915494309189535 + 0.25);
 }
 
-// One roughly-uniform value per Minecraft day, deterministic so a server agrees with itself.
-float plagueWeatherDayHash(float worldTicks) {
-    return fract(sin(floor(worldTicks / 24000.0) * 12.9898) * 43758.5453);
+// One roughly-uniform value per Minecraft day, deterministic so a server agrees with itself. Takes
+// the day index, not the summed clock: the index is exact as a float past 16 million days, where
+// the sum loses its fraction far sooner and quantises the draw.
+float plagueWeatherDayHash(float dayIndex) {
+    return fract(sin(floor(dayIndex) * 12.9898) * 43758.5453);
 }
 
 /**
@@ -61,10 +67,12 @@ float plagueWeatherDayHash(float worldTicks) {
  *                   borders. Used only where precipCoarseClipmap is unbound or does not cover the
  *                   camera.
  * @param cameraXZ   world column the neighbourhood is centred on.
+ * @param dayIndex     u_WorldClock.x, whole days on this dimension's clock. NOT u_SkyState.w.
+ * @param dayFraction  u_WorldClock.y, how far through that day.
  */
 PlagueWeatherState plagueWeatherState(float rainRaw, float thunderRaw, float wetness,
                                       float precipType, vec2 cameraXZ, float sunAngleRadians,
-                                      float worldTicks, float nightFactor) {
+                                      float dayIndex, float dayFraction, float nightFactor) {
     PlagueWeatherState w;
 
     w.rain = clamp(rainRaw, 0.0, 1.0);
@@ -80,9 +88,10 @@ PlagueWeatherState plagueWeatherState(float rainRaw, float thunderRaw, float wet
     float m = fract(w.dayFrac + 0.5) - 0.5;
     w.morningWindow = smoothstep(-0.06, -0.015, m) * (1.0 - smoothstep(0.02, 0.14, m));
 
-    w.dayVariance = plagueWeatherDayHash(worldTicks);
-    w.humidSpell = plagueWeatherSpell(worldTicks, PLAGUE_WEATHER_HUMID_LANE);
-    w.unstableSpell = plagueWeatherSpell(worldTicks, PLAGUE_WEATHER_UNSTABLE_LANE);
+    float days = dayIndex + clamp(dayFraction, 0.0, 1.0);
+    w.dayVariance = plagueWeatherDayHash(dayIndex);
+    w.humidSpell = plagueWeatherSpell(days, PLAGUE_WEATHER_HUMID_LANE);
+    w.unstableSpell = plagueWeatherSpell(days, PLAGUE_WEATHER_UNSTABLE_LANE);
 
     // Spatial where the buffer covers this column, camera-local where it does not. The fallback is
     // the step the field replaces, so a pass that never binds the buffer is unchanged.

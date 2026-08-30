@@ -144,9 +144,9 @@ def day_frac(sun_angle_radians):
     return _fract(sun_angle_radians * 0.15915494309189535 + 0.25)
 
 
-def day_hash(world_ticks):
+def day_hash(dclock):
     """plagueFogDayHash: one roughly-uniform value per Minecraft day."""
-    return _fract(math.sin(math.floor(world_ticks / 24000.0) * 12.9898) * 43758.5453)
+    return _fract(math.sin(math.floor(dclock) * 12.9898) * 43758.5453)
 
 
 def _smoothstep(e0, e1, x):
@@ -154,7 +154,7 @@ def _smoothstep(e0, e1, x):
     return t * t * (3.0 - 2.0 * t)
 
 
-def drive(rain_raw, wetness=None, precip=1.0, night_factor=0.0, dfrac=0.25, world_ticks=0.0,
+def drive(rain_raw, wetness=None, precip=1.0, night_factor=0.0, dfrac=0.25, day_index=0.0,
           opt_distance=None, opt_sharpness=None, opt_height=None, opt_high_alt=None,
           opt_morning=None, opt_night=None, opt_day_var=None, opt_rain_response=None,
           opt_rain_depth=None, opt_wet_mist=None, opt_mist_reach=None, opt_cold_mist=None,
@@ -200,7 +200,7 @@ def drive(rain_raw, wetness=None, precip=1.0, night_factor=0.0, dfrac=0.25, worl
 
     m = _fract(dfrac + 0.5) - 0.5
     morning_w = _smoothstep(-0.06, -0.015, m) * (1.0 - _smoothstep(0.02, 0.14, m))
-    day_factor = 1.0 + opt_day_var * (2.0 * day_hash(world_ticks) - 1.0)
+    day_factor = 1.0 + opt_day_var * (2.0 * day_hash(day_index) - 1.0)
     morning_mist = en["Morning"] * opt_morning * morning_w * max(day_factor, 0.0)
 
     after_rain = max(wetness - rain_raw, 0.0)

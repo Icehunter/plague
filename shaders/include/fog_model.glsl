@@ -98,15 +98,18 @@ float plagueFogDayFrac(float sunAngleRadians) {
 
 // One roughly-uniform value per Minecraft day. Determinism matters more than quality here:
 // everyone on the same world clock sees the same dawn.
-float plagueFogDayHash(float worldTicks) {
-    return fract(sin(floor(worldTicks / 24000.0) * 12.9898) * 43758.5453);
+// Takes the day index from u_WorldClock, not the tick clock: u_SkyState.w is getGameTime() and
+// ignores /time set, doDaylightCycle and the clock rate, so mist keyed on it repeats one day.
+// Duplicated from weather_state.glsl and pinned byte-identical.
+float plagueFogDayHash(float dayIndex) {
+    return fract(sin(floor(dayIndex) * 12.9898) * 43758.5453);
 }
 
 // Pure builder: every option/engine signal is a parameter, so the offline twin
 // (tools/plague_fog.py) can mirror it exactly. Consumers expand PLAGUE_FOG_DRIVE(lighting) from
 // fog_options.glsl rather than calling this directly.
 PlagueFogDrive plagueFogDrive(float rainRaw, float wetness, float precipType,
-                              float nightFactor, float dayFrac, float worldTicks,
+                              float nightFactor, float dayFrac, float dayIndex,
                               float optDistance, float optSharpness, float optHeight,
                               float optHighAlt, float optMorning, float optNight,
                               float optDayVar, float optRainResponse, float optRainDepth,
@@ -133,7 +136,7 @@ PlagueFogDrive plagueFogDrive(float rainRaw, float wetness, float precipType,
     float morningW = smoothstep(-0.06, -0.015, m) * (1.0 - smoothstep(0.02, 0.14, m));
     // Daily variation scales only the morning term, so away from dawn the defaults reproduce the
     // fitted model exactly regardless of world clock.
-    float dayFactor = 1.0 + optDayVar * (2.0 * plagueFogDayHash(worldTicks) - 1.0);
+    float dayFactor = 1.0 + optDayVar * (2.0 * plagueFogDayHash(dayIndex) - 1.0);
     float morningMist = enableMNWC.x * optMorning * morningW * max(dayFactor, 0.0);
 
     // Wetness lags rain in both directions (engine-accumulated; the shader has no frame memory),

@@ -142,10 +142,11 @@
 // day cycle, so it distinguishes dawn from dusk where elevation alone can't. u_FrameState.w is
 // accumulated surface wetness, which lags rain in both directions (the after-rain mist's clock).
 // lighting.rainFactor and lighting.nightFactor come from the caller's own lighting model, not a
-// separate read; u_SkyState.w is the raw tick clock morning mist keys its own fade window on.
+// separate read; u_WorldClock.x is the day index on this dimension's own clock, the day count
+// that follows /time set and the clock rate. u_SkyState.w counts real ticks and cannot be used.
 //
 // One line, no backslash continuations: glslangValidator rejects line continuation under this
 // pack's #version (see CLAUDE.md).
-#define PLAGUE_FOG_DRIVE(lighting) plagueFogDrive((lighting).rainFactor, clamp(u_FrameState.w, 0.0, 1.0), u_CameraSkyLight.y, (lighting).nightFactor, plagueFogDayFrac(u_SkyState.y), u_SkyState.w, u_FogDistance, u_FogSharpness, u_FogHeight, u_FogHighAltitude, u_FogMorningMist, u_FogNight, u_FogDayVariance, u_FogRainResponse, u_FogRainDepth, u_FogWetMist, u_FogMistReach, u_FogColdMist, u_FogDryClear, u_FogClimbRise, vec4(u_FogEnableMorning, u_FogEnableNight, u_FogEnableWet, u_FogEnableCold), vec2(u_FogEnableDry, u_FogAdvanced), vec3(u_FogMorningDensity, u_FogMorningDistance, u_FogMorningSharpness), vec3(u_FogNightDensity, u_FogNightDistance, u_FogNightSharpness), vec3(u_FogWetDensity, u_FogWetDistance, u_FogWetSharpness), vec3(u_FogColdDensity, u_FogColdDistance, u_FogColdSharpness), vec3(u_FogDryDensity, u_FogDryDistance, u_FogDrySharpness))
+#define PLAGUE_FOG_DRIVE(lighting) plagueFogDrive((lighting).rainFactor, clamp(u_FrameState.w, 0.0, 1.0), u_CameraSkyLight.y, (lighting).nightFactor, plagueFogDayFrac(u_SkyState.y), u_WorldClock.x, u_FogDistance, u_FogSharpness, u_FogHeight, u_FogHighAltitude, u_FogMorningMist, u_FogNight, u_FogDayVariance, u_FogRainResponse, u_FogRainDepth, u_FogWetMist, u_FogMistReach, u_FogColdMist, u_FogDryClear, u_FogClimbRise, vec4(u_FogEnableMorning, u_FogEnableNight, u_FogEnableWet, u_FogEnableCold), vec2(u_FogEnableDry, u_FogAdvanced), vec3(u_FogMorningDensity, u_FogMorningDistance, u_FogMorningSharpness), vec3(u_FogNightDensity, u_FogNightDistance, u_FogNightSharpness), vec3(u_FogWetDensity, u_FogWetDistance, u_FogWetSharpness), vec3(u_FogColdDensity, u_FogColdDistance, u_FogColdSharpness), vec3(u_FogDryDensity, u_FogDryDistance, u_FogDrySharpness))
 
 #endif // PLAGUE_FOG_OPTIONS
