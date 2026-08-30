@@ -143,6 +143,12 @@ count = 5
 [targets.surfaceFluidClipmap]
 kind = "buffer"
 
+# Engine-filled (Fornax PrecipCoarseClipmapBuffer): 4-block cells over a 512-block window, one word
+# per column, none/rain/snow with height-adjusted temperature folded in. No stride or count: the
+# engine sizes it, and skips the upload for a pack that never declares this target.
+[targets.precipCoarseClipmap]
+kind = "buffer"
+
 # Engine-filled (Fornax WaterActorBuffer), slot 0 the local actor — no stride/count here since the
 # engine sizes it, and skips the whole sweep for any pack that doesn't declare this target.
 [targets.waterActors]
@@ -486,7 +492,7 @@ dispatch = [1, 1, 1]
 # dispatch above is an unused placeholder: local_size makes the engine derive real group counts
 # from cloudsVolumeCompute's own resolved pixel size every dispatch (ComputePassRunner), which is
 # what lets this pass track window resize the same way its own 0.5 scale factor already does.
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap"]
 outputs = ["cloudsVolumeCompute", "cloudsVolumeDistance"]
 
 [[pass]]
@@ -521,7 +527,7 @@ shader = "shaders/compute/clouds_march_volume.comp"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY == 2"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap"]
 outputs = ["cloudsVolumeComputeFull", "cloudsVolumeDistanceFull"]
 
 [[pass]]

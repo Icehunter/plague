@@ -108,7 +108,7 @@ float plagueCloudStability(PlagueWeatherState w) {
 /** The world's own weather, read from the globals every cloud pass already has. */
 PlagueWeatherState plagueCloudWeather() {
     return plagueWeatherState(u_SkyState.x, u_FrameState.z, u_FrameState.w,
-                              u_CameraSkyLight.y, u_SkyState.y, u_SkyState.w,
+                              u_CameraSkyLight.y, u_CameraAbs.xz, u_SkyState.y, u_SkyState.w,
                               0.0);
 }
 
@@ -317,11 +317,8 @@ float plagueCloudEngineBase() {
     return u_CameraSkyLight.w > 0.0 ? u_CameraSkyLight.w : PLAGUE_CLOUD_CUMULUS_BASE;
 }
 
-// Precipitation kinds, for the driver signature below. Named rather than numbered at the call site,
-// so that adding a third cannot silently renumber a comparison somebody wrote as a literal.
-const int PLAGUE_PRECIP_NONE = 0;
-const int PLAGUE_PRECIP_RAIN = 1;
-const int PLAGUE_PRECIP_SNOW = 2;
+// Precipitation kinds live in precip_field.glsl and arrive through weather_state.glsl's import.
+// Named rather than numbered, so adding a third cannot renumber a comparison written as a literal.
 
 // Cover ceiling at full storm response: 5 oktas, broken-to-overcast, short of stratus's solid 8.
 // Authored: WMO carries no separate coverage figure for congestus. Coverage near 1.0 merges every

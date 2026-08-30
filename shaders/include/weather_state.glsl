@@ -2,6 +2,7 @@
 #define PLAGUE_WEATHER_STATE
 
 #moj_import <fornax_runtime:sky_hash.glsl>
+#moj_import <fornax_runtime:precip_field.glsl>
 
 // The world's atmospheric facts, beneath any consumer's settings: fog decides whether to DRAW mist
 // from these, clouds whether to FORM stratus. Neither may read the other's gated output.
@@ -18,8 +19,8 @@ struct PlagueWeatherState {
     float dayVariance;   // one deterministic draw per Minecraft day, 0..1
     float humidSpell;    // slow synoptic humidity: which air mass is overhead, 0..1
     float unstableSpell; // slow synoptic instability, decorrelated from the humidity, 0..1
-    float cold;          // vanilla says snow falls here
-    float arid;          // vanilla says nothing falls here
+    float cold;          // fraction of the neighbourhood where snow falls, 0..1
+    float arid;          // fraction of the neighbourhood where nothing falls, 0..1
     float nightFactor;   // 0 by day, 1 at true midnight
 };
 
@@ -56,13 +57,14 @@ float plagueWeatherDayHash(float worldTicks) {
 }
 
 /**
- * @param precipType u_CameraSkyLight.y: 0 none, 1 rain, 2 snow. Camera-local, and it steps at
- *                   biome borders. The engine's precipCoarseClipmap is the honest spatial source
- *                   once a pass binds it.
+ * @param precipType u_CameraSkyLight.y: 0 none, 1 rain, 2 snow. Camera-local, so it steps at biome
+ *                   borders. Used only where precipCoarseClipmap is unbound or does not cover the
+ *                   camera.
+ * @param cameraXZ   world column the neighbourhood is centred on.
  */
 PlagueWeatherState plagueWeatherState(float rainRaw, float thunderRaw, float wetness,
-                                      float precipType, float sunAngleRadians, float worldTicks,
-                                      float nightFactor) {
+                                      float precipType, vec2 cameraXZ, float sunAngleRadians,
+                                      float worldTicks, float nightFactor) {
     PlagueWeatherState w;
 
     w.rain = clamp(rainRaw, 0.0, 1.0);
@@ -82,8 +84,17 @@ PlagueWeatherState plagueWeatherState(float rainRaw, float thunderRaw, float wet
     w.humidSpell = plagueWeatherSpell(worldTicks, PLAGUE_WEATHER_HUMID_LANE);
     w.unstableSpell = plagueWeatherSpell(worldTicks, PLAGUE_WEATHER_UNSTABLE_LANE);
 
-    w.cold = precipType >= 1.5 ? 1.0 : 0.0;
-    w.arid = precipType < 0.5 ? 1.0 : 0.0;
+    // Spatial where the buffer covers this column, camera-local where it does not. The fallback is
+    // the step the field replaces, so a pass that never binds the buffer is unchanged.
+    float aridFraction;
+    float coldFraction;
+    if (plaguePrecipNeighbourhood(cameraXZ, aridFraction, coldFraction)) {
+        w.arid = aridFraction;
+        w.cold = coldFraction;
+    } else {
+        w.arid = precipType < 0.5 ? 1.0 : 0.0;
+        w.cold = precipType >= 1.5 ? 1.0 : 0.0;
+    }
 
     return w;
 }

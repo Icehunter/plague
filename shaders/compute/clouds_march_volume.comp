@@ -17,16 +17,20 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 // Binding order mirrors graph.toml's declared inputs-then-outputs for this pass exactly:
 // 0 globals (above), 1 packOptions (auto-injected by the engine, no declaration needed here),
-// 2 cloudBaseShape, 3 cloudDetailShape, 4 colour, 5 cloud-front distance. Terrain visibility is
-// resolved against the destination pixel in clouds_composite, so this compute pass intentionally
-// has no unused 2D depth descriptor mixed into its 3D-volume descriptor set.
+// 2 cloudBaseShape, 3 cloudDetailShape, 4 precipCoarseClipmap, 5 colour, 6 cloud-front distance.
+// Terrain visibility is resolved against the destination pixel in clouds_composite, so this compute
+// pass intentionally has no unused 2D depth descriptor mixed into its 3D-volume descriptor set.
 layout(set = 0, binding = 2) uniform sampler3D u_CloudBaseShapeVolume;
 layout(set = 0, binding = 3) uniform sampler3D u_CloudDetailShapeVolume;
-layout(rgba16f, set = 0, binding = 4) uniform writeonly image2D u_OutClouds;
-layout(r32f, set = 0, binding = 5) uniform writeonly image2D u_OutCloudDistance;
+layout(std430, set = 0, binding = 4) readonly buffer PrecipCoarseClipmap {
+    int words[];
+} precipCoarseClipmap;
+layout(rgba16f, set = 0, binding = 5) uniform writeonly image2D u_OutClouds;
+layout(r32f, set = 0, binding = 6) uniform writeonly image2D u_OutCloudDistance;
 
 #define PLAGUE_CLOUD_NOISE_3D(uvw) texture(u_CloudBaseShapeVolume, uvw)
 #define PLAGUE_CLOUD_DETAIL_3D(uvw) texture(u_CloudDetailShapeVolume, uvw)
+#define PLAGUE_PRECIP_CLIPMAP(slot) precipCoarseClipmap.words[slot]
 #moj_import <fornax_runtime:clouds.glsl>
 
 void main() {
