@@ -92,13 +92,17 @@ void main() {
     PlagueSkyColors skyColours = plagueSkyColors(max(u_SkyColor.rgb, vec3(0.0)),
             sunDirTrue, lighting.sunVisibility, localRain, u_CameraAbs.y);
 
-    PlagueCloudDeck deck = plagueCloudActiveDeck(
+    PlagueCloudDeck convectiveDeck;
+    PlagueCloudDeck stratiformDeck;
+    float stratiform = plagueCloudTransitionDecks(
             localRain,
             localThunder,
             clamp(u_FrameState.w, 0.0, 1.0),
             localSnowWeight,
             sunElevationSine,
-            syncedTime);
+            syncedTime,
+            convectiveDeck,
+            stratiformDeck);
 
     // u_Param2 is filled by the engine BY PASS NAME (see ComputePassRunner); this pass's name is
     // not one the engine recognizes, so u_Param2 reads 0 here and this falls back to fog render
@@ -115,10 +119,51 @@ void main() {
             vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
 #endif
 
+    // One march at either end of the transition, two only while it is in progress. The endpoints
+    // are exact: at 0 and 1 the dissolve would weight the other contributor at zero anyway, so
+    // skipping it costs nothing and keeps the steady-state frame at its old budget.
     float cloudFrontDistance;
-    vec4 clouds = plagueGetClouds(viewDir, u_CameraAbs, 0.0, dither,
-                                  deck, skyColours, lighting, sunDirTrue, syncedTime,
-                                  renderDistance, atmColorMult, cloudFrontDistance);
+    vec4 clouds;
+    if (stratiform <= 0.0) {
+        clouds = plagueGetClouds(viewDir, u_CameraAbs, 0.0, dither,
+                                 convectiveDeck, skyColours, lighting, sunDirTrue, syncedTime,
+                                 renderDistance, atmColorMult, cloudFrontDistance);
+    } else if (stratiform >= 1.0) {
+        clouds = plagueGetClouds(viewDir, u_CameraAbs, 0.0, dither,
+                                 stratiformDeck, skyColours, lighting, sunDirTrue, syncedTime,
+                                 renderDistance, atmColorMult, cloudFrontDistance);
+    } else {
+        float convectiveFront;
+        float stratiformFront;
+        vec4 convectiveClouds = plagueGetClouds(viewDir, u_CameraAbs, 0.0, dither,
+                                 convectiveDeck, skyColours, lighting, sunDirTrue, syncedTime,
+                                 renderDistance, atmColorMult, convectiveFront);
+        // Half a step out of phase: both marches walk the same ray, and a shared dither would put
+        // their samples on the same planes and correlate the two genera's noise.
+        vec4 stratiformClouds = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.5),
+                                 stratiformDeck, skyColours, lighting, sunDirTrue, syncedTime,
+                                 renderDistance, atmColorMult, stratiformFront);
+
+        // Composited, not dissolved. Mid-transition both genera are really there: cumulus still
+        // standing while the sheet grows in around and over it. A weighted blend would instead fade
+        // the whole sky between two states at once, which is the part that read as unnatural.
+        //
+        // Ordered per ray by which deck it actually reaches first, since the two slabs overlap in
+        // altitude and neither base decides it. Premultiplied over.
+        bool convectiveFirst = convectiveFront > 0.0
+                && (stratiformFront <= 0.0 || convectiveFront <= stratiformFront);
+        vec4 nearClouds = convectiveFirst ? convectiveClouds : stratiformClouds;
+        vec4 farClouds = convectiveFirst ? stratiformClouds : convectiveClouds;
+        clouds = nearClouds + farClouds * (1.0 - nearClouds.a);
+
+        // The nearer contributor owns the terrain-occlusion gate; max() picks up the other when
+        // this ray missed one deck entirely, since a zero front distance reads as "no cloud" and
+        // would drop a pixel the surviving genus does cover.
+        cloudFrontDistance = convectiveFirst ? convectiveFront : stratiformFront;
+        if (cloudFrontDistance <= 0.0) {
+            cloudFrontDistance = max(convectiveFront, stratiformFront);
+        }
+    }
 
     imageStore(u_OutClouds, texelCoord, clouds);
     imageStore(u_OutCloudDistance, texelCoord, vec4(cloudFrontDistance));

@@ -79,9 +79,11 @@ const float PLAGUE_CLOUD_SHEET_FLOOR = 0.15;
 // candidate stays empty and the candidate-only field is reproduced exactly.
 const float PLAGUE_CLOUD_SHEET_NONE = -1e6;
 
-// Where the stratiform deck takes over from the convective one. Interim scaffolding for the hard
-// switch, replaced by the cross-dissolve; halfway up the ramp so neither genus owns the transition.
-const float PLAGUE_CLOUD_STRATIFORM_ONSET = 0.5;
+// The band over which the sky changes genus. Wide and centred on the ramp so the dissolve spends
+// most of vanilla's weather transition in progress rather than resolving in a few frames, which is
+// what a threshold did and what read as a pop.
+const float PLAGUE_CLOUD_STRATIFORM_ONSET = 0.20;
+const float PLAGUE_CLOUD_STRATIFORM_FULL  = 0.80;
 
 // Traversal cap, blocks, horizontal. tools/derive_cloud_types.py checks its genus cell sizes
 // against this so no cell fills the whole drawn region; the march's own visual horizon (from
@@ -298,6 +300,18 @@ float plagueCloudClearReferenceMidAltitude() {
 }
 
 /**
+ * How far the sky has changed genus: 0 convective, 1 stratiform. Thunder pulls it back to zero,
+ * since a cumulonimbus is the storm itself rather than the sheet in front of one.
+ */
+float plagueCloudStratiformWeight(float rainFactor, float thunderFactor) {
+    float response = clamp(u_CloudWeatherResponse, 0.0, 1.0);
+    float rain = clamp(rainFactor, 0.0, 1.0) * response;
+    float thunder = clamp(thunderFactor, 0.0, 1.0) * response;
+    return smoothstep(PLAGUE_CLOUD_STRATIFORM_ONSET, PLAGUE_CLOUD_STRATIFORM_FULL, rain)
+         * (1.0 - thunder);
+}
+
+/**
  * The low deck, resolved for this instant. Interpolates cumulus toward congestus on rainFactor,
  * then congestus toward cumulonimbus on thunderFactor. Rain/snow grow depth and tau while keeping
  * candidate membership fixed; thunder may add storm cells. Cover reports expected aggregate
@@ -335,8 +349,13 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
 
     // Two-stage mix: calm cumulus to the local rain/snow endpoint, then to cumulonimbus. Chaining
     // keeps full thunder byte-for-byte independent of which precipitation endpoint it grew from.
-    float depthAfterRain = mix(PLAGUE_CLOUD_CUMULUS_DEPTH, precipitationDepth, rainStorm);
-    float tauAfterRain = mix(PLAGUE_CLOUD_CUMULUS_TAU, precipitationTau, rainStorm);
+    // Congestus is a convective shower species, not a frontal rain sheet, so the cumulus deck
+    // hands its precipitation growth over as the stratiform deck arrives. Without this the sky
+    // both fattens its cumulus and grows a sheet, which reads as two weathers at once.
+    float convectiveRain = rainStorm
+                         * (1.0 - plagueCloudStratiformWeight(rainFactor, thunderFactor));
+    float depthAfterRain = mix(PLAGUE_CLOUD_CUMULUS_DEPTH, precipitationDepth, convectiveRain);
+    float tauAfterRain = mix(PLAGUE_CLOUD_CUMULUS_TAU, precipitationTau, convectiveRain);
 
     // The bounded perceptual response was fit over the five Size knots recorded by the cloud
     // verifier. It grows physical depth and lowers a fixed-field density isosurface; it never
@@ -349,7 +368,7 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
     deck.sizeRatio  = physicalScale;
     deck.shear      = PLAGUE_CLOUD_CUMULUS_SHEAR;
     deck.tau        = mix(tauAfterRain, PLAGUE_CLOUD_CUMULONIMBUS_TAU, thunderStorm);
-    deck.footprint  = mix(mix(1.0, precipitationFootprint, rainStorm),
+    deck.footprint  = mix(mix(1.0, precipitationFootprint, convectiveRain),
                           PLAGUE_CLOUD_CUMULONIMBUS_FOOTPRINT, thunderStorm);
     deck.family     = mix(mix(PLAGUE_CLOUD_CUMULUS_CONVECTIVE,
                               precipitationFamily, rainStorm),
@@ -391,7 +410,7 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
  * Its cell is constant, like the low deck's: the world-origin prohibition forbids a cell that moves
  * with time or a slider, not two decks holding different fixed ones.
  */
-PlagueCloudDeck plagueCloudNimbostratusDeck() {
+PlagueCloudDeck plagueCloudNimbostratusDeck(float stratiformWeight) {
     PlagueCloudDeck deck;
 
     float physicalScale = pow(max(u_CloudScale, 0.05) / PLAGUE_CLOUD_REFERENCE_SCALE,
@@ -403,7 +422,14 @@ PlagueCloudDeck plagueCloudNimbostratusDeck() {
     deck.depth = PLAGUE_CLOUD_NIMBOSTRATUS_DEPTH * physicalScale;
     deck.cell = PLAGUE_CLOUD_NIMBOSTRATUS_CELL * PLAGUE_CLOUD_REFERENCE_SCALE;
     deck.shear = PLAGUE_CLOUD_NIMBOSTRATUS_SHEAR;
-    deck.tau = PLAGUE_CLOUD_NIMBOSTRATUS_TAU;
+    // From zero, not from the cumulus figure. Optical depth is the sheet's water path, and a cloud
+    // that has not arrived has none. Starting it at 9 put the first material on screen at 46%
+    // opacity: MIN_SPAN floors the coverage span, so the field's top 0.26% clears the cutoff at
+    // raw 0.69 the instant the deck engages, and that appeared out of nothing.
+    // Squared, not linear: a linear ramp reached opacity 0.98 by the time coverage was 0.8%, so a
+    // handful of tiny patches went solid before the sheet had spread anywhere. Squaring keeps the
+    // veil translucent while coverage builds, which is the order a front actually thickens in.
+    deck.tau = PLAGUE_CLOUD_NIMBOSTRATUS_TAU * stratiformWeight * stratiformWeight;
     deck.cover = PLAGUE_CLOUD_NIMBOSTRATUS_COVER;
     deck.family = PLAGUE_CLOUD_NIMBOSTRATUS_CONVECTIVE;
     deck.sizeRatio = physicalScale;
@@ -416,7 +442,12 @@ PlagueCloudDeck plagueCloudNimbostratusDeck() {
             : min(sqrt(max(PLAGUE_CLOUD_POPULATION_RESPONSE * amount, 0.0)),
                   PLAGUE_CLOUD_POPULATION_MAX);
     deck.footprint = 1.0;
-    deck.sheetFloor = PLAGUE_CLOUD_SHEET_FLOOR;
+    // The floor is the arrival, not an alpha fade. It starts exactly at the early-out, so the
+    // sheet is empty, and rises: the highest values in the base volume clear the cutoff first and
+    // appear as scattered patches, which widen and merge as it rises further. The sky fills in
+    // where the field says, in its own order, instead of every pixel fading up together.
+    deck.sheetFloor = mix(PLAGUE_CLOUD_CANDIDATE_CUTOFF - PLAGUE_CLOUD_FIELD_TOP,
+                          PLAGUE_CLOUD_SHEET_FLOOR, stratiformWeight);
 
     return deck;
 }
@@ -425,20 +456,33 @@ PlagueCloudDeck plagueCloudNimbostratusDeck() {
  * The single contributor-selection seam used by every live cloud integration path. Future weather
  * types select their contributors here while the march, shadow, and reflection stay one path each.
  *
- * Rain resolves the stratiform deck; thunder keeps the convective one, since a cumulonimbus is the
- * storm rather than the sheet in front of it. The switch is a threshold for now: the cross-dissolve
- * that replaces it marches both decks through the transition, which this seam cannot express by
- * returning one deck.
+ * Returns whichever genus currently owns the sky. Mid-transition that is a step, which is why the
+ * direct march takes both contributors from plagueCloudTransitionDecks instead: shadow and
+ * reflection are a three-tap and a single sample, too coarse for the seam to be worth doubling.
  */
 PlagueCloudDeck plagueCloudActiveDeck(float rainFactor, float thunderFactor, float wetness,
                                       float snowWeight, float sunElevation, float worldTime) {
-    float response = clamp(u_CloudWeatherResponse, 0.0, 1.0);
-    if (clamp(rainFactor, 0.0, 1.0) * response > PLAGUE_CLOUD_STRATIFORM_ONSET
-            && clamp(thunderFactor, 0.0, 1.0) * response <= 0.0) {
-        return plagueCloudNimbostratusDeck();
+    float stratiform = plagueCloudStratiformWeight(rainFactor, thunderFactor);
+    if (stratiform >= 0.5) {
+        return plagueCloudNimbostratusDeck(stratiform);
     }
     return plagueCloudLowDeck(rainFactor, thunderFactor, wetness, snowWeight, sunElevation,
                               worldTime);
+}
+
+/**
+ * Both contributors and the weight between them, for the one path that can afford two marches.
+ * Two genera cannot be blended field by field, since cell and shear are fixed per deck, so the
+ * transition is a dissolve between two marched results rather than an interpolated deck.
+ */
+float plagueCloudTransitionDecks(float rainFactor, float thunderFactor, float wetness,
+                                 float snowWeight, float sunElevation, float worldTime,
+                                 out PlagueCloudDeck convective, out PlagueCloudDeck stratiform) {
+    convective = plagueCloudLowDeck(rainFactor, thunderFactor, wetness, snowWeight, sunElevation,
+                                    worldTime);
+    float weight = plagueCloudStratiformWeight(rainFactor, thunderFactor);
+    stratiform = plagueCloudNimbostratusDeck(weight);
+    return weight;
 }
 
 #endif // PLAGUE_CLOUD_TYPES
