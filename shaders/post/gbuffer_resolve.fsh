@@ -1798,7 +1798,11 @@ int debugView = int(u_Param3 + 0.5);
         // Irradiance requires a surface facing the sun — without this, back faces and near-vertical
         // walls glow as if the caustic image were pasted on them.
         float causticIncidence = smoothstep(0.03, 0.35, ndotl);
-        float causticShadow = plagueWaterSunVisibility(worldPos, sunDir) * pomShadow;
+        // cloudShadow belongs in this visibility, not beside it: a caustic is the collimated beam
+        // focused by the surface, and an overcast deck scatters that beam into hemispheric light
+        // with nothing left to focus. Terrain and cloud occlude the same sun. Falls back to 1.0
+        // when CLOUD_SHADOWS is off, which leaves the previous behaviour.
+        float causticShadow = plagueWaterSunVisibility(worldPos, sunDir) * pomShadow * cloudShadow;
         // Three terms from one visibility (causticShadow, causticIncidence, the strength slider),
         // all gated by the same occlusion, so bloom and bounce can never appear where the direct
         // caustic cannot. Deliberately not fed back into extinction or fog: this adds light to the
