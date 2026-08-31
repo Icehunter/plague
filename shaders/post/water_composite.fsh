@@ -51,6 +51,8 @@ uniform sampler2D u_Input9; // foamNormalTexture
 // agree by construction.
 uniform sampler2D u_Input10; // foamHeightTexture
 uniform sampler2D u_Input11; // waterEnvironment, filtered Plague sky radiance
+uniform sampler2D u_Input12; // moonAlbedo, equirectangular, near side centred
+uniform sampler2D u_Input13; // moonNormal, tangent-space relief for the same projection
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -594,7 +596,7 @@ void main() {
             float uwMoonDiscGlow = smoothstep(-0.03, 0.08, -trueSunDir.y)
                                   * (1.0 - lighting.sunVisibility);
             uwDirectionalSky += plagueUnderwaterCelestialDiscs(uwExitDir, trueSunDir,
-                    u_SkyCelestial.w, uwDiscSoftness,
+                    u_SkyCelestial.w, u_WorldClock.x, u_Input12, u_Input13, uwDiscSoftness,
                     1.0 - rainFactor, uwMoonDiscGlow);
         }
         vec3 uwSkyFill = mix(plagueWaterFogColor(lighting), uwDirectionalSky, 0.68);

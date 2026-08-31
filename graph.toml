@@ -363,13 +363,23 @@ shader = "shaders/post/gbuffer_resolve.fsh"
 # sunShadowMapRaw aliases the same texture under a different target name so the comparison-sampler
 # branch (keyed by exact target string) doesn't wrongly attach to this plain-sampler debug read. A
 # shader uniform and its graph.toml binding are one atomic contract — never remove one side alone.
-inputs = ["builtin.gNormal", "builtin.gAlbedo", "builtin.gMaterial", "builtin.gAo", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw"]
+inputs = ["builtin.gNormal", "builtin.gAlbedo", "builtin.gMaterial", "builtin.gAo", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal"]
 outputs = ["sceneHdr"]
 
 # Tileable grayscale focusing pattern, sampled by two rotated flowing layers with mirror-repeat UVs.
 # Consumed by gbuffer_resolve (seabed projection) and water_composite (surface shimmer).
 [textures.causticsTexture]
 file = "shaders/textures/water_caustics.png"
+
+# The moon's surface, equirectangular with the near side at the centre. Both built by
+# tools/generate_moon_maps.py from the NASA CGI Moon Kit; see ASSETS.md. The normal is baked rather
+# than read from height in the shader: the elevation terraces over 8 bits, and its gradient needs a
+# cos(latitude) metric.
+[textures.moonAlbedo]
+file = "shaders/textures/moon_albedo.png"
+
+[textures.moonNormal]
+file = "shaders/textures/moon_normal.png"
 
 # Seamless sea-foam pattern: a bubble-film web, connected bright films with darker holes. Built by
 # tools/generate_foam.py, see water_composite.fsh's own foam block for why noise alone cannot
@@ -642,7 +652,7 @@ type = "fullscreen"
 shader = "shaders/post/water_composite.fsh"
 enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
 blend = "translucent"
-inputs = ["builtin.waterNormal", "builtin.waterDepth", "ssrWater", "builtin.depth", "builtin.noise", "causticsTexture", "glintOcclusion", "builtin.celestials", "foamTexture", "foamNormalTexture", "foamHeightTexture", "waterEnvironment"]
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "ssrWater", "builtin.depth", "builtin.noise", "causticsTexture", "glintOcclusion", "builtin.celestials", "foamTexture", "foamNormalTexture", "foamHeightTexture", "waterEnvironment", "moonAlbedo", "moonNormal"]
 outputs = ["sceneHdrComposited"]
 
 # Placed after the last scene writer, BEFORE bloom and underwater_refraction: accumulating a

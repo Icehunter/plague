@@ -36,12 +36,14 @@ working notes; what is here is what a reader needs to know the limitation exists
   bottom plane appearing once the vertical profile saturates before it reaches the boundary. Matters
   most for anything at eye level, so it must be understood before the march is reused for ground fog
   or mist, which are viewed edge-on constantly.
-- **A cloud brightens and appears to swell as the sun passes behind it.** The sun's disc reads
-  through the cloud as a hard-edged bright circle rather than being attenuated by the cloud it sits
-  behind, and its aureole spreads into the surrounding cloud. `plagueCelestialDiscs` writes into the
-  sky before the cloud composite, so the cloud's alpha thins the disc but the disc keeps its own
-  shape and edge; nothing tests the cloud's optical depth along the sun ray. Most visible against a
-  small isolated cumulus.
+- **A cloud grows and gains density as the sun passes behind it.** The silhouette widens, not just
+  the glow around it. Most visible against a small isolated cumulus. The moon behind the same cloud
+  does nothing, which fits the march lighting from the sun alone: the moon is no directional source
+  for it. The lead is the forward-scattering lobe in `shaders/include/clouds.glsl`. Looking toward
+  the sun puts cosLight near 1, the phase peak brightens the thin margins, and material that sat
+  below visibility crosses it, so the cloud reads both larger and thicker. Forward scatter belongs
+  there; the open question is its magnitude, and whether the growth tracks
+  PLAGUE_CLOUD_PHASE_FORWARD or the multiple-scattering octaves. Not measured.
 
 ## Particles
 

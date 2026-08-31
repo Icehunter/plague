@@ -22,6 +22,8 @@ sliders = [
     "u_AmbientSkyBleed",
     "u_SunDiscSize",
     "u_MoonDiscSize",
+    "u_MoonRelief",
+    "u_MoonLibration",
     "u_SunDiscBrightness",
     "u_MoonDiscBrightness",
     "u_TwilightSpan",
@@ -226,6 +228,8 @@ elements = [
     "<group:Sun and Moon>",
     "u_SunDiscSize",
     "u_MoonDiscSize",
+    "u_MoonRelief",
+    "u_MoonLibration",
     "u_SunDiscBrightness",
     "u_MoonDiscBrightness",
     "u_SunGlowStrength",
@@ -669,6 +673,18 @@ The sun's angular radius, in radians.
 
 The real sun is 0.005 and covers a handful of pixels. Vanilla's is 0.29, wide enough to swallow \
 its own glow, so the aureole only shows below about 0.12."""
+
+u_MoonRelief = """
+How pronounced the moon's craters are.
+
+The relief is baked at three times true scale, which is 1 here. It shows most along the \
+terminator, where the light grazes the surface."""
+
+u_MoonLibration = """
+How far the moon's face rocks between nights, in degrees.
+
+The real moon keeps one face turned toward us, but its orbit tilts and its speed varies, so about \
+8 degrees of each limb swings into view and back. 0 pins the face."""
 
 u_MoonDiscSize = """
 The moon's angular radius, in radians.

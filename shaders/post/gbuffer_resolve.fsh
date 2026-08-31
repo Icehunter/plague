@@ -45,6 +45,8 @@ uniform sampler2D u_Input13; // causticsTexture
 // FullscreenPassRunner keys the comparison-sampler branch on the exact string, so this reads raw
 // stored depth where u_Input6's sampler2DShadow can only return a pass/fail compare.
 uniform sampler2D u_Input14; // sunShadowMapRaw (raw, non-comparison. Debug only, see DBG_SHADOW_QUERY_3)
+uniform sampler2D u_Input15; // moonAlbedo, equirectangular, near side centred
+uniform sampler2D u_Input16; // moonNormal, tangent-space relief for the same projection
 
 // Must come after u_Input10's declaration: PLAGUE_CLOUD_NOISE expands inline wherever clouds.glsl
 // calls it, so an earlier import would reference u_Input10 before it exists. Also declares
@@ -590,7 +592,8 @@ int debugView = int(u_Param3 + 0.5);
             // Same radiances the world is lit by, so the disc and its shadows can never disagree
             // about colour, and it reddens through sunset because its light does.
             vec3 discEyePos = plagueAirEyePos(u_CameraAbs.y);
-            skyOut += plagueCelestialDiscs(viewRay, sunDirTrue, u_SkyCelestial.w,
+            skyOut += plagueCelestialDiscs(viewRay, sunDirTrue, u_SkyCelestial.w, u_WorldClock.x,
+                                           u_Input15, u_Input16,
                                            1.0 - rainFactor, plagueMoonDiscGlow,
                                            plagueSunColor(discEyePos, sunDirTrue),
                                            plagueMoonColor(discEyePos, -sunDirTrue));

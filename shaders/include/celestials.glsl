@@ -30,6 +30,16 @@ const float PLAGUE_MOON_DISC_RADIUS = 0.1974;
 // few percent of the sun's, which is why eclipses work.
 #define u_MoonDiscSize 0.070 //[0.010..0.250 step 0.005] runtime "Moon Size"
 
+// Multiplies the baked relief's tilt. moon_normal.png is baked at 3x true scale, a median surface
+// tilt of 6.8 degrees, so 1 is that and 4 reaches about 25. Only the tangential components scale,
+// and the result is renormalised, so no value leaves the unit sphere.
+#define u_MoonRelief 1.0 //[0.00..4.00 step 0.25] runtime "Moon Relief"
+
+// Libration amplitude, degrees. The moon keeps one face turned toward the world, but not exactly:
+// its orbital tilt and varying speed rock that face by about 8 degrees in each axis, so each limb
+// swings into view and back over a cycle. 0 pins the face.
+#define u_MoonLibration 8.0 //[0.00..45.00 step 1.00] runtime "Moon Libration"
+
 // Disc-local frame for a celestial direction. Any vector not parallel to dir works as a seed; world
 // up fails only when looking exactly at the zenith celestial, so the seed swaps near the pole
 // rather than producing a degenerate basis.
@@ -83,6 +93,11 @@ const float PLAGUE_DISC_RADIAL_FEATHER = 0.02;
 
 // Local copy: this file is imported before light_and_ambient_colors in some passes.
 const float PLAGUE_CELESTIAL_TAU = 6.283185307179586;
+const float PLAGUE_CELESTIAL_PI = 3.141592653589793;
+
+// Mean luminance of moon_albedo.png. Dividing by it keeps the map a pattern rather than a
+// brightness change, leaving overall brightness to u_MoonDiscBrightness.
+const float PLAGUE_MOON_ALBEDO_MEAN = 0.732;
 
 /**
  * Disc coverage from the disc-local radius: 1 inside the disc, 0 past the rim.
@@ -113,17 +128,34 @@ vec3 plagueShadeSunDisc(vec2 discUv, vec3 sunRadiance, float rainFactor) {
  * from the unit constraint. It is negated because the visible hemisphere faces the viewer, against
  * moonDir.
  */
-bool plagueMoonSurface(vec3 viewRay, vec3 moonDir, float radius, out vec3 normal, out float rim) {
-    vec3 tangentX, tangentY;
-    plagueCelestialBasis(moonDir, tangentX, tangentY);
-    vec2 offset = vec2(dot(viewRay, tangentX), dot(viewRay, tangentY)) / max(radius, 1e-4);
+bool plagueMoonSurface(vec3 viewRay, vec3 moonDir, float radius, float dayIndex,
+                       out vec3 normal, out float rim, out vec2 uv, out vec3 poleAxis) {
+    vec3 tangentX;
+    plagueCelestialBasis(moonDir, tangentX, poleAxis);
+    vec2 offset = vec2(dot(viewRay, tangentX), dot(viewRay, poleAxis)) / max(radius, 1e-4);
     rim = length(offset);
     if (rim > 1.0) {
         normal = -moonDir;
+        uv = vec2(0.5);
         return false;
     }
-    normal = normalize(tangentX * offset.x + tangentY * offset.y
-                     - moonDir * sqrt(max(1.0 - rim * rim, 0.0)));
+    float toward = sqrt(max(1.0 - rim * rim, 0.0));
+    normal = normalize(tangentX * offset.x + poleAxis * offset.y - moonDir * toward);
+
+    // Equirectangular, near side at the map's centre. poleAxis is the disc's own up, so the face
+    // turns with the moon's path across the sky, as vanilla's sprite does.
+    float latitude = asin(clamp(offset.y, -1.0, 1.0));
+    float longitude = atan(offset.x, toward);
+
+    // Two periods that do not divide each other, so the pair does not repeat every cycle and
+    // consecutive nights differ by 2 to 7 degrees of face rotation.
+    float libration = radians(max(u_MoonLibration, 0.0));
+    float day = PLAGUE_CELESTIAL_TAU * dayIndex / 8.0;
+    longitude += libration * sin(day);
+    latitude += libration * sin(day * 0.53 + 1.1);
+
+    uv = vec2(fract(longitude / PLAGUE_CELESTIAL_TAU + 0.5),
+              clamp(0.5 - latitude / PLAGUE_CELESTIAL_PI, 0.0, 1.0));
     return true;
 }
 
@@ -149,13 +181,24 @@ vec3 plagueMoonLightDir(vec3 moonDir, float phaseIndex) {
  * rather than falling off toward it, and the terminator stays sharp. mu is the cosine to the
  * viewer, which for this orthographic disc is exactly the normal's component along the view.
  */
-vec3 plagueShadeMoonSphere(vec3 normal, float rim, vec3 lightDir, vec3 moonRadiance,
-                           float rainFactor) {
-    float mu0 = max(dot(normal, lightDir), 0.0);
+vec3 plagueShadeMoonSphere(vec3 normal, float rim, vec2 uv, vec3 poleAxis, vec3 lightDir,
+                           sampler2D albedoMap, sampler2D normalMap,
+                           vec3 moonRadiance, float rainFactor) {
+    // Relief perturbs the normal before the reflectance: the light grazes near the terminator, so
+    // that is where crater walls catch or lose it.
+    vec3 tangent = normalize(cross(poleAxis, normal));
+    vec3 bitangent = cross(normal, tangent);
+    vec3 relief = texture(normalMap, uv).rgb * 2.0 - 1.0;
+    relief.xy *= max(u_MoonRelief, 0.0);
+    vec3 shaded = normalize(tangent * relief.x + bitangent * relief.y + normal * relief.z);
+
+    float mu0 = max(dot(shaded, lightDir), 0.0);
     float mu = sqrt(max(1.0 - rim * rim, 0.0));
     float reflectance = mu0 / max(mu0 + mu, 1e-4);
-    // Flat albedo: an albedo map multiplies in here, and the maria are what it adds.
-    return moonRadiance * reflectance * plagueDiscCoverageRadial(rim, rainFactor);
+
+    // Normalised against the map's mean so the albedo carries the maria without dimming the moon.
+    vec3 albedo = texture(albedoMap, uv).rgb / PLAGUE_MOON_ALBEDO_MEAN;
+    return moonRadiance * albedo * reflectance * plagueDiscCoverageRadial(rim, rainFactor);
 }
 
 /**
@@ -163,7 +206,8 @@ vec3 plagueShadeMoonSphere(vec3 normal, float rim, vec3 lightDir, vec3 moonRadia
  * @param moonPhaseIndex u_SkyCelestial.w, 0 full through 4 new; sets where the terminator sits
  * @param moonGlow   night ramp for the moon, so it is not painted onto a bright afternoon sky
  */
-vec3 plagueCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, float moonPhaseIndex,
+vec3 plagueCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, float moonPhaseIndex, float dayIndex,
+                          sampler2D moonAlbedoMap, sampler2D moonNormalMap,
                           float invRainFactor, float moonGlow,
                           vec3 sunRadiance, vec3 moonRadiance) {
     vec3 result = vec3(0.0);
@@ -178,11 +222,14 @@ vec3 plagueCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, float moonPhaseIndex,
 
     vec3 moonDir = -sunDirTrue;
     if (plagueFacingCelestial(viewRay, moonDir)) {
-        vec3 normal;
+        vec3 normal, poleAxis;
         float rim;
-        if (plagueMoonSurface(viewRay, moonDir, max(u_MoonDiscSize, 0.001), normal, rim)) {
+        vec2 uv;
+        if (plagueMoonSurface(viewRay, moonDir, max(u_MoonDiscSize, 0.001), dayIndex,
+                              normal, rim, uv, poleAxis)) {
             vec3 lightDir = plagueMoonLightDir(moonDir, moonPhaseIndex);
-            result += plagueShadeMoonSphere(normal, rim, lightDir, moonRadiance,
+            result += plagueShadeMoonSphere(normal, rim, uv, poleAxis, lightDir,
+                                            moonAlbedoMap, moonNormalMap, moonRadiance,
                                             1.0 - invRainFactor)
                     * (u_MoonDiscBrightness * moonGlow * invRainFactor);
         }
