@@ -25,13 +25,10 @@ vec3 plagueUnderwaterSunDiscSample(sampler2D celestials, vec4 rect, vec2 centreU
     float tapRadius = softness * 0.35;
     vec3 shadedSum = vec3(0.0);
     for (int i = 0; i < TAP_COUNT; i++) {
-        // Clamped into [0,1]: builtin.celestials binds CLAMP_TO_EDGE against the whole atlas, not
-        // this sprite's own sub-rect, so a tap drifting past it would bleed a neighbouring sprite.
-        vec2 tapUv = clamp(centreUv + TAP_OFFSETS[i] * tapRadius, 0.0, 1.0);
-        vec3 texel = texture(celestials, mix(rect.xy, rect.zw, tapUv)).rgb;
         // tapUv, not centreUv: the limb-darkening term is a function of where on the disc the
         // sample is, so a tap has to be shaded at its own position or the blur flattens the limb.
-        shadedSum += plagueShadeSunDisc(texel, tapUv, sunRadiance, rainFactor);
+        vec2 tapUv = centreUv + TAP_OFFSETS[i] * tapRadius;
+        shadedSum += plagueShadeSunDisc(tapUv, sunRadiance, rainFactor);
     }
     return shadedSum / float(TAP_COUNT);
 }
@@ -68,7 +65,7 @@ vec3 plagueUnderwaterCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, sampler2D cel
     vec3 result = vec3(0.0);
 
     if (sunRectValid && plagueFacingCelestial(viewRay, sunDirTrue)) {
-        vec2 uv = plagueCelestialUv(viewRay, sunDirTrue, PLAGUE_SUN_DISC_RADIUS);
+        vec2 uv = plagueCelestialUv(viewRay, sunDirTrue, max(u_SunDiscSize, 0.001));
         vec2 boxDist2 = abs(uv - 0.5) * 2.0;
         float boxDist = max(boxDist2.x, boxDist2.y);
         float coverage = 1.0 - smoothstep(1.0 - edgeMargin, 1.0 + edgeMargin, boxDist);

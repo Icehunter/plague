@@ -610,7 +610,7 @@ void main() {
         // The source directions remain tied to the true celestial pair. u_SunDirection becomes
         // the moon at sunset, so using it here would snap a still-visible sun glint across the
         // sky. The fade spans the existing sun-disc angular support: no new artistic horizon band.
-        float uwSunHorizonSupport = sin(PLAGUE_SUN_DISC_RADIUS);
+        float uwSunHorizonSupport = sin(max(u_SunDiscSize, 0.001));
         float uwSunHorizonFade = smoothstep(-uwSunHorizonSupport, uwSunHorizonSupport, trueSunDir.y);
         float uwMoonHorizonFade = 1.0 - uwSunHorizonFade;
         vec3 uwMoonDir = -trueSunDir;

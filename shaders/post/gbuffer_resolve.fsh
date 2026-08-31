@@ -591,7 +591,7 @@ int debugView = int(u_Param3 + 0.5);
             // about colour, and it reddens through sunset because its light does.
             vec3 discEyePos = plagueAirEyePos(u_CameraAbs.y);
             skyOut += plagueCelestialDiscs(viewRay, sunDirTrue, u_Input9,
-                                           u_SunSpriteRect, u_MoonSpriteRect,
+                                           u_MoonSpriteRect,
                                            1.0 - rainFactor, plagueMoonDiscGlow,
                                            plagueSunColor(discEyePos, sunDirTrue),
                                            plagueMoonColor(discEyePos, -sunDirTrue));
