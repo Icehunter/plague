@@ -590,8 +590,7 @@ int debugView = int(u_Param3 + 0.5);
             // Same radiances the world is lit by, so the disc and its shadows can never disagree
             // about colour, and it reddens through sunset because its light does.
             vec3 discEyePos = plagueAirEyePos(u_CameraAbs.y);
-            skyOut += plagueCelestialDiscs(viewRay, sunDirTrue, u_Input9,
-                                           u_MoonSpriteRect,
+            skyOut += plagueCelestialDiscs(viewRay, sunDirTrue, u_SkyCelestial.w,
                                            1.0 - rainFactor, plagueMoonDiscGlow,
                                            plagueSunColor(discEyePos, sunDirTrue),
                                            plagueMoonColor(discEyePos, -sunDirTrue));

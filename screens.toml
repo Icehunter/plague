@@ -21,6 +21,7 @@ sliders = [
     "u_SunsetTemp",
     "u_AmbientSkyBleed",
     "u_SunDiscSize",
+    "u_MoonDiscSize",
     "u_SunDiscBrightness",
     "u_MoonDiscBrightness",
     "u_TwilightSpan",
@@ -224,6 +225,7 @@ elements = [
 
     "<group:Sun and Moon>",
     "u_SunDiscSize",
+    "u_MoonDiscSize",
     "u_SunDiscBrightness",
     "u_MoonDiscBrightness",
     "u_SunGlowStrength",
@@ -667,6 +669,12 @@ The sun's angular radius, in radians.
 
 The real sun is 0.005 and covers a handful of pixels. Vanilla's is 0.29, wide enough to swallow \
 its own glow, so the aureole only shows below about 0.12."""
+
+u_MoonDiscSize = """
+The moon's angular radius, in radians.
+
+The real moon is 0.0045, within a few percent of the sun's, which is why eclipses work. Vanilla's \
+is 0.20."""
 
 u_SunDiscBrightness = """
 How much brighter the sun's disc is than the light it casts.

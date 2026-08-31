@@ -594,7 +594,7 @@ void main() {
             float uwMoonDiscGlow = smoothstep(-0.03, 0.08, -trueSunDir.y)
                                   * (1.0 - lighting.sunVisibility);
             uwDirectionalSky += plagueUnderwaterCelestialDiscs(uwExitDir, trueSunDir,
-                    u_Input7, u_SunSpriteRect, u_MoonSpriteRect, uwDiscSoftness,
+                    u_SkyCelestial.w, uwDiscSoftness,
                     1.0 - rainFactor, uwMoonDiscGlow);
         }
         vec3 uwSkyFill = mix(plagueWaterFogColor(lighting), uwDirectionalSky, 0.68);
