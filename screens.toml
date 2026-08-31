@@ -123,6 +123,8 @@ sliders = [
     "u_CloudAmount",
     "u_CloudScale",
     "u_CloudSpeed",
+    "u_CloudSilverLining",
+    "u_CloudShadowStrength",
     "u_CloudWeatherResponse",
     "u_CloudMoisture",
     "u_CloudStability",
@@ -301,6 +303,8 @@ elements = [
     "u_CloudAmount|requires:CLOUDS_VOLUMETRIC",
     "u_CloudScale|requires:CLOUDS_VOLUMETRIC",
     "u_CloudSpeed|requires:CLOUDS_VOLUMETRIC",
+    "u_CloudSilverLining|requires:CLOUDS_VOLUMETRIC",
+    "u_CloudShadowStrength|requires:CLOUDS_VOLUMETRIC",
     "u_CloudWeatherResponse|requires:CLOUDS_VOLUMETRIC",
     "CLOUD_SHADOWS|requires:CLOUDS_VOLUMETRIC",
 ]
@@ -2253,6 +2257,17 @@ u_CloudScale = """
 How large individual clouds are.
 
 Small values give many small clouds; large values give a few broad banks."""
+
+u_CloudShadowStrength = """
+How dark a cloud's shadow on the ground is.
+
+1 is the cloud's own optical depth, so thin cloud shades lightly and overcast shades hard."""
+
+u_CloudSilverLining = """
+How much brighter a cloud is when the sun is behind it.
+
+Clouds scatter light forwards, so one lit from behind glows at its edges. 1 is a 7.8x swing, 0 the \
+same from every side. The cloud's size does not change, only how much edge is bright enough to see."""
 
 u_CloudSpeed = """
 How fast clouds move across the sky.

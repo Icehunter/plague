@@ -821,41 +821,40 @@ int debugView = int(u_Param3 + 0.5);
     // multiplies and not a march, and why a low sun is shadowed by a longer path with no thickness
     // constant to retune.
     //
-    // Mean of three heights, not max: optical depth is a path average by definition, so max would
-    // overstate the shadow by however much the cloud varies vertically. Quarter-height samples
-    // avoid both faces where the profile is ramping.
-    //
-    // Coarse field, same reason clouds.glsl's own sun march uses it: an integral doesn't care about
-    // the high-frequency detail, and the four-octave erosion field would be the most expensive
-    // thing here at full resolution.
+    // Every deck the march draws also casts, and the transmittances multiply. Gated as the march
+    // gates its layers, so a deck that draws nothing casts nothing, and each deck's tau sets its
+    // own darkness.
     float cloudShadow = 1.0;
 #if CLOUD_SHADOWS && CLOUDS_VOLUMETRIC
     if (sunDir.y > 1e-3) {
         vec3 fragAbsPos = u_CameraAbs.xyz + worldPos;
         float syncedTime = u_SkyState.w * 0.05;
-        PlagueCloudDeck shadowDeck = plagueCloudActiveDeck(
+        float shadowSnow = int(u_CameraSkyLight.y + 0.5) == 2 ? 1.0 : 0.0;
+
+        PlagueCloudDeck convectiveDeck;
+        PlagueCloudDeck stratiformDeck;
+        float stratiform = plagueCloudTransitionDecks(
                 rainFactor,
                 clamp(u_FrameState.z, 0.0, 1.0),
                 clamp(u_FrameState.w, 0.0, 1.0),
-                int(u_CameraSkyLight.y + 0.5) == 2 ? 1.0 : 0.0,
+                shadowSnow,
                 u_SunDirection.w,
-                syncedTime);
-        vec2 shadowDrift = plagueCloudDrift(shadowDeck, syncedTime);
+                syncedTime,
+                convectiveDeck,
+                stratiformDeck);
 
-        float meanDensity = 0.0;
-        for (int i = 0; i < 3; i++) {
-            float sampleY = shadowDeck.base + shadowDeck.depth * (0.25 + 0.25 * float(i));
-            float t = (sampleY - fragAbsPos.y) / sunDir.y;
-            // t <= 0: this height is below the fragment (above the deck, or on a mountain inside
-            // it), so skip rather than sample behind the fragment.
-            if (t > 0.0) {
-                meanDensity += plagueCloudDensityCoarse(fragAbsPos + sunDir * t,
-                                                        shadowDeck, shadowDrift);
-            }
+        PlagueCloudDeck sheetDeck;
+        float lowSheet = plagueCloudLowStratiform(shadowSnow, sheetDeck);
+
+        if (stratiform < 1.0) {
+            cloudShadow *= plagueCloudDeckShadow(fragAbsPos, sunDir, convectiveDeck, syncedTime);
         }
-        meanDensity /= 3.0;
-
-        cloudShadow = exp(-shadowDeck.tau * meanDensity / max(sunDir.y, 1e-3));
+        if (lowSheet > 0.0) {
+            cloudShadow *= plagueCloudDeckShadow(fragAbsPos, sunDir, sheetDeck, syncedTime);
+        }
+        if (stratiform > 0.0) {
+            cloudShadow *= plagueCloudDeckShadow(fragAbsPos, sunDir, stratiformDeck, syncedTime);
+        }
     }
 #endif
     shadow *= cloudShadow;

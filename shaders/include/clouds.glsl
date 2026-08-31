@@ -49,6 +49,20 @@
 // purpose.
 #define u_CloudSpeed 1.0 //[0.00..4.00 step 0.05] runtime "Cloud Speed"
 
+// Scales the phase function's swing, both lobes. 1 is a 7.8x ratio between facing the light and
+// facing away; 0 is isotropic. Coverage carries no light term, so this cannot resize a cloud, only
+// brighten thin edges past visibility: 13% of apparent area across the range.
+#define u_CloudSilverLining 1.0 //[0.00..1.00 step 0.05] runtime "Cloud Silver Lining"
+
+// Shadow depth, as a multiple of the deck's own tau. 0 leaves the ground unshadowed.
+#define u_CloudShadowStrength 1.0 //[0.00..2.00 step 0.05] runtime "Cloud Shadow Strength"
+
+// Ceiling on the sun ray's slant, 1/sin(elevation). Uncapped it belongs to a slab that never ends:
+// 29x optical depth at 2 degrees, which crushes everything under cloud to black. A cloud is finite
+// and the ray leaves it out the side. 3 holds the path at 19 degrees.
+const float PLAGUE_CLOUD_SHADOW_MAX_SLANT = 3.0;
+
+
 // ------------------------------------------------------------------------------------------------
 // The noise hook
 // ------------------------------------------------------------------------------------------------
@@ -520,8 +534,10 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
             // half-shadowed sample outshines a fully lit one and the deck reads flat.
             float rawPhaseFwd = plagueCloudPhase(cosLight, PLAGUE_CLOUD_PHASE_FORWARD * c);
             float rawPhaseIso = plagueCloudPhase(cosLight, PLAGUE_CLOUD_PHASE_MULTI * c);
-            msPhaseFwd[n] = mix(1.0, rawPhaseFwd, PLAGUE_CLOUD_PHASE_ANISOTROPY);
-            msPhaseIso[n] = mix(1.0, rawPhaseIso, PLAGUE_CLOUD_PHASE_ANISOTROPY);
+            float anisotropy = PLAGUE_CLOUD_PHASE_ANISOTROPY
+                             * clamp(u_CloudSilverLining, 0.0, 1.0);
+            msPhaseFwd[n] = mix(1.0, rawPhaseFwd, anisotropy);
+            msPhaseIso[n] = mix(1.0, rawPhaseIso, anisotropy);
             a *= PLAGUE_CLOUD_MS_ENERGY;
             c *= PLAGUE_CLOUD_MS_PHASE;
         }
@@ -677,6 +693,34 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     return vec4(max(rgb, vec3(0.0)), alpha);
 }
 
+/**
+ * Transmittance of one deck along the sun ray.
+ *
+ * Mean of three heights, not max: optical depth is a path average, and the quarter heights avoid
+ * both faces where the profile ramps. Coarse field, as the cloud's own sun march uses: an integral
+ * does not care about the erosion detail.
+ */
+float plagueCloudDeckShadow(vec3 fragAbsPos, vec3 sunDir, PlagueCloudDeck deck, float syncedTime) {
+    if (deck.tau <= 0.0 || deck.population <= 0.0) {
+        return 1.0;
+    }
+    vec2 drift = plagueCloudDrift(deck, syncedTime);
+    float meanDensity = 0.0;
+    for (int i = 0; i < 3; i++) {
+        float sampleY = deck.base + deck.depth * (0.25 + 0.25 * float(i));
+        float t = (sampleY - fragAbsPos.y) / sunDir.y;
+        // t <= 0: this height is below the fragment (above the deck, or on a mountain inside it),
+        // so skip rather than sample behind the fragment.
+        if (t > 0.0) {
+            meanDensity += plagueCloudDensityCoarse(fragAbsPos + sunDir * t, deck, drift);
+        }
+    }
+    meanDensity /= 3.0;
+
+    float slant = min(1.0 / max(sunDir.y, 1e-3), PLAGUE_CLOUD_SHADOW_MAX_SLANT);
+    return exp(-deck.tau * meanDensity * slant * max(u_CloudShadowStrength, 0.0));
+}
+
 #else
 
 // CLOUDS_VOLUMETRIC off: feature compiles away entirely; entry points survive as identities so
@@ -686,6 +730,7 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
 vec2 plagueCloudDrift(PlagueCloudDeck deck, float syncedTime) {
     return vec2(0.0);
 }
+
 
 float plagueCloudDensityAt(vec3 worldPos, PlagueCloudDeck deck, vec2 drift) {
     return 0.0;
