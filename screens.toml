@@ -474,6 +474,7 @@ elements = [
     "u_WaveSpeed",
     "SURFACE_FLUID_DETAIL",
     "PLAGUE_WATER_INTERACTION",
+    "PLAGUE_SHORE_SPILL",
     "u_WaterClarity",
     "u_WaterTintSaturation",
 
@@ -639,6 +640,7 @@ elements = [
 
     "<group:Water>",
     "PLAGUE_WATER_REFLECTION_DEBUG",
+    "PLAGUE_SHORE_DEBUG",
 
     "<group:Parallax>",
     "u_PomDebug",
@@ -806,6 +808,21 @@ How blue and washed-out the night looks, the way human eyes see in the dark.
 At night your eyes shift toward blue and lose colour, which is why moonlight looks cool. 1.0 is \
 fully night-adjusted eyes; 0.0 shows the night as a camera would, slightly warm."""
 
+
+PLAGUE_SHORE_DEBUG = """
+Paints the shoreline spill field's internal state over the world, as flat colours.
+
+Black means the field was never written. Red means no ground data here. Blue is water. Orange is \
+ground with no water beside it. Yellow is ground beside water, with the waves staying below its \
+top. Green is ground the water is washing over. For diagnosing why a spill does or does not \
+appear; leave it off for play."""
+
+PLAGUE_SHORE_SPILL = """
+Water washing over the ground it reaches, and drying out again.
+
+Where a wave crest clears the top of a block beside the water, that block goes wet and \
+reflective, then dries from the edges in over the next minute. Needs Water Simulation Boundaries \
+on: without them nothing knows where the water ends."""
 
 PLAGUE_WATER_INTERACTION = """
 Waves and wakes made by you and by boats.

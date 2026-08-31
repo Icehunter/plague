@@ -1,0 +1,153 @@
+#version 450
+#define PLAGUE_SHORE_SPILL 1 //[0 1] compile "Shoreline Spill" {0="Off" 1="On"}
+#define PLAGUE_WATER_INTERACTION 1 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Quality" 2="Performance"}
+#define SURFACE_FLUID_DETAIL 1 //[0 1 2] compile "Water Simulation Boundaries" {0="Off" 1="Standard" 2="Quality"}
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+
+// Where a wave crest clears a block's top, that block gets wet and stays wet after the crest has
+// gone. Runs on the wave solve's grid, after water_step_b, so the pressure it reads is this frame's.
+//
+// The noise fetch is rebuilt below rather than sampled: engine builtins reach a compute pass through
+// a NEAREST_CLAMP sampler, and point-sampling the swell's bend terraces its axis into steps the
+// geometry stage does not have.
+#define PLAGUE_WAVE_NOISE(tex, uv) plagueShoreNoiseRepeat(tex, uv)
+
+#moj_import <fornax:globals.glsl>
+
+// Declared before the includes that reference it: the macro above is expanded inside water_waves.
+vec4 plagueShoreNoiseRepeat(sampler2D tex, vec2 uv);
+
+#moj_import <fornax_runtime:surface_fluid.glsl>
+#moj_import <fornax_runtime:water_options.glsl>
+#moj_import <fornax_runtime:water_waves.glsl>
+#moj_import <fornax_runtime:shore_spill.glsl>
+
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+
+// Binding order mirrors graph.toml's inputs-then-outputs for this pass exactly: 0 globals (above),
+// 1 waterWaveState, 2 surfaceFluidClipmap (fixed by surface_fluid.glsl's own declaration, which is
+// why packOptions sits AFTER it rather than at 1), 3 packOptions (auto-injected, no declaration
+// here), 4 waterWaveB, 5 shoreWetness.history, 6 builtin.noise, 7 shoreWetness.
+layout(std430, set = 0, binding = 1) readonly buffer WaterWaveState {
+    vec4 committed;
+    vec4 frame;
+    vec4 control;
+    vec4 travel;
+    vec4 splash;
+} waveState;
+layout(rgba16f, set = 0, binding = 4) uniform readonly image2D waveField;
+layout(rgba16f, set = 0, binding = 5) uniform readonly image2D wetPrevious;
+layout(set = 0, binding = 6) uniform sampler2D u_Noise;
+layout(rgba16f, set = 0, binding = 7) uniform writeonly image2D wetNext;
+
+// Each of the four taps wraps independently rather than the corner, so a block straddling the
+// texture seam still blends.
+vec4 plagueShoreNoiseRepeat(sampler2D tex, vec2 uv) {
+    vec2 size = vec2(textureSize(tex, 0));
+    vec2 texel = fract(uv) * size - 0.5;
+    vec2 base = floor(texel);
+    vec2 blend = texel - base;
+    vec2 inv = 1.0 / size;
+    vec4 s00 = textureLod(tex, (mod(base, size) + 0.5) * inv, 0.0);
+    vec4 s10 = textureLod(tex, (mod(base + vec2(1.0, 0.0), size) + 0.5) * inv, 0.0);
+    vec4 s01 = textureLod(tex, (mod(base + vec2(0.0, 1.0), size) + 0.5) * inv, 0.0);
+    vec4 s11 = textureLod(tex, (mod(base + vec2(1.0, 1.0), size) + 0.5) * inv, 0.0);
+    return mix(mix(s00, s10, blend.x), mix(s01, s11, blend.x), blend.y);
+}
+
+// Best head reaching this point: every open-water column in range competes on surface MINUS what
+// run-up loses getting here. A binary test on the touching columns instead quantizes the wet edge to
+// whole blocks, since only the crest then varies per cell.
+//
+// Open means nothing solid stands over it -- a deck column reads as water too, but its surface is
+// the capped one under the planks, a block low.
+bool plagueShoreWaterHead(ivec2 worldColumn, vec2 worldXZ, out float stillY, out float runupLoss) {
+    stillY = 0.0;
+    runupLoss = 0.0;
+    float best = -1e9;
+    for (int dz = -PLAGUE_SHORE_HEAD_SEARCH_RADIUS; dz <= PLAGUE_SHORE_HEAD_SEARCH_RADIUS; dz++) {
+        for (int dx = -PLAGUE_SHORE_HEAD_SEARCH_RADIUS; dx <= PLAGUE_SHORE_HEAD_SEARCH_RADIUS; dx++) {
+            ivec2 column = worldColumn + ivec2(dx, dz);
+            int kind;
+            float columnSurfaceY;
+            float columnSolidTop;
+            vec2 flow;
+            if (!surfaceFluidColumnState(column, kind, columnSurfaceY, columnSolidTop, flow)) continue;
+            if (kind != SURFACE_FLUID_WATER || columnSolidTop != SURFACE_FLUID_NO_SOLID_TOP) continue;
+
+            // To the column's EDGE: a cell on the waterline has travelled nothing, and charging it
+            // half a block of loss puts a dry seam where the wash is strongest.
+            float travel = max(length(worldXZ - (vec2(column) + 0.5)) - 0.5, 0.0);
+            float loss = travel * PLAGUE_SHORE_RUNUP_LOSS_PER_BLOCK;
+            float head = columnSurfaceY - loss;
+            if (head > best) {
+                best = head;
+                stillY = columnSurfaceY;
+                runupLoss = loss;
+            }
+        }
+    }
+    return best > -1e8;
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = ivec2(PLAGUE_WATER_INTERACTION == 2 ? 256 : 512);
+    if (any(greaterThanEqual(coord, size))) return;
+
+#if PLAGUE_SHORE_SPILL == 0 || SURFACE_FLUID_DETAIL == 0
+    imageStore(wetNext, coord, vec4(0.0));
+#else
+    if (waveState.control.x > 0.5) {
+        imageStore(wetNext, coord, vec4(0.0));
+        return;
+    }
+
+    // Same cell shift the solve uses, so a patch holds its world block. Ground scrolling in from
+    // outside starts DRY; a clamped fetch would smear the border value inward instead.
+    ivec2 source = coord - ivec2(waveState.frame.xy);
+    vec2 previous = any(lessThan(source, ivec2(0))) || any(greaterThanEqual(source, size))
+            ? vec2(0.0) : imageLoad(wetPrevious, source).rg;
+
+    float seconds = clamp(u_LocalActorMotion.w, 0.0, PLAGUE_SHORE_MAX_FRAME_SECONDS);
+
+    ivec2 worldColumn = surfaceFluidWorldColumn(coord, size);
+    int kind;
+    float exposedY;
+    float solidTopY;
+    vec2 flow;
+    bool published = surfaceFluidCellRecord(coord, size, kind, exposedY, solidTopY, flow);
+
+    float wash = 0.0;
+    // Stage code in .b. A texel this pass never wrote stays 0.0, distinct from every code below.
+    float stage = PLAGUE_SHORE_STAGE_UNPUBLISHED;
+    if (published) {
+        stage = PLAGUE_SHORE_STAGE_NO_NEIGHBOUR;
+        float stillY;
+        float runupLoss;
+        vec2 worldXZ = surfaceFluidWorldPosition(coord, size);
+        if (plagueShoreWaterHead(worldColumn, worldXZ, stillY, runupLoss)) {
+            // Ground is the SOLID top standing at the water line, never the fluid kind: a deck over
+            // a lake is a water column by kind and is the surface this exists to wet.
+            if (solidTopY <= stillY - PLAGUE_SHORE_SUBMERGED_TOLERANCE) {
+                stage = PLAGUE_SHORE_STAGE_WATER;
+                previous = vec2(0.0);
+            } else {
+                stage = PLAGUE_SHORE_STAGE_BELOW_TOP;
+                float waveClock = plagueWaveAnimatedTime(u_SkyState.w / 20.0, u_WaveStrength,
+                        u_WaveSpeed);
+                float pressure = imageLoad(waveField, coord).r;
+                float crestY = plagueShoreCrestY(u_Noise, worldXZ, stillY, pressure, waveClock,
+                        u_WaveStrength);
+                wash = smoothstep(0.0, PLAGUE_SHORE_WASH_DEPTH,
+                        crestY - runupLoss - solidTopY);
+                if (wash > 0.0) stage = PLAGUE_SHORE_STAGE_WASHING;
+            }
+        }
+    }
+
+    imageStore(wetNext, coord,
+            vec4(plagueShoreAccumulate(previous, wash, seconds), stage, 0.0));
+#endif
+}

@@ -10,6 +10,14 @@
 //
 // Phase speed is the deep-water dispersion relation sqrt(g*k) per octave, not a geometric ramp.
 
+// How the swell's low-frequency bend samples the noise. The default is the plain filtered REPEAT
+// fetch every graphics stage gets. A COMPUTE consumer must override it: Fornax binds an engine
+// builtin to a compute pass with a NEAREST_CLAMP sampler, and this field is low enough frequency
+// (one texel per ~2.5 blocks) that point sampling terraces the swell axis into visible steps.
+#ifndef PLAGUE_WAVE_NOISE
+#define PLAGUE_WAVE_NOISE(tex, uv) texture(tex, uv)
+#endif
+
 const float PLAGUE_WAVE_TAU = 6.28318530718;
 const float PLAGUE_WAVE_INV_PI = 0.31830988618;
 const float PLAGUE_WAVE_GRAVITY = 9.81;
@@ -107,7 +115,7 @@ vec2 plagueWavePosition(sampler2D noiseTex, vec3 worldAbs, float time,
     vec2 pos = worldAbs.xz + worldAbs.y * PLAGUE_WAVE_INV_PI;
     float bendScale = 1.0 / max(dominantLength * 64.0, 1.0);
     vec2 uv = (pos - vec2(0.34, 0.72) * time * 0.35) * bendScale;
-    vec2 bend = texture(noiseTex, uv).rg * 2.0 - 1.0;
+    vec2 bend = PLAGUE_WAVE_NOISE(noiseTex, uv).rg * 2.0 - 1.0;
     return pos + bend * dominantLength * 0.05;
 }
 

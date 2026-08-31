@@ -12,7 +12,7 @@ program = "shaders/blocks/terrain"
 # sceneHdrComposited and builtin.depth_opaque are read by the TRANSLUCENT arm only. The opaque
 # sub-draws run before the passes that fill them and would read last frame's content with no error.
 inputs = ["builtin.spriteBounds", "builtin.spriteHeightRange", "builtin.noise", "waterWaveB.history",
-          "sceneHdrComposited", "builtin.depth_opaque"]
+          "sceneHdrComposited", "builtin.depth_opaque", "shoreWetness.history"]
 outputs = []
 
 # Ships both vsh/fsh stages: vanilla's entity vertex shader consumes Normal and never forwards it, so
@@ -126,6 +126,18 @@ height = 512
 storage = true
 
 [targets.waterWaveB]
+format = "rgba16f"
+width = 512
+height = 512
+storage = true
+history = true
+filter = "linear"
+
+# Film and soak left on dry blocks by a wave crest clearing their top (shore_spill.glsl). Same
+# extent and same actor-centred frame as the wave field above, since it is reprojected by that
+# field's own cell shift; the Performance tier writes only its top-left 256x256, exactly as the
+# solve does. history = true IS the ping-pong: this pass reads its own previous frame.
+[targets.shoreWetness]
 format = "rgba16f"
 width = 512
 height = 512
@@ -804,6 +816,29 @@ shader = "shaders/compute/water_step_b.comp"
 enabled_if = "PLAGUE_WATER_INTERACTION == 2"
 inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "waterWaveA", "waterActors"]
 outputs = ["waterWaveB"]
+dispatch = [8, 8, 1]
+
+# After step_b, so the interaction pressure it reads is this frame's solved field rather than last
+# frame's history. surfaceFluidClipmap must stay THIRD: surface_fluid.glsl hardcodes binding 2, and
+# a compute pass's bindings are its inputs-then-outputs positionally, so packOptions follows it.
+[[pass]]
+name = "water_shore_quality"
+type = "compute"
+shader = "shaders/compute/water_shore.comp"
+enabled_if = "PLAGUE_SHORE_SPILL != 0 && PLAGUE_WATER_INTERACTION == 1"
+inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "packOptions", "waterWaveB",
+          "shoreWetness.history", "builtin.noise"]
+outputs = ["shoreWetness"]
+dispatch = [16, 16, 1]
+
+[[pass]]
+name = "water_shore_performance"
+type = "compute"
+shader = "shaders/compute/water_shore.comp"
+enabled_if = "PLAGUE_SHORE_SPILL != 0 && PLAGUE_WATER_INTERACTION == 2"
+inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "packOptions", "waterWaveB",
+          "shoreWetness.history", "builtin.noise"]
+outputs = ["shoreWetness"]
 dispatch = [8, 8, 1]
 
 [[pass]]

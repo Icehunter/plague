@@ -16,10 +16,17 @@ vec4 plagueInteractionSample(sampler2D interactionTexture, vec3 worldPos,
 
 // Interaction ripple displacement is deliberately small beside the macro wave field.
 // Pressure is simulation state, not blocks, so this conversion is the single authored unit boundary.
+// Split from the sampling below so a consumer holding the pressure already -- a compute pass on the
+// simulation's own grid, which image-loads it rather than sampling -- converts through this exact
+// scale instead of a second copy of it.
+float plagueInteractionHeightFromPressure(float pressure) {
+    return clamp(pressure * 0.012, -0.05, 0.05);
+}
+
 float plagueInteractionVertexHeight(sampler2D interactionTexture, vec3 worldPos,
                                     vec2 previousCentre, int interactionMode) {
-    return clamp(plagueInteractionSample(interactionTexture, worldPos, previousCentre,
-            interactionMode).x * 0.012, -0.05, 0.05);
+    return plagueInteractionHeightFromPressure(plagueInteractionSample(interactionTexture, worldPos,
+            previousCentre, interactionMode).x);
 }
 
 #endif
