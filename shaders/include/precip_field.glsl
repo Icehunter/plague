@@ -80,6 +80,22 @@ bool plaguePrecipColumn(vec2 worldXZ, out int precipType) {
 #endif
 }
 
+// Furthest a caller may sample and still land inside the uploaded window: half the window, less the
+// neighbourhood radius so the whole disc stays covered rather than half of it biasing the average.
+const float PLAGUE_PRECIP_REACH =
+        float(PLAGUE_PRECIP_GRID << PLAGUE_PRECIP_CELL_STRIDE_LOG2) * 0.5
+        - PLAGUE_PRECIP_NEIGHBOURHOOD;
+
+/**
+ * Pull a sample column inside the window, for a caller sampling away from the camera.
+ *
+ * Gating on coverage instead drops the caller's term along the square's edge, drawing a hard tilted
+ * line. Clamping lets a far column inherit the nearest one the field knows.
+ */
+vec2 plaguePrecipClampColumn(vec2 worldXZ, vec2 cameraXZ) {
+    return clamp(worldXZ, cameraXZ - PLAGUE_PRECIP_REACH, cameraXZ + PLAGUE_PRECIP_REACH);
+}
+
 /**
  * Fraction of the neighbourhood in each class, ramped across biome borders.
  *

@@ -353,6 +353,30 @@ format = "rgba16f"
 scale = 0.25
 filter = "linear"
 
+# Quarter scale on purpose. A cumulus deck's cell is 57.6 blocks at the shipped Cloud Size, so the
+# finest cloud shadow on the ground spans tens of blocks; evaluating it per pixel in the resolve was
+# 250-400 dependent hash evaluations on every lit fragment for a signal with no chunk-scale detail.
+# Quarter scale: a cloud shadow has no detail finer than a cloud cell, 57.6 blocks at the shipped
+# Cloud Size. r32f because TargetFormat offers only r8 and r32f in one channel.
+#
+# The target is ungated while its pass is gated, matching ssao and ssrPrefilter. "resolve" reads it
+# and is never gated off, so gating the target would leave an enabled pass pointing at an
+# unallocated one, which fails the pack load. Unwritten is fine: the resolve's own
+# `#if CLOUD_SHADOWS && CLOUDS_VOLUMETRIC` never samples it.
+[targets.cloudShadowMask]
+format = "r32f"
+scale = 0.25
+filter = "linear"
+
+# Before "resolve", which reads the result. Pass order in this file IS execution order.
+[[pass]]
+name = "cloud_shadow_mask"
+type = "fullscreen"
+shader = "shaders/post/cloud_shadow_mask.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_SHADOWS"
+inputs = ["builtin.depth"]
+outputs = ["cloudShadowMask"]
+
 # --- Resolve --------------------------------------------------------------------------------------
 
 [[pass]]
@@ -363,7 +387,7 @@ shader = "shaders/post/gbuffer_resolve.fsh"
 # sunShadowMapRaw aliases the same texture under a different target name so the comparison-sampler
 # branch (keyed by exact target string) doesn't wrongly attach to this plain-sampler debug read. A
 # shader uniform and its graph.toml binding are one atomic contract — never remove one side alone.
-inputs = ["builtin.gNormal", "builtin.gAlbedo", "builtin.gMaterial", "builtin.gAo", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal"]
+inputs = ["builtin.gNormal", "builtin.gAlbedo", "builtin.gMaterial", "builtin.gAo", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "cloudShadowMask"]
 outputs = ["sceneHdr"]
 
 # Tileable grayscale focusing pattern, sampled by two rotated flowing layers with mirror-repeat UVs.
@@ -516,16 +540,19 @@ blend = "translucent"
 inputs = ["cloudsVolumeCompute", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistance"]
 outputs = ["sceneHdr"]
 
+# 0.75, not 1.0. March resolution is this tier's largest cost term: 4x Balanced's pixels against
+# 1.8x its steps per pixel. 0.75 is 2.25x, cutting the tier's work 44%. It stops here rather than
+# following Balanced to 0.5 because cloud edges visibly soften below this.
 [targets.cloudsVolumeComputeFull]
 format = "rgba16f"
-scale = 1.0
+scale = 0.75
 filter = "linear"
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY == 2"
 
 [targets.cloudsVolumeDistanceFull]
 format = "r32f"
-scale = 1.0
+scale = 0.75
 filter = "linear"
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY == 2"

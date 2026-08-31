@@ -126,6 +126,11 @@ sliders = [
     "u_CloudSilverLining",
     "u_CloudShadowStrength",
     "u_CloudWeatherResponse",
+    "u_CloudQualityConvective",
+    "u_CloudQualityStratiform",
+    "u_CloudQualityMid",
+    "u_CloudQualityHigh",
+    "u_CloudDetailFade",
     "u_CloudMoisture",
     "u_CloudStability",
     "u_NebulaIntensity",
@@ -299,14 +304,26 @@ title = "Clouds"
 elements = [
     "CLOUDS_VOLUMETRIC",
     "CLOUD_QUALITY|requires:CLOUDS_VOLUMETRIC",
-    "u_CloudAltitude|requires:CLOUDS_VOLUMETRIC",
-    "u_CloudAmount|requires:CLOUDS_VOLUMETRIC",
-    "u_CloudScale|requires:CLOUDS_VOLUMETRIC",
-    "u_CloudSpeed|requires:CLOUDS_VOLUMETRIC",
-    "u_CloudSilverLining|requires:CLOUDS_VOLUMETRIC",
-    "u_CloudShadowStrength|requires:CLOUDS_VOLUMETRIC",
-    "u_CloudWeatherResponse|requires:CLOUDS_VOLUMETRIC",
-    "CLOUD_SHADOWS|requires:CLOUDS_VOLUMETRIC",
+    "<group:Shape|requires:CLOUDS_VOLUMETRIC>",
+    "u_CloudAltitude",
+    "u_CloudAmount",
+    "u_CloudScale",
+    "u_CloudSpeed",
+    "u_CloudSilverLining",
+    "u_CloudWeatherResponse",
+    "<group:Layers|requires:CLOUDS_VOLUMETRIC>",
+    "u_CloudLayerHeaped",
+    "u_CloudQualityConvective|requires:u_CloudLayerHeaped",
+    "u_CloudLayerSheets",
+    "u_CloudQualityStratiform|requires:u_CloudLayerSheets",
+    "u_CloudLayerMid",
+    "u_CloudQualityMid|requires:u_CloudLayerMid",
+    "u_CloudLayerHigh",
+    "u_CloudQualityHigh|requires:u_CloudLayerHigh",
+    "u_CloudDetailFade",
+    "<group:Shadows|requires:CLOUDS_VOLUMETRIC>",
+    "CLOUD_SHADOWS",
+    "u_CloudShadowStrength|requires:CLOUD_SHADOWS",
 ]
 
 # Its own page rather than rows on "Sky", and DEFAULT ON rather than opt-in -- the two go together.
@@ -2262,6 +2279,54 @@ u_CloudShadowStrength = """
 How dark a cloud's shadow on the ground is.
 
 1 is the cloud's own optical depth, so thin cloud shades lightly and overcast shades hard."""
+
+u_CloudLayerHeaped = """
+Heaped clouds: the puffy ones, and the storm towers they grow into.
+
+Off removes them completely and skips their work. They are about a sixth of the cloud cost."""
+
+u_CloudLayerSheets = """
+Flat cloud layers: overcast, rolling banks, and rain sheets.
+
+Off removes them completely and skips their work. They are about seven tenths of the cloud cost, so
+this is the biggest single saving."""
+
+u_CloudLayerMid = """
+Mid level cloud: the rippled sheets that sit a few kilometres up.
+
+Off removes them completely. About a twentieth of the cloud cost."""
+
+u_CloudLayerHigh = """
+High cloud: thin fibrous streaks and fine ripples near the top of the sky.
+
+Off removes them completely. About a twelfth of the cloud cost."""
+
+u_CloudQualityConvective = """
+Detail on heaped clouds.
+
+Lower is faster and softens their edges and internal shading. These are where a cloud's own shadow
+reads, so turn this down last."""
+
+u_CloudQualityStratiform = """
+Detail on flat cloud layers.
+
+Lower is faster. A smooth grey sheet is where extra detail shows least, so turn this down first."""
+
+u_CloudQualityMid = """
+Detail on mid level cloud.
+
+Lower is faster, though there is little here to save."""
+
+u_CloudQualityHigh = """
+Detail on high cloud.
+
+Lower is faster. Already coarse by default, since it sits kilometres away."""
+
+u_CloudDetailFade = """
+How far away cloud detail survives, in chunks.
+
+Detail halves again every time a view ray travels this far sideways through a layer. Lower is faster
+and blurs distant cloud. The highest setting turns the fade off entirely."""
 
 u_CloudSilverLining = """
 How much brighter a cloud is when the sun is behind it.

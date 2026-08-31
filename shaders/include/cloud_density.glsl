@@ -93,6 +93,13 @@ const float PLAGUE_CLOUD_SIZE_DENSITY_GAIN = 0.24;
 // sheet's large structure rides on top of it at 32 cells (~1840 blocks), the scale real stratus
 // varies thickness over. Without it a closed sheet is a flat lid over the volume's fine stipple.
 const float PLAGUE_CLOUD_SHEET_SCALE = 32.0;
+
+// Scale of the field that decides WHERE a genus is at all, in deck cells. The candidate lattice is
+// uniform, so without this every genus fills the whole sky at whatever density its population sets:
+// cirrocumulus puts 901 cells in a 512-block patch and a fifth of them active covers everything.
+// Real cirrus and altocumulus sit in patches with clear sky between, on a scale far larger than
+// their own cells. 24 cells is that scale for the finest genus and stays large for the coarsest.
+const float PLAGUE_CLOUD_PATCH_SCALE = 24.0;
 // Amplitude, against a floor whose whole range is 0.479 (early-out to SHEET_FLOOR). At 0.20 a
 // mid-strength sheet opens real holes while a full one only thins: breaking up versus overcast.
 const float PLAGUE_CLOUD_SHEET_VARIATION = 0.20;
@@ -171,6 +178,15 @@ float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudD
     // vertical penalty the candidates do, so the sheet closes at its own top and base instead of
     // ending on a flat lid. A convective deck's floor is far below the early-out, which reproduces
     // the candidate-only field exactly.
+    // Where this genus exists at all. Subtracted from every candidate's potential, so a low patch
+    // pushes the whole neighbourhood under the cutoff and leaves open sky rather than thinning the
+    // cells evenly. Costs one fbm on decks that ask for it and nothing on decks that do not.
+    float patchGate = 0.0;
+    if (deck.patchiness > 0.0) {
+        patchGate = deck.patchiness
+                  * (1.0 - plagueSkyFbm(allocationQ / PLAGUE_CLOUD_PATCH_SCALE, 2));
+    }
+
     float bestPotential = -1e6;
     float sheetH = (worldY - deck.base) / max(deck.depth, 1e-3);
     if (deck.sheetFloor > -1.0 && sheetH > 0.0 && sheetH < 1.0) {
@@ -229,7 +245,7 @@ float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudD
                     local, crownOffset, radius * PLAGUE_CLOUD_MORPHOLOGY_CROWN_RADIUS));
 
             float profile = plagueCloudHeightProfile(h, deck.family);
-            float candidatePotential = sizeBias + deck.convectiveLift
+            float candidatePotential = sizeBias + deck.convectiveLift - patchGate
                                       - PLAGUE_CLOUD_MORPHOLOGY_PENALTY * horizontalMetric
                                       - PLAGUE_CLOUD_MORPHOLOGY_VERTICAL_PENALTY
                                       * (1.0 - profile);

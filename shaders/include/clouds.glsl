@@ -22,6 +22,7 @@
 // Single-scattering only; no multiple-scattering model here (see PLAGUE_CLOUD_MS_* below).
 
 #moj_import <fornax_runtime:sky_hash.glsl>
+#moj_import <fornax_runtime:precip_field.glsl>
 #moj_import <fornax_runtime:cloud_types.glsl>
 #moj_import <fornax_runtime:light_and_ambient_colors.glsl>
 #moj_import <fornax_runtime:sky.glsl>
@@ -118,7 +119,11 @@ const float PLAGUE_CLOUD_SHADOW_MAX_SLANT = 3.0;
 #define PLAGUE_CLOUD_SUN_TAPS   1
 #elif CLOUD_QUALITY == 2
 #define PLAGUE_CLOUD_SLAB_STEPS 12
-#define PLAGUE_CLOUD_MAX_STEPS  128
+// Ultra shares Balanced's ray reach on purpose: the tier buys detail through slab steps, sun taps
+// and march resolution, not a longer ray. At 128 two thirds of the frame's steps landed past 256
+// blocks. 64 measured 23% fewer steps with near and far step length unchanged
+// (tools/measure_cloud_step_budget.py).
+#define PLAGUE_CLOUD_MAX_STEPS  64
 #define PLAGUE_CLOUD_SUN_TAPS   3
 #else
 #define PLAGUE_CLOUD_SLAB_STEPS 6
@@ -128,7 +133,28 @@ const float PLAGUE_CLOUD_SHADOW_MAX_SLANT = 3.0;
 
 // Step count multiplier ceiling for a deck deeper than clear sky. Bounds a tall storm deck to
 // 3x the tier's own step count.
+// Marched layers: convective, low sheet, precipitating, stratocumulus, altocumulus,
+// cirrocumulus, cirrus. Each is gated on its own presence, so an empty genus costs nothing
+// beyond building its deck.
+#define PLAGUE_CLOUD_LAYERS 7
+
 const float PLAGUE_CLOUD_DEPTH_STEP_CAP = 3.0;
+
+// Floor on the samples taken through a deck's own thickness. Below four the interior is resolved by
+// too few planes and the dither turns the gaps into rays radiating from the layer's vanishing point.
+// stepScale can buy budget back, but not past this.
+const float PLAGUE_CLOUD_MIN_SLAB_STEPS = 4.0;
+
+// Distance over which a deck's step budget halves, blocks: one mip level per 16 chunks. A deck's
+// features subtend an angle that falls with distance, so the budget follows the same curve a mip
+// chain does rather than a gentler one. PLAGUE_CLOUD_MIN_SLAB_STEPS is the floor underneath it.
+const float PLAGUE_CLOUD_QUALITY_HALVING = 256.0;
+
+// Ends of u_CloudDetailFade's range, in chunks. The top is the off sentinel and must equal the
+// slider's declared maximum, or off becomes unreachable.
+const float PLAGUE_CLOUD_DETAIL_FADE_MIN = 8.0;
+const float PLAGUE_CLOUD_DETAIL_FADE_OFF = 128.0;
+const float PLAGUE_CLOUD_BLOCKS_PER_CHUNK = 16.0;
 
 // Last-to-first step ratio once the budget stops covering the span. 16 holds the first step under a
 // uniform slab crossing on every tier at the 4000-block worst case: 22.7/38.4, 11.4/12.8, 5.8/6.4.
@@ -327,7 +353,12 @@ float plagueCloudLightTransmittance(vec3 pos, vec3 lightDir, PlagueCloudDeck dec
     float travelled = 0.0;
     float sunStep = deck.depth * PLAGUE_CLOUD_SUN_STEP;
 
-    for (int i = 0; i < PLAGUE_CLOUD_SUN_TAPS; i++) {
+    // Taps ride the group's budget too. Floored at one so every deck still measures its own near
+    // field, where most of the shadowing optical depth is. The analytic tail below reads
+    // `travelled`, so a shorter fan is absorbed rather than lost.
+    int taps = clamp(int(ceil(float(PLAGUE_CLOUD_SUN_TAPS) * clamp(deck.qualityScale, 0.25, 1.0))),
+                     1, PLAGUE_CLOUD_SUN_TAPS);
+    for (int i = 0; i < taps; i++) {
         // Sampled at the MIDPOINT of its own segment: with doubling steps, end-sampling the first
         // segment is wrong by half the near field, where almost all the shadowing optical depth is.
         float mid = travelled + sunStep * 0.5;
@@ -474,9 +505,54 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // therefore remains six Balanced slab steps despite recovering the table's full cumulus depth.
     float clearDepth = PLAGUE_CLOUD_CUMULUS_DEPTH * max(u_CloudScale, 0.05)
                      * PLAGUE_CLOUD_CUMULUS_VERTICAL_ASPECT;
+    // stepScale below 1 buys back the budget a thin deck does not need. A cirrus slab is 288
+    // blocks deep against cumulus's 76.8, so the depth ratio alone would spend three times the
+    // steps on a layer of optical depth 0.5 that has almost no interior to resolve.
     float slabSteps = float(PLAGUE_CLOUD_SLAB_STEPS)
-                    * clamp(deck.depth / max(clearDepth, 1e-3), 1.0, PLAGUE_CLOUD_DEPTH_STEP_CAP);
+                    * clamp(deck.depth / max(clearDepth, 1e-3), 1.0, PLAGUE_CLOUD_DEPTH_STEP_CAP)
+                    * clamp(deck.stepScale, 0.05, 1.0);
+    // A mip level per 16 chunks: quality follows where the viewer is relative to THIS deck, not a
+    // global setting. Standing under the low deck the high etage is several halvings away; fly up
+    // into it and it earns its budget back as it approaches.
+    //
+    // Distance to the SLAB, not to its mid-height, and zero once inside it. Cumulonimbus is 1920
+    // blocks deep, so its mid sits 1051 blocks above a viewer standing under a base only 91 blocks
+    // overhead: measuring to the mid drops the storm filling the whole sky to the step floor, and
+    // at that few steps the per-frame dither resamples different planes each frame and the cloud
+    // visibly restructures rather than drifting.
+    float deckDistance = max(max(deck.base - cameraPosAbs.y,
+                                 cameraPosAbs.y - (deck.base + deck.depth)), 0.0);
+    float deckQuality = exp2(-deckDistance / PLAGUE_CLOUD_QUALITY_HALVING);
+
+    // The ray's own horizontal reach. The vertical term above cannot see that a deck 30 blocks
+    // overhead still runs kilometres sideways. Measured before the cap, so it is the span the ray
+    // would cover.
+    //
+    // Skipped entirely at the top of the slider. A reach term has iso-lines at constant elevation,
+    // which are circles on the dome, so any residual strength draws rings.
+    float fadeChunks = clamp(u_CloudDetailFade, PLAGUE_CLOUD_DETAIL_FADE_MIN,
+                             PLAGUE_CLOUD_DETAIL_FADE_OFF);
+    if (fadeChunks < PLAGUE_CLOUD_DETAIL_FADE_OFF) {
+        float reach = span * horizontal;
+        deckQuality *= exp2(-reach / (fadeChunks * PLAGUE_CLOUD_BLOCKS_PER_CHUNK));
+    }
+
+    // The player's budget for this deck's group. The floors below keep the lowest setting a
+    // coarser deck rather than a missing one.
+    deckQuality *= clamp(deck.qualityScale, 0.25, 1.0);
+
+    slabSteps *= deckQuality;
+    slabSteps = max(slabSteps, PLAGUE_CLOUD_MIN_SLAB_STEPS);
     float stepLen = deck.depth / slabSteps;
+    // The cap, not the slab budget, is what a long ray actually spends: a shallow ray reaches it
+    // whatever the step length, so scaling slabSteps alone leaves the cost untouched. Quality
+    // therefore lowers the ceiling too, floored so a distant deck still resolves.
+    // Dithered, not truncated. deckQuality is continuous but the cap is an integer, so a plain
+    // int() steps down at a fixed elevation, drawing one ring per integer crossed. The ray's dither
+    // turns each boundary into per-pixel noise. slabSteps stays continuous and needs no such fix.
+    int stepCap = max(int(float(PLAGUE_CLOUD_MAX_STEPS) * deckQuality + dither),
+                      int(PLAGUE_CLOUD_MIN_SLAB_STEPS) * 2);
+
     int steps = max(int(ceil(span / stepLen)), 1);
 
     // When the cap binds the step grows rather than the ray truncating, since the cap is a function
@@ -486,8 +562,8 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // whole step of extinction at one sample's density. Front-loading keeps the near field at the
     // slab's own resolution and spends the coarseness on distance.
     float stepGrowth = 1.0;
-    if (steps > PLAGUE_CLOUD_MAX_STEPS) {
-        steps = PLAGUE_CLOUD_MAX_STEPS;
+    if (steps > stepCap) {
+        steps = stepCap;
         stepGrowth = pow(PLAGUE_CLOUD_STEP_RANGE, 1.0 / float(steps - 1));
         // Normalised so the series sums to the span exactly.
         stepLen = span * (stepGrowth - 1.0) / (pow(stepGrowth, float(steps)) - 1.0);
@@ -496,6 +572,31 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // --- Per-ray constants ----------------------------------------------------------------------
     vec2 drift = plagueCloudDrift(deck, syncedTime);
     float sigmaScale = deck.tau / max(deck.depth, 1e-3);
+
+    // Biome dryness read where the CLOUD is, not where the camera is. The precipitation clipmap is
+    // a per-column field over a 512-block window, so the ray samples it at its own crossing of the
+    // deck's mid-height. Reading it at the camera instead makes the whole dome follow the player: a
+    // step across a border repaints cloud hundreds of blocks away, which is what this replaces.
+    //
+    // Once per ray, not per step. The field is constant over a 4-block cell and a cloud spans far
+    // more than that, so a per-sample read would buy nothing for 128x the lookups.
+    if (deck.biomeResponse > 0.0) {
+        float midHeight = deck.base + deck.depth * 0.5;
+        float toMid = (midHeight - cameraPosAbs.y) / (abs(viewDir.y) < 1e-3 ? 1e-3 : viewDir.y);
+        if (toMid > 0.0) {
+            // Clamped into the window, not gated on it. Each deck's ray leaves the 512-block
+            // square at its own distance, and gating dropped the aridity term along that edge: a
+            // 45% extinction step on a straight line, one per deck. Clamping lets a far column
+            // inherit the nearest one the field knows.
+            vec2 columnXZ = plaguePrecipClampColumn(cameraPosAbs.xz + viewDir.xz * toMid,
+                                                    cameraPosAbs.xz);
+            float aridHere;
+            float coldHere;
+            if (plaguePrecipNeighbourhood(columnXZ, aridHere, coldHere)) {
+                sigmaScale *= 1.0 - deck.biomeResponse * aridHere;
+            }
+        }
+    }
 
     // Moon sits opposite the true sun; the sign flips where sunVisibility2 reaches zero (sun 3.6
     // degrees below horizon). By then the direct term is already the night colour, two orders of
@@ -700,8 +801,14 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
  * both faces where the profile ramps. Coarse field, as the cloud's own sun march uses: an integral
  * does not care about the erosion detail.
  */
+// Optical depth below which a deck's shadow is not worth three density samples. exp(-0.5) is 0.61
+// at full density, and a deck this thin never reaches full density: its darkest shadow is a few
+// percent. This runs per lit fragment, so every deck skipped here is three coarse samples saved on
+// every pixel in the frame, water included.
+const float PLAGUE_CLOUD_SHADOW_MIN_TAU = 0.5;
+
 float plagueCloudDeckShadow(vec3 fragAbsPos, vec3 sunDir, PlagueCloudDeck deck, float syncedTime) {
-    if (deck.tau <= 0.0 || deck.population <= 0.0) {
+    if (deck.tau <= PLAGUE_CLOUD_SHADOW_MIN_TAU || deck.population <= 0.0) {
         return 1.0;
     }
     vec2 drift = plagueCloudDrift(deck, syncedTime);

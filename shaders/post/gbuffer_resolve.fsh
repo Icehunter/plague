@@ -47,6 +47,8 @@ uniform sampler2D u_Input13; // causticsTexture
 uniform sampler2D u_Input14; // sunShadowMapRaw (raw, non-comparison. Debug only, see DBG_SHADOW_QUERY_3)
 uniform sampler2D u_Input15; // moonAlbedo, equirectangular, near side centred
 uniform sampler2D u_Input16; // moonNormal, tangent-space relief for the same projection
+// cloudShadowMask, quarter scale. Ground cloud-shadow TRANSMITTANCE: 1.0 full sun, lower is shaded.
+uniform sampler2D u_Input17;
 
 // Must come after u_Input10's declaration: PLAGUE_CLOUD_NOISE expands inline wherever clouds.glsl
 // calls it, so an earlier import would reference u_Input10 before it exists. Also declares
@@ -815,47 +817,11 @@ int debugView = int(u_Param3 + 0.5);
     // A separate query from sunVisibility() above: the sun shadow map only knows about opaque
     // terrain, never the cloud volume, so this multiplies in as its own factor.
     //
-    // Beer-Lambert on the genus table's `tau` (optical depth straight down through the slab,
-    // tools/derive_cloud_types.py). The slab thickness cancels algebraically (extinction/block =
-    // tau/depth, slant path = depth/sunDir.y, product = tau/sunDir.y), which is why this is three
-    // multiplies and not a march, and why a low sun is shadowed by a longer path with no thickness
-    // constant to retune.
-    //
-    // Every deck the march draws also casts, and the transmittances multiply. Gated as the march
-    // gates its layers, so a deck that draws nothing casts nothing, and each deck's tau sets its
-    // own darkness.
+    // Computed in shaders/post/cloud_shadow_mask.fsh at quarter scale, not here: it has no detail
+    // finer than a cloud cell but cost hundreds of hash evaluations per lit fragment inline.
     float cloudShadow = 1.0;
 #if CLOUD_SHADOWS && CLOUDS_VOLUMETRIC
-    if (sunDir.y > 1e-3) {
-        vec3 fragAbsPos = u_CameraAbs.xyz + worldPos;
-        float syncedTime = u_SkyState.w * 0.05;
-        float shadowSnow = int(u_CameraSkyLight.y + 0.5) == 2 ? 1.0 : 0.0;
-
-        PlagueCloudDeck convectiveDeck;
-        PlagueCloudDeck stratiformDeck;
-        float stratiform = plagueCloudTransitionDecks(
-                rainFactor,
-                clamp(u_FrameState.z, 0.0, 1.0),
-                clamp(u_FrameState.w, 0.0, 1.0),
-                shadowSnow,
-                u_SunDirection.w,
-                syncedTime,
-                convectiveDeck,
-                stratiformDeck);
-
-        PlagueCloudDeck sheetDeck;
-        float lowSheet = plagueCloudLowStratiform(shadowSnow, sheetDeck);
-
-        if (stratiform < 1.0) {
-            cloudShadow *= plagueCloudDeckShadow(fragAbsPos, sunDir, convectiveDeck, syncedTime);
-        }
-        if (lowSheet > 0.0) {
-            cloudShadow *= plagueCloudDeckShadow(fragAbsPos, sunDir, sheetDeck, syncedTime);
-        }
-        if (stratiform > 0.0) {
-            cloudShadow *= plagueCloudDeckShadow(fragAbsPos, sunDir, stratiformDeck, syncedTime);
-        }
-    }
+    cloudShadow = clamp(texture(u_Input17, texCoord).r, 0.0, 1.0);
 #endif
     shadow *= cloudShadow;
 

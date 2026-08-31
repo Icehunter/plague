@@ -131,34 +131,71 @@ void main() {
     PlagueCloudDeck sheetDeck;
     float lowSheet = plagueCloudLowStratiform(localSnowWeight, sheetDeck);
 
-    vec4 layer[3];
-    float front[3];
-    layer[0] = vec4(0.0); front[0] = 0.0;
-    layer[1] = vec4(0.0); front[1] = 0.0;
-    layer[2] = vec4(0.0); front[2] = 0.0;
+    PlagueCloudDeck rollDeck;
+    float lowRolls = plagueCloudStratocumulus(localSnowWeight, rollDeck);
+
+    PlagueCloudDeck cirrusDeck;
+    PlagueCloudDeck cirrocumulusDeck;
+    PlagueCloudDeck altocumulusDeck;
+    vec3 upperMasks;
+    plagueCloudUpperDecks(cirrusDeck, cirrocumulusDeck, altocumulusDeck, upperMasks);
+
+    vec4 layer[PLAGUE_CLOUD_LAYERS];
+    float front[PLAGUE_CLOUD_LAYERS];
+    for (int i = 0; i < PLAGUE_CLOUD_LAYERS; i++) {
+        layer[i] = vec4(0.0);
+        front[i] = 0.0;
+    }
 
     // Own dither phase each: they walk the same ray, and a shared offset would put their samples
     // on the same planes and correlate independent fields.
-    if (stratiform < 1.0) {
+    float heapedOn = plagueCloudLayerSwitch(u_CloudLayerHeaped);
+    float sheetsOn = plagueCloudLayerSwitch(u_CloudLayerSheets);
+    if (heapedOn > 0.0 && stratiform < 1.0) {
+        // Faded by how far the sky has turned stratiform, so the convective deck hands over to the
+        // sheet by going away rather than by shrinking. Premultiplied, so scaling is a clean
+        // opacity change. Without it the layer also drew at full strength right up to the frame the
+        // gate closed, which is a cliff at stratiform 1.
         layer[0] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, dither,
                                    convectiveDeck, skyColours, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, atmColorMult, front[0]);
+                                   renderDistance, atmColorMult, front[0])
+                 * (1.0 - stratiform);
     }
     if (lowSheet > 0.0) {
         layer[1] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.3333),
                                    sheetDeck, skyColours, lighting, sunDirTrue, syncedTime,
                                    renderDistance, atmColorMult, front[1]);
     }
-    if (stratiform > 0.0) {
+    if (sheetsOn > 0.0 && stratiform > 0.0) {
         layer[2] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.6667),
                                    stratiformDeck, skyColours, lighting, sunDirTrue, syncedTime,
                                    renderDistance, atmColorMult, front[2]);
     }
+    if (lowRolls > 0.0) {
+        layer[3] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.1667),
+                                   rollDeck, skyColours, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, atmColorMult, front[3]);
+    }
+    if (upperMasks.z > 0.0) {
+        layer[4] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.5),
+                                   altocumulusDeck, skyColours, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, atmColorMult, front[4]);
+    }
+    if (upperMasks.y > 0.0) {
+        layer[5] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.8333),
+                                   cirrocumulusDeck, skyColours, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, atmColorMult, front[5]);
+    }
+    if (upperMasks.x > 0.0) {
+        layer[6] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.25),
+                                   cirrusDeck, skyColours, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, atmColorMult, front[6]);
+    }
 
     // Sorted by where the ray first meets material. A missed deck reports front 0 and zero alpha;
     // treating 0 as infinitely far sorts it last, where zero alpha changes nothing.
-    for (int i = 0; i < 2; i++) {
-        for (int j = 0; j < 2 - i; j++) {
+    for (int i = 0; i < PLAGUE_CLOUD_LAYERS - 1; i++) {
+        for (int j = 0; j < PLAGUE_CLOUD_LAYERS - 1 - i; j++) {
             float nearer = front[j] > 0.0 ? front[j] : 1e30;
             float farther = front[j + 1] > 0.0 ? front[j + 1] : 1e30;
             if (farther < nearer) {
@@ -173,8 +210,9 @@ void main() {
     }
 
     vec4 clouds = layer[0];
-    clouds += layer[1] * (1.0 - clouds.a);
-    clouds += layer[2] * (1.0 - clouds.a);
+    for (int i = 1; i < PLAGUE_CLOUD_LAYERS; i++) {
+        clouds += layer[i] * (1.0 - clouds.a);
+    }
 
     // Weighted by each layer's contribution to the union, not the nearest that drew. A layer
     // reports a front distance until its alpha reaches zero, so the nearest JUMPS to the next layer
@@ -184,7 +222,7 @@ void main() {
     float frontTransmittance = 1.0;
     float frontWeight = 0.0;
     float cloudFrontDistance = 0.0;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < PLAGUE_CLOUD_LAYERS; i++) {
         float contribution = layer[i].a * frontTransmittance;
         frontTransmittance *= 1.0 - layer[i].a;
         if (front[i] > 0.0) {
