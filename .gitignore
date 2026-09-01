@@ -11,3 +11,6 @@ shaders.zip
 # Third-party-derived artwork and captures never enter the tree -- see ASSETS.md
 tools/textures/
 tools/captures/
+
+# glslangValidator writes <stage>.spv into the working directory when -V is passed with no -o.
+*.spv
