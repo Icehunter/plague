@@ -54,6 +54,10 @@ sliders = [
     "u_TmContrast",
     "u_TmWhitePath",
     "u_TmDarkDesaturation",
+    "u_OutlineConvex",
+    "u_OutlineConcave",
+    "u_OutlineThickness",
+    "u_OutlineDistance",
     "u_PomDebug",
     "u_PomQuality",
     "u_PomDepth",
@@ -623,6 +627,17 @@ elements = [
     "u_Contrast",
 ]
 
+[screens.outline]
+title = "Outline"
+elements = [
+    "OUTLINE_ENABLED",
+    "u_OutlineConvex|requires:OUTLINE_ENABLED",
+    "u_OutlineConcave|requires:OUTLINE_ENABLED",
+    "u_OutlineThickness|requires:OUTLINE_ENABLED",
+    "u_OutlineDistance|requires:OUTLINE_ENABLED",
+    "OUTLINE_FOLIAGE|requires:OUTLINE_ENABLED",
+]
+
 # Every diagnostic view and gain in one place, out of the feature pages' way. Scattered next to
 # their features, each of these read as a normal setting until its tooltip was opened; collected
 # here, the page itself says "these change what you SEE only to help you diagnose".
@@ -648,10 +663,54 @@ elements = [
 ]
 
 [yacl]
-pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "occlusion", "reflections", "water", "materials", "snow", "parallax", "bloom", "tonemap", "debug"]
+pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "occlusion", "reflections", "water", "materials", "snow", "parallax", "bloom", "tonemap", "outline", "debug"]
 
 # Prose shown in each option's tooltip, above the mechanical Default/Range/Applies lines.
 [descriptions]
+
+OUTLINE_ENABLED = """
+Lines along the world's geometric edges.
+
+It draws where surfaces fold, or where one thing stands in front of another, so a block corner and \
+a rooftop against the sky both get a line. A flat wall of a hundred blocks gets one outline around \
+the wall, not a grid. Water, glass and the item in your hand are never outlined, and nothing under \
+water is. Costs a handful of depth reads per pixel."""
+
+u_OutlineConvex = """
+Strength of outside edges: corners pointing toward you, and anything silhouetted against what is \
+behind it.
+
+Draws rooflines, ridges and the near side of a doorway. Below 0 it darkens those edges instead of \
+brightening them, so this one slider gives you ink lines or chalk ones."""
+
+u_OutlineConcave = """
+Strength of inside corners: a floor meeting a wall, the back of an alcove.
+
+Below 0 it darkens them instead, which is closer to how light behaves there. Ambient Occlusion \
+already shades these corners, so a positive value works against it. Ships at 0."""
+
+u_OutlineThickness = """
+Line width, in pixels.
+
+It only widens. What counts as an edge is decided by the angle a surface turns through, so raising \
+this does not sweep more of the world into the effect. A band this many pixels wide at the very \
+edge of the screen draws no lines."""
+
+u_OutlineDistance = """
+How far out, in chunks, lines are drawn. They fade over the last quarter of it.
+
+This decides whether natural ground reads as outlined shapes or as a wire mesh. A line's brightness \
+does not change with distance, but the number of lines does: a far pixel covers many blocks, and \
+every step between two of them is a real edge. Lower it until the hills look like hills. It also \
+makes the effect cheaper, since nothing past the fade is computed."""
+
+OUTLINE_FOLIAGE = """
+Whether leaves, grass and fences are outlined.
+
+They are cut-out textures, so every gap between leaves is a real edge and a tree comes out as a \
+mass of lines rather than a shape with an outline. Distant canopy turns into a haze that crawls as \
+you move. Skip is the sane setting."""
+
 
 
 

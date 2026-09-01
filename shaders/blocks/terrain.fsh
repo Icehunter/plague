@@ -731,9 +731,10 @@ void main() {
     // #ifdef ALPHA_CUTOUT is exact here, not a heuristic: verified against Sodium's
     // ShaderChunkRenderer.createShader — under USE_DEFERRED "defined" means exactly the cutout sub-draw.
     //
-    // Mirrored in entities.fsh, block_entities.fsh and particles.fsh. Currently written and never
-    // read (its consumer was removed with the snow accumulation pass); kept because it's the only
-    // unclaimed G-buffer channel and the four writes must not drift apart.
+    // Mirrored in entities.fsh, block_entities.fsh and particles.fsh; the four writes must not drift
+    // apart. Read by shaders/include/outline.glsl, which skips the outline on the cutout class (every
+    // leaf gap is a real depth discontinuity) and on particles. Its only consumer, and compiled out
+    // when World Outline is off, so a wrong value here fails silently.
 #ifdef ALPHA_CUTOUT
     gAoOut       = vec4(bakedAo, emission, pomShadow, 0.5);
 #else

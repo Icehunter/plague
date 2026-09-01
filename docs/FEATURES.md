@@ -126,6 +126,25 @@ covers what the pack itself does, not the engine underneath it.
   desaturation; **ACES**; and **Reinhard**.
 - Exposure applied before the curve; saturation and contrast applied after, on display values.
 
+## World outline
+
+- Lines along the world's geometric edges, from a centred second difference of the depth buffer. It
+  responds to a jump in distance (a silhouette) and a kink in the depth field (a block corner), and
+  to nothing else. A flat surface at any orientation and distance responds with algebraic zero, so a
+  floor seen at a grazing angle stays clean by construction rather than by a tuned threshold.
+- Convex and concave edges have separate strengths, both swinging through zero, so either channel
+  draws a white line or an ink one. Thickness only widens: what counts as an edge is an angle,
+  independent of tap radius, resolution and field of view.
+- Leaves, grass and fences are skipped by default, read off the G-buffer surface class. Every leaf
+  gap is a real depth discontinuity, so foliage otherwise draws as a mass of lines.
+- It outlines geometry, not blocks. A flat wall of a hundred stone blocks gets one outline around the
+  wall, not a grid. Water, glass and the held item are never outlined; they draw after the graph.
+- Nothing is outlined under water, seen through a surface or with the camera submerged. A stepped bed
+  at a grazing angle puts a huge number of real one-block edges in frame at once, over an image
+  refraction has already softened.
+- Lines fade over the last quarter of Outline Distance, which also makes the effect cheaper: nothing
+  past the fade is computed.
+
 ## Verification tooling
 
 Sixteen offline Python verifiers reproduce shader maths (noise, marches, wave fields, colour decode,

@@ -945,7 +945,7 @@ shader = "shaders/post/tonemap.fsh"
 # Reads the finished two-pass blur (underwaterBlurred) rather than computing a disc kernel inline.
 # Inputs are positional — append only, never insert.
 inputs = ["sceneHdrRefracted", "builtin.depth", "bloomFinal", "builtin.waterDepth", "exposure",
-          "underwaterBlurred", "builtin.noise", "waterVolumeShaftsResolved"]
+          "underwaterBlurred", "builtin.noise", "waterVolumeShaftsResolved", "builtin.gAo"]
 outputs = ["builtin.output"]
 
 # NO SNOW ACCUMULATION / COMPUTE PASS, deliberately: a deferred blend can only paint colour, not

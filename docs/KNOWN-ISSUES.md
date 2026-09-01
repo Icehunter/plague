@@ -75,6 +75,21 @@ working notes; what is here is what a reader needs to know the limitation exists
 - **The normal-atlas magnification filter shapes the POM read**, so parallax depth depends on a
   texture filter setting rather than only on the material.
 
+## World outline
+
+- **Bare uneven terrain draws densely.** A cliff or open hillside is thousands of one-block steps,
+  every one a real 90 degree edge, so it reads as a lattice rather than outlined shapes. No per-pixel
+  discriminator separates that from architecture: the edge-magnitude distributions overlap. Lowering
+  Outline Distance is the only lever today. A regional density filter over a much wider neighbourhood
+  is the untried fix. `shaders/include/outline.glsl`.
+- **Lines shimmer by up to half a pixel under temporal accumulation.** The projection is jittered, so
+  the depth read is sub-pixel offset each frame while the colour was resolved unjittered. Worst at
+  thickness 1. A fix needs an unjittered depth buffer, which the G-buffer does not carry.
+- **A band at the frame edge, as wide as the tap radius, draws no lines.** The border early-out in
+  `plagueOutlineFold`. Every alternative breaks stencil symmetry and makes it respond to slant.
+- **Terrain seen through a leaf gap can draw a faint line on the wall behind.** A leaf close in front
+  of a surface occludes the surface, not the leaf.
+
 ## Performance
 
 - **Water scenes run around 55 FPS** against 75–110 elsewhere. A long-standing cost rather than a

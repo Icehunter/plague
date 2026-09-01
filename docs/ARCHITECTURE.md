@@ -163,6 +163,11 @@ state between frames.
 folds it back; `tonemap` maps HDR to display and applies grading. `depth_copyback` restores depth for
 anything drawn afterwards.
 
+`tonemap` also owns the world outline, which is why it reads `builtin.gAo`, appended at input 8. The
+detector runs there rather than in its own pass because it must sit after `temporal_accumulate` (a
+one-pixel line is the outlier a neighbourhood clamp rejects) and needs the finished colour to
+composite against. `tonemap` is the only pass after the accumulator holding both.
+
 ## Where the shaders live
 
 ```

@@ -12,6 +12,10 @@
 // ambient first, since underwater.glsl's colour helpers take PlagueLighting.)
 #moj_import <fornax_runtime:light_and_ambient_colors.glsl>
 #moj_import <fornax_runtime:underwater.glsl>
+// The edge operator and its options. Kept out of tonemap.glsl: that include also compiles into the
+// forward geometry slot, which has no depth sampler and no u_PackOptions block. Imported after
+// globals.glsl, the source of u_ProjectionMatrix, and after underwater.glsl for plagueChunksToBlocks.
+#moj_import <fornax_runtime:outline.glsl>
 
 uniform sampler2D u_Input0; // sceneHdrRefracted: linear, unbounded, finished composite (water, clouds, veil)
 uniform sampler2D u_Input1; // builtin.depth: reversed-Z, so 0.0 is the far plane
@@ -21,6 +25,7 @@ uniform sampler2D u_Input4; // exposure: 1x1 smoothed scene luma accumulator (ex
 uniform sampler2D u_Input5; // underwaterBlurred: half-resolution scene Gaussian
 uniform sampler2D u_Input6; // builtin.noise, the camera water transition mask
 uniform sampler2D u_Input7; // waterVolumeShaftsResolved: full-resolution linear shaft radiance
+uniform sampler2D u_Input8; // builtin.gAo: only .a is read here, the surface class (terrain.fsh:686)
 
 // Only u_Param3 is read here; the trailing sun/celestial fields other passes append are left
 // undeclared, since the engine binds the full u_PassParams buffer regardless of block coverage.
@@ -338,6 +343,21 @@ void main() {
     // Exposure, operator, display encode, grade: all in tonemap.glsl. Forward draws call this same
     // function on their fog colour, keeping both in the same colour space by construction.
     vec3 display = plagueTonemapAndGrade(hdr);
+
+#if OUTLINE_ENABLED
+    // On the display value, after the curve and before the dither, so the dither breaks up banding on
+    // the line's shoulder. After rather than before because AUTO_EXPOSURE moves the scene-to-display
+    // mapping by up to 10x: a scene-referred strength would breathe as the eye adapts. Display space
+    // is also bounded 0..1, so the lift's cap is expressible; in HDR there is no ceiling.
+    //
+    // frameUv, not texCoord. The sample point is warped above, and reading depth at the unwarped
+    // coordinate detaches the lines from their geometry while submerged.
+    //
+    // The lines are not touched by the grading sliders, and they do not bloom: bloomFinal is mixed in
+    // upstream.
+    display = plagueApplyOutline(display,
+            plagueOutlineAmount(u_Input1, u_Input8, u_Input3, frameUv, u_PassTexelSize));
+#endif
 
     // Display-space dither on the finished value, the last arithmetic before quantization, which is
     // the only place dithering defeats banding (dithering the scene-space mix upstream doesn't work,
