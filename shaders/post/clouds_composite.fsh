@@ -58,6 +58,22 @@ void main() {
         destinationTerrainDistance = length(destinationH.xyz / destinationH.w);
     }
 
+    // The water SURFACE occludes a cloud behind it, and opaque depth cannot say so: at a water
+    // pixel that depth belongs to the lake bed, which is further than the surface and often further
+    // than the cloud. water_composite draws after this pass and blends unconditionally, so a cloud
+    // left visible here is painted over. Without this test, looking down from above the deck, every
+    // lake and sea reads as sitting on top of the cloud.
+    //
+    // Reconstructed exactly as the terrain distance above is, from the same reversed-Z convention;
+    // 0.0 is this target's "no surface" sentinel, not a near plane.
+    float waterSurfaceDepth = texture(u_Input2, texCoord).r;
+    float destinationWaterDistance = 0.0;
+    if (waterSurfaceDepth > 0.0) {
+        vec4 waterH = u_InvProjModelView
+                * vec4(texCoord * 2.0 - 1.0, waterSurfaceDepth, 1.0);
+        destinationWaterDistance = length(waterH.xyz / waterH.w);
+    }
+
     vec4 c = vec4(0.0);
     for (int i = 0; i < 4; ++i) {
         vec2 sampleUv = texCoord + offsets[i];
@@ -68,7 +84,9 @@ void main() {
         vec4 sampleCloud = texelFetch(u_Input0, sampleTexel, 0);
         float cloudFrontDistance = texelFetch(u_Input3, sampleTexel, 0).r;
         bool cloudVisible = cloudFrontDistance > 0.0
-                && (!destinationGeometry || cloudFrontDistance < destinationTerrainDistance);
+                && (!destinationGeometry || cloudFrontDistance < destinationTerrainDistance)
+                && (destinationWaterDistance <= 0.0
+                    || cloudFrontDistance < destinationWaterDistance);
         if (cloudVisible) {
             c += sampleCloud;
         }

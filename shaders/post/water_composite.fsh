@@ -53,6 +53,7 @@ uniform sampler2D u_Input10; // foamHeightTexture
 uniform sampler2D u_Input11; // waterEnvironment, filtered Plague sky radiance
 uniform sampler2D u_Input12; // moonAlbedo, equirectangular, near side centred
 uniform sampler2D u_Input13; // moonNormal, tangent-space relief for the same projection
+uniform sampler2D u_Input14; // cloudFront: live tier's first-hit cloud distance (0.0 = empty ray)
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -72,6 +73,9 @@ layout(std140) uniform u_PassParams {
 #define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
 #define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 #define PLAGUE_WATER_REFLECTION_DEBUG 0 //[0 1 2 3 4] compile "Water Reflection View" {0="Off" 1="Roughness" 2="Trace Confidence" 3="Fallback Sky" 4="Source Mix"}
+// Byte-identical to clouds.glsl's declaration: the option scanner merges same-name declarations
+// and rejects any mismatch. Read here only to know whether cloudFront has a writer this build.
+#define CLOUDS_VOLUMETRIC 1 //[0 1] compile "Volumetric Clouds" {0="Off" 1="On"}
 #define WATER_FOAM //[] compile "Shoreline Foam"
 // Must match terrain.vsh/terrain.fsh byte-identically: the settled-surface classification below
 // undoes the wave lift before classifying, and needs to know whether the vertex stage applied one.
@@ -218,6 +222,29 @@ void main() {
         }
         discard;
     }
+
+#if CLOUDS_VOLUMETRIC
+    // A cloud in front of the water hides it, and nothing else in this pass can know that. Clouds
+    // composite into sceneHdr, ssr_trace_water reads sceneHdr, and this pass runs after that trace,
+    // so a cloud is always already drawn and this blend would paint over it: from above the deck,
+    // every lake would read as sitting on top of the cloud.
+    //
+    // Distances, not depths: cloudFront carries the march's own first-hit distance along the ray,
+    // which has no depth buffer to compare against. 0.0 is its empty-ray sentinel, so a pixel whose
+    // ray met no cloud must fall through rather than read as a cloud at the eye.
+    //
+    // Guarded on CLOUDS_VOLUMETRIC because the three tier copies are all gated on it: with clouds
+    // off nothing writes cloudFront, and its contents are whatever the allocation left there.
+    float cloudFrontDistance = texture(u_Input14, texCoord).r;
+    if (cloudFrontDistance > 0.0
+            && cloudFrontDistance < length(worldPosAt(texCoord, waterDepth))) {
+        if (uwGlintQueryActive) {
+            fragColor = vec4(-2.0, -2.0, -2.0, 1.0); // was water, but occluded this frame
+            return;
+        }
+        discard;
+    }
+#endif
 
     float skyLight = (abs(signedWaterFlags) - 0.5) * 2.0;
 

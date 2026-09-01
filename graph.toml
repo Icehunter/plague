@@ -632,6 +632,46 @@ blend = "translucent"
 inputs = ["cloudsVolumeComputeFull", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistanceFull"]
 outputs = ["sceneHdr"]
 
+# The live tier's cloud front distance, in ONE ungated target. water_composite reads it to reject
+# water that sits behind a cloud, which compositing order cannot tell it: clouds land in sceneHdr,
+# ssr_trace_water reads sceneHdr (putting clouds IN the water), and water composites after that
+# trace, so clouds are always earlier and water blends over them.
+#
+# Half scale: the source is at most three-quarter scale, the signal is a smooth first-hit distance
+# with no chunk-level detail, and the only consumer compares it against a distance. `filter` is
+# load-bearing at a scale below 1, and the comparison reads between texels rather than stepping.
+[targets.cloudFront]
+format = "r32f"
+scale = 0.5
+filter = "linear"
+
+# One per CLOUD_RESOLUTION arm, exactly one compiled. A gated pass writing an ungated target is the
+# direction gate-consistency allows. Nothing writes cloudFront when CLOUDS_VOLUMETRIC is off, which
+# is why water_composite guards its read on that same option rather than trusting the contents.
+[[pass]]
+name = "cloud_front_copy_quarter"
+type = "fullscreen"
+shader = "shaders/post/cloud_front_copy.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+inputs = ["cloudsVolumeDistanceQuarter"]
+outputs = ["cloudFront"]
+
+[[pass]]
+name = "cloud_front_copy"
+type = "fullscreen"
+shader = "shaders/post/cloud_front_copy.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+inputs = ["cloudsVolumeDistance"]
+outputs = ["cloudFront"]
+
+[[pass]]
+name = "cloud_front_copy_full"
+type = "fullscreen"
+shader = "shaders/post/cloud_front_copy.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+inputs = ["cloudsVolumeDistanceFull"]
+outputs = ["cloudFront"]
+
 [[pass]]
 name = "scene_hdr_copy"
 type = "fullscreen"
@@ -742,7 +782,7 @@ shader = "shaders/post/water_composite.fsh"
 # exactly, or both draw water or neither does; verify_graph_resolves.py pins the pair.
 enabled_if = "SSR_WATER_MODE > 0"
 blend = "translucent"
-inputs = ["builtin.waterNormal", "builtin.waterDepth", "ssrWater", "builtin.depth", "builtin.noise", "causticsTexture", "glintOcclusion", "builtin.celestials", "foamTexture", "foamNormalTexture", "foamHeightTexture", "waterEnvironment", "moonAlbedo", "moonNormal"]
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "ssrWater", "builtin.depth", "builtin.noise", "causticsTexture", "glintOcclusion", "builtin.celestials", "foamTexture", "foamNormalTexture", "foamHeightTexture", "waterEnvironment", "moonAlbedo", "moonNormal", "cloudFront"]
 outputs = ["sceneHdrComposited"]
 
 # Placed after the last scene writer, BEFORE bloom and underwater_refraction: accumulating a
