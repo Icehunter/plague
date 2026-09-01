@@ -44,6 +44,14 @@
 // flat-medium march exactly, the property verify_water_turbidity.py asserts. Default 0.20 is +45%
 // shaft radiance at 20 blocks down, on a range useful to 1.00 (+161%).
 #define u_WaterTurbidityDepth 0.20 //[0.0..1.0 step 0.05] runtime "Turbidity With Depth"
+// Discrete drifting particles (water_motes.glsl). A different mechanism from the turbidity slider
+// above, not a stronger version of it: turbidity is a continuous medium and can only give veil and
+// glow, this draws separable specks anchored to world positions.
+//
+// 1.2 is picked against a dark seabed, where 2.0 reads as too busy. Each speck is lit by the
+// radiance already at its pixel, so this number scales a field that is dim in shadow and bright
+// in open water on its own.
+#define u_WaterMoteAmount 1.2 //[0.0..2.0 step 0.05] runtime "Suspended Particles"
 
 // --- Under the surface: colour and darkness ----------------------------------------------------------
 // Declared here since underwater.glsl (its consumer) is transitively reachable from terrain.fsh and

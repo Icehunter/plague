@@ -50,6 +50,7 @@ out vec4 fragColor;
 #define SKY_PROCEDURAL //[] compile "Procedural Sky"
 
 #moj_import <fornax_runtime:water_options.glsl>
+#moj_import <fornax_runtime:water_motes.glsl>
 const float PLAGUE_UW_VIEW_PI = 3.14159265359;
 const float PLAGUE_UW_VIEW_INV_SQRT_TWO = 0.70710678118;
 // Exact orthogonal unit directions from the 3-4-5 triangle. Independent directions prevent the
@@ -232,6 +233,65 @@ vec2 plagueUnderwaterViewUv(vec2 uv) {
 #endif
 }
 
+#if PLAGUE_UNDERWATER
+vec3 plagueMoteViewDirectionAt(vec2 uv) {
+    // Reversed-Z: 0.0 is the far plane, and view bob rides in the projection, so the ray is
+    // unprojected rather than rebuilt from a field-of-view constant.
+    vec4 world = u_InvProjModelView * vec4(uv * 2.0 - 1.0, 0.0001, 1.0);
+    if (any(isnan(world)) || any(isinf(world)) || abs(world.w) < 1e-6) {
+        return vec3(0.0);
+    }
+    vec3 ray = world.xyz / world.w;
+    float rayLengthSquared = dot(ray, ray);
+    return rayLengthSquared > 1e-8 ? ray * inversesqrt(rayLengthSquared) : vec3(0.0);
+}
+
+// Distance to the nearest opaque sample, so a mote cannot be drawn inside or behind terrain. A
+// far-plane sample (reversed-Z zero) means open water, which the shell set bounds on its own.
+float plagueMoteSceneDistance(vec2 uv) {
+    float depth = texture(u_Input1, uv).r;
+    if (isnan(depth) || isinf(depth) || depth <= 0.0) {
+        return 1e20;
+    }
+    vec4 world = u_InvProjModelView * vec4(uv * 2.0 - 1.0, depth, 1.0);
+    if (any(isnan(world)) || any(isinf(world)) || abs(world.w) < 1e-6) {
+        return 1e20;
+    }
+    float distanceToScene = length(world.xyz / world.w);
+    return (isnan(distanceToScene) || isinf(distanceToScene)) ? 1e20 : distanceToScene;
+}
+
+// Motes are lit by the resolved shaft field at their own pixel, so one crossing a beam flares with
+// it and no second light query is needed. Runs here rather than in the shaft compositor because
+// that pass is half-resolution upstream of temporal accumulation, and a speck this small does not
+// survive either.
+vec3 plagueWaterMoteRadianceAt(vec2 uv, vec3 shaftRadiance, vec3 sceneRadiance) {
+    if (u_WaterMoteAmount <= 0.0 || u_WaterState.x <= 0.5) {
+        return vec3(0.0);
+    }
+    vec3 viewDirection = plagueMoteViewDirectionAt(uv);
+    vec3 neighbourDirection = plagueMoteViewDirectionAt(uv + vec2(u_PassTexelSize.x, 0.0));
+    if (dot(viewDirection, viewDirection) <= 1e-8
+            || dot(neighbourDirection, neighbourDirection) <= 1e-8) {
+        return vec3(0.0);
+    }
+
+    float coverage = plagueWaterMoteCoverage(
+            viewDirection, u_CameraAbs,
+            plagueWaterMoteAngularRadius(viewDirection, neighbourDirection),
+            0.0, plagueMoteSceneDistance(uv),
+            u_SkyState.w / 20.0);
+    if (coverage <= 0.0 || isnan(coverage) || isinf(coverage)) {
+        return vec3(0.0);
+    }
+
+    vec3 ambient = max(sceneRadiance, vec3(0.0)) * PLAGUE_WATER_MOTE_AMBIENT_COUPLING
+            + PLAGUE_WATER_MOTE_AMBIENT_FLOOR;
+    vec3 radiance = (max(shaftRadiance, vec3(0.0)) + ambient) * coverage * u_WaterMoteAmount;
+    return (any(isnan(radiance)) || any(isinf(radiance))) ? vec3(0.0) : max(radiance, vec3(0.0));
+}
+#endif
+
 void main() {
     // Temporary bisect (LabPBR decode audit): u_Param3 is a GBufferDebugView ordinal (see
     // gbuffer_resolve.fsh's DBG_* block). Debug views write raw, untonemapped data, so this bails
@@ -327,6 +387,13 @@ void main() {
     if (!any(isnan(resolvedShafts)) && !any(isinf(resolvedShafts))) {
         hdr += resolvedShafts;
     }
+
+#if PLAGUE_UNDERWATER
+    // After the shafts, so a mote is lit by the same beam the viewer sees it cross. Before
+    // exposure, so particulate is graded with everything else rather than sitting on top.
+    vec3 moteRadiance = plagueWaterMoteRadianceAt(frameUv, resolvedShafts, hdr);
+    hdr += moteRadiance;
+#endif
 
 #ifdef AUTO_EXPOSURE
     // Auto-exposure (plagueAutoExposure, over exposure_measure.fsh's smoothed luma), MULTIPLIED into

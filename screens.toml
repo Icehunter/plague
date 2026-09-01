@@ -81,6 +81,7 @@ sliders = [
     "u_WaterShaftSpread",
     "u_WaterShaftPersistence",
     "u_WaterTurbidityDepth",
+    "u_WaterMoteAmount",
     "u_WaveSpeed",
     "u_WaterTintSaturation",
     "u_WaterReflectionStrength",
@@ -522,6 +523,7 @@ elements = [
     "u_WaterShaftSpread",
     "u_WaterShaftPersistence",
     "u_WaterTurbidityDepth",
+    "u_WaterMoteAmount",
 
     "<group:Underwater: Caustics|requires:WATER_CAUSTICS>",
     "WATER_CAUSTICS",
@@ -1746,6 +1748,18 @@ Zero holds the whole column at whatever Water Clarity is set to. Higher leaves t
 alone and thickens the water below them, so a deep ocean shows it and a shallow pond barely does. \
 It adds scattering, not darkness: the beams down there brighten rather than the view closing in. \
 Light shafts only; the underwater fog and darkness sliders are unaffected."""
+u_WaterMoteAmount = """
+Specks of drifting matter suspended in the water, the sort that catches a torch beam in a flooded \
+cave. They sit at fixed points in the world and sink slowly, so they slide past you as you swim \
+rather than sticking to the screen.
+
+Each speck lights up from whatever light is reaching that spot, so they flare as they cross a sun \
+shaft and dim again in shadow. Turbidity With Depth above is a different thing entirely: that \
+thickens the water itself, this puts things in it.
+
+Set it to 0.00 for perfectly clean water. Above about 1.50 the field starts to read as busy \
+rather than suspended.
+"""
 
 SSR_QUALITY = """
 Reflections: smooth and wet surfaces mirror the world around them.
