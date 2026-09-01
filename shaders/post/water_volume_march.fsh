@@ -283,8 +283,6 @@ void main() {
         return;
     }
     float clarity = max(u_WaterClarity, 0.05);
-    vec3 sigmaS = PLAGUE_WATER_SIGMA_S / clarity;
-    vec3 sigmaT = plagueWaterSigmaT(clarity);
     vec3 scatter = vec3(0.0);
     vec3 viewT = vec3(1.0);
     float refractiveFocusSum = 0.0;
@@ -320,6 +318,14 @@ void main() {
         float sampleDistance = interval.entryDistance + (float(cell) + jitter) * ds;
         vec3 samplePosition = viewDirection * sampleDistance;
         vec3 sampleAbs = u_CameraAbs + samplePosition;
+        // Constant across the cell: plagueWaterCellWeight integrates constant sigma. No valid
+        // surface height means no depth to stratify against, so the medium stays flat.
+        float cellLoad = reservoirBaseHeightValid
+                ? plagueWaterTurbidityLoad(
+                        reservoirBaseHeight - sampleAbs.y, u_WaterTurbidityDepth)
+                : 1.0;
+        vec3 cellSigmaS = plagueWaterSigmaSLoaded(clarity, cellLoad);
+        vec3 cellSigmaT = plagueWaterSigmaTLoaded(clarity, cellLoad);
         float shaftDistanceFade = plagueWaterShaftDistanceFade(sampleDistance);
         float focusDifferential = plagueWaterShaftFocusDifferential(
                 viewDirection, sampleDistance);
@@ -339,8 +345,19 @@ void main() {
                 waterLightDirection, lightDistance,
                 interfacePosition, interfaceTransmission,
                 displacedSurfaceExit)) {
-            vec3 lightTransmittance = plagueWaterVolumeTransmittance(
-                    lightDistance, clarity);
+            // Midpoint of the light segment, not the cell: that path climbs to the interface, so
+            // charging it the cell's own murk puts out every shaft reaching deep water.
+            float lightLoad = reservoirBaseHeightValid
+                    ? plagueWaterTurbidityLoad(
+                            // interfacePosition is camera-relative, reservoirBaseHeight and
+                            // sampleAbs absolute. Lift it before averaging.
+                            reservoirBaseHeight
+                                    - 0.5 * (sampleAbs.y
+                                            + interfacePosition.y + u_CameraAbs.y),
+                            u_WaterTurbidityDepth)
+                    : 1.0;
+            vec3 lightTransmittance = exp(
+                    -plagueWaterSigmaTLoaded(clarity, lightLoad) * max(lightDistance, 0.0));
             float refractiveFocus = displacedSurfaceExit
                     ? plagueWaterRefractiveFocus(
                             u_Input2, interfacePosition, sampleAbs,
@@ -368,9 +385,9 @@ void main() {
         // remove or double-attenuate any of those effects.
         vec3 source = directSource * plagueWaterShaftTint() * shaftDistanceFade
                 * max(u_WaterShaftStrength, 0.0);
-        vec3 Tcell = exp(-sigmaT * ds);
-        vec3 cellWeight = plagueWaterCellWeight(sigmaT, ds);
-        scatter += viewT * sigmaS * cellWeight * source;
+        vec3 Tcell = exp(-cellSigmaT * ds);
+        vec3 cellWeight = plagueWaterCellWeight(cellSigmaT, ds);
+        scatter += viewT * cellSigmaS * cellWeight * source;
         viewT *= Tcell;
 
         if (all(lessThan(viewT, vec3(PLAGUE_WATER_INTERVAL_EPSILON)))) {

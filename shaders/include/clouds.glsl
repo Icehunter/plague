@@ -282,6 +282,24 @@ const float PLAGUE_CLOUD_SUN_STEP = 0.06;
 const float PLAGUE_CLOUD_SUN_GROWTH = 2.0;
 const float PLAGUE_CLOUD_SUN_CONE = 0.15;
 
+// Fraction of the unsampled light path the analytic tail charges. Family-scaled because `taps` IS
+// the quality tier: a weight blind to the measured path length makes the tier an exposure control,
+// one dropdown moving sky luminance 23% across Fast/Balanced/Ultra. tools/derive_cloud_lighting.py,
+// minimising tier spread subject to per-deck accuracy over seven decks: spread 0.049, accuracy
+// 0.050. Floor of the method: remainingRho comes from the fan, already outside a lumpy cloud, so
+// cumulus holds ~0.10 error at any weight.
+const float PLAGUE_CLOUD_REMAINDER_WEIGHT         = 0.1750;
+const float PLAGUE_CLOUD_REMAINDER_FAMILY_OCTAVES = 0.5000;
+
+// Sky and ground visibility use a sample's OWN density as proxy for the column past it, only as
+// good as the deck's vertical coherence: under a sheet the column matches the sample, inside a
+// tower the neighbouring air is clear and the same coefficient buries it. deck.family is that axis
+// (0 stratiform, 1 cumulus, 2 storm). tools/derive_cloud_lighting.py, minimax against the
+// 24-direction hemisphere reference over the seven low-etage decks: worst deviation 1.46x, against
+// 8.09x for one shared coefficient, 3.9x too bright on a rain sheet, 6.9x too dark in cumulonimbus.
+const float PLAGUE_CLOUD_AMBIENT_COHERENCE      = 0.7257;
+const float PLAGUE_CLOUD_AMBIENT_FAMILY_OCTAVES = 2.0000;   // a factor of four per unit of family
+
 // Break threshold: one part in 256, the finest step an 8-bit display carries. The remaining
 // transmittance stays in alpha rather than zeroing, so the composite is continuous through the
 // threshold rather than stepping at it.
@@ -360,12 +378,12 @@ float plagueCloudLightTransmittance(vec3 pos, vec3 lightDir, PlagueCloudDeck dec
     float remaining = max(pathToExit - travelled, 0.0);
     float fanMean = optical / max(travelled, 1e-3);
 
-    // Fitted against the seeded 128-step final-density holdout in tools/verify_clouds.py. The
     // 75% fan mean preserves measured nearby overburden while 25% source density avoids carrying
-    // one displaced tap through the whole slab. Exact binary fractions bound the extrapolated
-    // share from 1/32 at zenith to 1/8 at the horizon.
+    // one displaced tap through the whole slab. Fitted against the seeded 128-step final-density
+    // holdout in tools/verify_clouds.py.
     float remainingRho = mix(density, fanMean, 0.75);
-    float fitWeight = 0.03125 + 0.09375 * (1.0 - sunY);
+    float fitWeight = PLAGUE_CLOUD_REMAINDER_WEIGHT
+                    * exp2(-PLAGUE_CLOUD_REMAINDER_FAMILY_OCTAVES * deck.family);
     float opticalFit = optical + fitWeight * remainingRho * remaining;
     return exp(-opticalFit * deck.tau / max(deck.depth, 1e-3));
 }
@@ -722,14 +740,16 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
             // self-attenuating under rain: lightT falls as the deck's tau grows, and the gate is
             // lightT squared.
             direct *= 1.0 + PLAGUE_CLOUD_CROWN_LIGHT_GAIN * crownExposure;
-            // Fitted against the seeded 24-direction final-density hemisphere holdout in
-            // tools/verify_clouds.py. This is local Beer visibility, not a surface normal: the
-            // coloured sky dome remains the incident light and gains no texture/density lookup.
-            float ambientVisibility = exp(-0.22 * density * deck.tau * (1.0 - h)
-                                        * (1.0 - lightT));
+            // Local Beer visibility, not a surface normal: the coloured sky dome remains the
+            // incident light and gains no texture/density lookup. Family scaling of the
+            // coefficient: see PLAGUE_CLOUD_AMBIENT_COHERENCE.
+            float overburden = PLAGUE_CLOUD_AMBIENT_COHERENCE
+                             * exp2(-PLAGUE_CLOUD_AMBIENT_FAMILY_OCTAVES * deck.family)
+                             * density * deck.tau * (1.0 - lightT);
+            float ambientVisibility = exp(-overburden * (1.0 - h));
             // Same Beer visibility, depth mirrored: the sky dome is buried by cloud above a
             // sample, the ground by cloud below it.
-            float bounceVisibility = exp(-0.22 * density * deck.tau * h * (1.0 - lightT));
+            float bounceVisibility = exp(-overburden * h);
             vec3 ambient = ambientDome * mix(ambientBase, 1.0, h) * ambientVisibility
                          + groundBounce * bounceVisibility;
 

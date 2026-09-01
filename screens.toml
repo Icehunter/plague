@@ -80,6 +80,7 @@ sliders = [
     "u_WaterShaftFocus",
     "u_WaterShaftSpread",
     "u_WaterShaftPersistence",
+    "u_WaterTurbidityDepth",
     "u_WaveSpeed",
     "u_WaterTintSaturation",
     "u_WaterReflectionStrength",
@@ -520,6 +521,7 @@ elements = [
     "u_WaterShaftFocus",
     "u_WaterShaftSpread",
     "u_WaterShaftPersistence",
+    "u_WaterTurbidityDepth",
 
     "<group:Underwater: Caustics|requires:WATER_CAUSTICS>",
     "WATER_CAUSTICS",
@@ -1735,6 +1737,15 @@ How much the light shafts are smoothed over time.
 
 Higher is calmer and less shimmery, but smears fast-moving light into softer bands. Lower it if \
 you speed up world time or Wave Speed; 0.70 matches the original look."""
+
+u_WaterTurbidityDepth = """
+How much murkier the water gets the deeper you go. Silt settles toward the bottom, so a shaft that \
+stays crisp near the surface turns dense and short further down.
+
+Zero holds the whole column at whatever Water Clarity is set to. Higher leaves the top few metres \
+alone and thickens the water below them, so a deep ocean shows it and a shallow pond barely does. \
+It adds scattering, not darkness: the beams down there brighten rather than the view closing in. \
+Light shafts only; the underwater fog and darkness sliders are unaffected."""
 
 SSR_QUALITY = """
 Reflections: smooth and wet surfaces mirror the world around them.

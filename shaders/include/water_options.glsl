@@ -38,6 +38,12 @@
 #define u_WaterShaftFocus 1.0 //[0.0..2.0 step 0.05] runtime "Light Shaft Focus"
 #define u_WaterShaftSpread 0.75 //[0.0..1.0 step 0.05] runtime "Light Shaft Spread"
 #define u_WaterShaftPersistence 0.70 //[0.0..0.9 step 0.05] runtime "Light Shaft Persistence"
+// Suspended particulate rising with depth (water_volume.glsl's plagueWaterTurbidityLoad). Raises
+// SCATTERING only, never absorption, so deep beams densify instead of the water closing in. Drives
+// the shaft march alone; underwater fog and darkness run their own depth model. 0.0 reproduces the
+// flat-medium march exactly, the property verify_water_turbidity.py asserts. Default 0.20 is +45%
+// shaft radiance at 20 blocks down, on a range useful to 1.00 (+161%).
+#define u_WaterTurbidityDepth 0.20 //[0.0..1.0 step 0.05] runtime "Turbidity With Depth"
 
 // --- Under the surface: colour and darkness ----------------------------------------------------------
 // Declared here since underwater.glsl (its consumer) is transitively reachable from terrain.fsh and

@@ -174,6 +174,37 @@ vec3 plagueWaterVolumeTransmittance(float distance, float clarity) {
     return exp(-plagueWaterSigmaT(clarity) * max(distance, 0.0));
 }
 
+// Suspended particulate against depth below the surface: a wind-mixed near-surface layer of roughly
+// constant water, then rising silt toward the bottom. smoothstep, not a linear ramp: the flat start
+// IS the mixed layer. Multiplies SCATTERING ONLY; absorption belongs to the molecules and stays
+// where Water Clarity left it. Scaling both cancels itself, 30-block view transmittance falling to
+// 0.001 for a flat brighter wash with LESS shaft definition.
+//
+// STRAT_DEPTH: vanilla deep-ocean floor sits ~30 blocks down, so 24 puts the murk floor just above
+// the seabed. Authored. MAX_LOAD: picked off tools/verify_water_turbidity.py so the whole slider
+// does something (+35% to +161% shaft radiance) while 30-block view transmittance stays above
+// 0.044; 4.0 and 6.0 close the water in faster than the beams brighten.
+//
+// Silent failure: evaluate ONCE PER CELL and hold it constant across the cell. plagueWaterCellWeight
+// below closed-form integrates constant sigma, so sigma varying WITHIN a cell invalidates it.
+const float PLAGUE_WATER_STRAT_DEPTH = 24.0;
+const float PLAGUE_WATER_TURBIDITY_MAX_LOAD = 3.0;
+
+float plagueWaterTurbidityLoad(float depthBelowSurface, float turbidity) {
+    float t = smoothstep(0.0, PLAGUE_WATER_STRAT_DEPTH, max(depthBelowSurface, 0.0));
+    return 1.0 + t * clamp(turbidity, 0.0, 1.0) * PLAGUE_WATER_TURBIDITY_MAX_LOAD;
+}
+
+// Load 1.0 reproduces PLAGUE_WATER_SIGMA_S / plagueWaterSigmaT exactly, so turbidity 0 is a
+// bit-identical no-op against the flat medium.
+vec3 plagueWaterSigmaSLoaded(float clarity, float load) {
+    return (PLAGUE_WATER_SIGMA_S * max(load, 1.0)) / max(clarity, 0.05);
+}
+
+vec3 plagueWaterSigmaTLoaded(float clarity, float load) {
+    return (PLAGUE_WATER_SIGMA_S * max(load, 1.0) + PLAGUE_WATER_SIGMA_A) / max(clarity, 0.05);
+}
+
 vec3 plagueWaterCellWeight(vec3 sigmaT, float distance) {
     vec3 opticalDepth = sigmaT * max(distance, 0.0);
     vec3 safeSigmaT = max(sigmaT, vec3(1e-8));
