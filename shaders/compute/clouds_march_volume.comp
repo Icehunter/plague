@@ -149,9 +149,9 @@ void main() {
 
     // Own dither phase each: they walk the same ray, and a shared offset would put their samples
     // on the same planes and correlate independent fields.
-    float heapedOn = plagueCloudLayerSwitch(u_CloudLayerHeaped);
-    float sheetsOn = plagueCloudLayerSwitch(u_CloudLayerSheets);
-    if (heapedOn > 0.0 && stratiform < 1.0) {
+    float cumulusOn = (u_CloudTierCumulus > 0.5 ? 1.0 : 0.0);
+    float rainOn = (u_CloudTierNimbostratus > 0.5 ? 1.0 : 0.0);
+    if (cumulusOn > 0.0 && stratiform < 1.0) {
         // Faded by how far the sky has turned stratiform, so the convective deck hands over to the
         // sheet by going away rather than by shrinking. Premultiplied, so scaling is a clean
         // opacity change. Without it the layer also drew at full strength right up to the frame the
@@ -166,7 +166,9 @@ void main() {
                                    sheetDeck, skyColours, lighting, sunDirTrue, syncedTime,
                                    renderDistance, atmColorMult, front[1]);
     }
-    if (sheetsOn > 0.0 && stratiform > 0.0) {
+    // Nimbostratus on its own tier, not Stratus's: rain and thunder visibly fall out of this deck,
+    // so a shared gate takes the cloud out from under a storm.
+    if (rainOn > 0.0 && stratiform > 0.0) {
         layer[2] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.6667),
                                    stratiformDeck, skyColours, lighting, sunDirTrue, syncedTime,
                                    renderDistance, atmColorMult, front[2]);

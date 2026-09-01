@@ -52,7 +52,7 @@ uniform sampler2D u_Input17;
 
 // Must come after u_Input10's declaration: PLAGUE_CLOUD_NOISE expands inline wherever clouds.glsl
 // calls it, so an earlier import would reference u_Input10 before it exists. Also declares
-// CLOUDS_VOLUMETRIC/u_CloudAltitude/u_CloudAmount/u_CloudSpeed/CLOUD_QUALITY, byte-identical to
+// CLOUDS_VOLUMETRIC/u_CloudAltitude/u_CloudAmount/u_CloudSpeed/CLOUD_RESOLUTION, byte-identical to
 // clouds_march.fsh's own copy (the option scanner merges same-name declarations).
 #define PLAGUE_CLOUD_NOISE(uv) texture(u_Input10, uv)
 // This pass's cloud-shadow query (plagueCloudDensityCoarse, below) cannot bind a real sampler3D:

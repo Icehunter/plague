@@ -130,10 +130,6 @@ sliders = [
     "u_CloudSilverLining",
     "u_CloudShadowStrength",
     "u_CloudWeatherResponse",
-    "u_CloudQualityConvective",
-    "u_CloudQualityStratiform",
-    "u_CloudQualityMid",
-    "u_CloudQualityHigh",
     "u_CloudDetailFade",
     "u_CloudMoisture",
     "u_CloudStability",
@@ -307,7 +303,6 @@ elements = [
 title = "Clouds"
 elements = [
     "CLOUDS_VOLUMETRIC",
-    "CLOUD_QUALITY|requires:CLOUDS_VOLUMETRIC",
     "<group:Shape|requires:CLOUDS_VOLUMETRIC>",
     "u_CloudAltitude",
     "u_CloudAmount",
@@ -315,15 +310,13 @@ elements = [
     "u_CloudSpeed",
     "u_CloudSilverLining",
     "u_CloudWeatherResponse",
-    "<group:Layers|requires:CLOUDS_VOLUMETRIC>",
-    "u_CloudLayerHeaped",
-    "u_CloudQualityConvective|requires:u_CloudLayerHeaped",
-    "u_CloudLayerSheets",
-    "u_CloudQualityStratiform|requires:u_CloudLayerSheets",
-    "u_CloudLayerMid",
-    "u_CloudQualityMid|requires:u_CloudLayerMid",
-    "u_CloudLayerHigh",
-    "u_CloudQualityHigh|requires:u_CloudLayerHigh",
+    "<group:Quality|requires:CLOUDS_VOLUMETRIC>",
+    "CLOUD_RESOLUTION",
+    "u_CloudTierCumulus",
+    "u_CloudTierStratus",
+    "u_CloudTierNimbostratus",
+    "u_CloudTierAltocumulus",
+    "u_CloudTierCirrus",
     "u_CloudDetailFade",
     "<group:Shadows|requires:CLOUDS_VOLUMETRIC>",
     "CLOUD_SHADOWS",
@@ -1692,11 +1685,14 @@ It uses the foam texture's height map to shift with your view angle instead of l
 sticker. Zero turns it off and skips its cost entirely."""
 
 SSR_WATER_MODE = """
-How reflections on water are drawn.
+What the water surface is.
 
-Off and Highlights keep the simple, cheap water this pack has always had. Traced and High switch \
-to the full water surface: animated waves, real reflections, and glow that feeds into Bloom. Below \
-Traced that whole system is off entirely, not just reduced."""
+Vanilla draws it the way the game does: a flat textured plane, no waves. Shaded switches to this \
+pack's surface, with animated waves, foam, caustics, a sun track and the sky reflected in it. \
+Reflective adds the screen-space reflection on top, so the shore and anything else on screen \
+appears in the water as well as the sky.
+
+Reflective needs Reflections on; without it, it renders as Shaded."""
 
 u_WaveStrength = """
 How rough the open water is.
@@ -2328,11 +2324,10 @@ Whether clouds are marched through as real volumes or drawn as a flat layer.
 On, clouds have thickness: the sun lights their near side, they shade what is under them, and \
 flying into one puts you inside it. It is the single most expensive setting in the pack."""
 
-CLOUD_QUALITY = """
-How many steps the volumetric cloud march takes.
+CLOUD_RESOLUTION = """
+Resolution the cloud volume is marched at: a quarter, a half or three quarters of the screen.
 
-Fast is grainier and cheaper; Ultra holds cloud edges together at a distance. Does nothing while \
-volumetric clouds are off."""
+Applies to every deck at once. Below a half, cloud edges break into blocks."""
 
 u_CloudAltitude = """
 How high the clouds sit, in blocks.
@@ -2356,47 +2351,29 @@ How dark a cloud's shadow on the ground is.
 
 1 is the cloud's own optical depth, so thin cloud shades lightly and overcast shades hard."""
 
-u_CloudLayerHeaped = """
-Heaped clouds: the puffy ones, and the storm towers they grow into.
+u_CloudTierCumulus = """
+The puffy heaped clouds, and the storm towers they grow into.
 
-Off removes them completely and skips their work. They are about a sixth of the cloud cost."""
+Off removes them. Higher tiers resolve their interior and their own shadow more finely, which is
+where heaped cloud reads as solid rather than as fog."""
 
-u_CloudLayerSheets = """
-Flat cloud layers: overcast, rolling banks, and rain sheets.
+u_CloudTierStratus = """
+Flat low cloud: the overcast lid and the rolling banks under it.
 
-Off removes them completely and skips their work. They are about seven tenths of the cloud cost, so
-this is the biggest single saving."""
+Off removes them. A smooth grey sheet is where extra detail shows least, so this is the first tier
+worth dropping."""
 
-u_CloudLayerMid = """
-Mid level cloud: the rippled sheets that sit a few kilometres up.
+u_CloudTierNimbostratus = """
+The deep grey deck that rain and thunder fall out of.
 
-Off removes them completely. About a twentieth of the cloud cost."""
+Off removes it, and storms then fall from open sky. It is the thickest deck in the pack, so it is
+also the one that costs most in bad weather."""
 
-u_CloudLayerHigh = """
-High cloud: thin fibrous streaks and fine ripples near the top of the sky.
+u_CloudTierAltocumulus = """
+Mid level cloud: the rippled sheets a few kilometres up."""
 
-Off removes them completely. About a twelfth of the cloud cost."""
-
-u_CloudQualityConvective = """
-Detail on heaped clouds.
-
-Lower is faster and softens their edges and internal shading. These are where a cloud's own shadow
-reads, so turn this down last."""
-
-u_CloudQualityStratiform = """
-Detail on flat cloud layers.
-
-Lower is faster. A smooth grey sheet is where extra detail shows least, so turn this down first."""
-
-u_CloudQualityMid = """
-Detail on mid level cloud.
-
-Lower is faster, though there is little here to save."""
-
-u_CloudQualityHigh = """
-Detail on high cloud.
-
-Lower is faster. Already coarse by default, since it sits kilometres away."""
+u_CloudTierCirrus = """
+High cloud: thin fibrous streaks and fine ripples near the top of the sky."""
 
 u_CloudDetailFade = """
 How far away cloud detail survives, in chunks.

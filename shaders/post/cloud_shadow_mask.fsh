@@ -78,15 +78,15 @@ void main() {
 
         // Every deck the march draws also casts, and the transmittances multiply. Gated as the
         // march gates its layers, so a deck that draws nothing casts nothing.
-        float heapedOn = plagueCloudLayerSwitch(u_CloudLayerHeaped);
-        float sheetsOn = plagueCloudLayerSwitch(u_CloudLayerSheets);
-        if (heapedOn > 0.0 && stratiform < 1.0) {
+        float cumulusOn = (u_CloudTierCumulus > 0.5 ? 1.0 : 0.0);
+        float rainOn = (u_CloudTierNimbostratus > 0.5 ? 1.0 : 0.0);
+        if (cumulusOn > 0.0 && stratiform < 1.0) {
             shadow *= plagueCloudDeckShadow(fragAbsPos, sunDir, convectiveDeck, syncedTime);
         }
         if (lowSheet > 0.0) {
             shadow *= plagueCloudDeckShadow(fragAbsPos, sunDir, sheetDeck, syncedTime);
         }
-        if (sheetsOn > 0.0 && stratiform > 0.0) {
+        if (rainOn > 0.0 && stratiform > 0.0) {
             shadow *= plagueCloudDeckShadow(fragAbsPos, sunDir, stratiformDeck, syncedTime);
         }
     }

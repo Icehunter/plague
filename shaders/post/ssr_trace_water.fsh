@@ -23,7 +23,7 @@ layout(std140) uniform u_PassParams {
 };
 
 #define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
-#define SSR_WATER_MODE 3 //[0 1 2 3] compile "Water Reflections" {0="Off" 1="Highlights" 2="Traced" 3="High"}
+#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 
 const int WATER_MARCH_SAMPLES = 30;
 const int WATER_MARCH_REFINEMENTS = 8;  // halvings per bracket: residual = bracket / 256

@@ -47,22 +47,25 @@
 // cumulus regardless of weather, for bisecting the weather response against a static sky.
 #define u_CloudWeatherResponse 1.0 //[0.00..1.00 step 0.05] runtime "Weather Response"
 
-// Which layers form, and how much march budget each gets.
+// One tier per deck: what forms, and what step budget it gets. Named by genus rather than by form,
+// so a row states which clouds it owns. Stratus covers the low sheet and its stratocumulus rolls,
+// Cirrus covers cirrus and cirrocumulus, the other three are one genus each.
 //
-// Grouped by where the cost is, not by etage. Measured share of one frame's cloud steps at Ultra
-// (tools/measure_cloud_step_budget.py, eye Y 73): sheets 70%, heaped 17%, high 8%, mid 5%. A flat
-// sheet is smooth, so it loses least per step removed; a heap is where self-shadowing reads.
+// Off is skipped before the march, not faded, so it costs nothing.
 //
-// A layer switched off is skipped before its march, not faded, so it costs nothing.
-#define u_CloudLayerHeaped 1.0 //[0.0..1.0 step 1.0] runtime "Heaped Clouds"
-#define u_CloudLayerSheets 1.0 //[0.0..1.0 step 1.0] runtime "Sheet Clouds"
-#define u_CloudLayerMid 1.0 //[0.0..1.0 step 1.0] runtime "Mid Clouds"
-#define u_CloudLayerHigh 1.0 //[0.0..1.0 step 1.0] runtime "High Clouds"
-
-#define u_CloudQualityConvective 1.00 //[0.25..1.00 step 0.05] runtime "Heaped Cloud Detail"
-#define u_CloudQualityStratiform 1.00 //[0.25..1.00 step 0.05] runtime "Sheet Cloud Detail"
-#define u_CloudQualityMid 1.00 //[0.25..1.00 step 0.05] runtime "Mid Cloud Detail"
-#define u_CloudQualityHigh 1.00 //[0.25..1.00 step 0.05] runtime "High Cloud Detail"
+// Discrete, not a continuous detail slider: PLAGUE_CLOUD_MIN_SLAB_STEPS and the stepCap floor hold
+// any live deck at roughly a third of full cost, so a 0..1 dial promises a linearity the floors
+// forbid. The floors are load-bearing; under them the march undersamples into rays radiating from
+// the deck's vanishing point.
+//
+// A tier sets slab steps, step cap and sun taps for THIS deck (plagueCloudTier* below). March
+// resolution stays global on CLOUD_RESOLUTION: all seven genera march into one target, sorted per
+// ray by first-hit distance, and per-deck targets lose that ordering.
+#define u_CloudTierCumulus 2 //[0 1 2 3] runtime "Cumulus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
+#define u_CloudTierStratus 2 //[0 1 2 3] runtime "Stratus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
+#define u_CloudTierNimbostratus 2 //[0 1 2 3] runtime "Nimbostratus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
+#define u_CloudTierAltocumulus 2 //[0 1 2 3] runtime "Altocumulus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
+#define u_CloudTierCirrus 2 //[0 1 2 3] runtime "Cirrus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
 
 // Distance over which a deck's budget halves again, in chunks, on the ray's own horizontal reach.
 // A deck 30 blocks overhead still runs kilometres sideways, which a vertical metric cannot see.
@@ -199,7 +202,7 @@ struct PlagueCloudDeck {
     float sheetFloor;   // stratiform baseline potential away from any candidate; far negative = none
     float convectiveLift; // moisture's lift on the cellular mask; 0 leaves candidates untouched
     float stepScale;    // multiplies the march's step budget; below 1 for a thin deck
-    float qualityScale; // the player's budget for this deck's group; scales steps, cap and sun taps
+    float tier;        // this deck's own Off/Fast/Balanced/Ultra; sets slab steps, cap and sun taps
     float patchiness;   // how hard a large-scale field gates candidates; 0 fills the sky evenly
     float biomeResponse; // how far a dry column below thins this deck; 0 for decks above the weather
 };
@@ -398,6 +401,7 @@ float plagueCloudLowDeckShift() {
     return u_CloudAltitude - PLAGUE_CLOUD_CUMULUS_BASE;
 }
 
+
 /**
  * The game's own cloud altitude, world blocks: what the low deck is measured from.
  *
@@ -413,6 +417,22 @@ float plagueCloudLowDeckShift() {
  */
 float plagueCloudEngineBase() {
     return u_CameraSkyLight.w > 0.0 ? u_CameraSkyLight.w : PLAGUE_CLOUD_CUMULUS_BASE;
+}
+
+/**
+ * What the mid and high etages multiply their table altitudes by, so Cloud Altitude moves the whole
+ * profile rather than only the low deck.
+ *
+ * A scale, not the low deck's shift: the same blocks added to every etage move cirrus at 1728 by an
+ * amount invisible at the top of the sky. A deeper boundary layer lifts the levels above it in
+ * proportion.
+ *
+ * Measured from the low deck's own resolved base, engine height included, so a mod moving vanilla's
+ * cloud height carries the upper etages with it. Exactly 1.0 at the default.
+ */
+float plagueCloudAltitudeScale() {
+    float lowBase = plagueCloudEngineBase() + plagueCloudLowDeckShift();
+    return max(lowBase, 1.0) / PLAGUE_CLOUD_CUMULUS_BASE;
 }
 
 // Precipitation kinds live in precip_field.glsl and arrive through weather_state.glsl's import.
@@ -525,7 +545,7 @@ PlagueCloudDeck plagueCloudLowStratiformDeck(float moisture, float stability, fl
     deck.footprint = 1.0;
     deck.convectiveLift = 0.0;
     deck.stepScale = 1.0;
-    deck.qualityScale = clamp(u_CloudQualityStratiform, 0.25, 1.0);
+    deck.tier = u_CloudTierStratus;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
 
@@ -664,7 +684,7 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
                               PLAGUE_CLOUD_MOISTURE_LIFT * lowConvective, condensation);
     deck.tau *= mix(PLAGUE_CLOUD_DRY_TAU_FLOOR, 1.0, condensation);
     deck.stepScale = 1.0;
-    deck.qualityScale = clamp(u_CloudQualityConvective, 0.25, 1.0);
+    deck.tier = u_CloudTierCumulus;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
 
@@ -706,7 +726,7 @@ PlagueCloudDeck plagueCloudStratocumulusDeck(float amountMask, float snowWeight)
     deck.footprint = 1.0;
     deck.convectiveLift = 0.0;
     deck.stepScale = 1.0;
-    deck.qualityScale = clamp(u_CloudQualityStratiform, 0.25, 1.0);
+    deck.tier = u_CloudTierStratus;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
     deck.population = amount <= 0.0
@@ -729,14 +749,16 @@ PlagueCloudDeck plagueCloudStratocumulusDeck(float amountMask, float snowWeight)
  */
 PlagueCloudDeck plagueCloudUpperDeck(float base, float depth, float cell, float shear, float tau,
                                      float cover, float mask, float stepScale,
-                                     float qualityScale) {
+                                     float tier) {
     PlagueCloudDeck deck;
     float physicalScale = pow(max(u_CloudScale, 0.05) / PLAGUE_CLOUD_REFERENCE_SCALE,
                               PLAGUE_CLOUD_SIZE_EXPONENT);
     float amount = max(u_CloudAmount, 0.0);
     float m = clamp(mask, 0.0, 1.0);
 
-    deck.base = base;
+    // Lifted by the low deck's own displacement, so Cloud Altitude moves the whole profile and
+    // cumulus cannot rise past cirrus.
+    deck.base = base * plagueCloudAltitudeScale();
     // Depth is the row's own, unscaled. Cloud Size grows a cumulus by raising its density
     // isosurface through a deeper slab, which is what a heap does; a 400 m sheet has no vertical
     // structure to reveal, so the same scale just stretches it into a wall.
@@ -751,11 +773,12 @@ PlagueCloudDeck plagueCloudUpperDeck(float base, float depth, float cell, float 
     deck.footprint = 1.0;
     deck.convectiveLift = 0.0;
     deck.stepScale = stepScale;
-    deck.qualityScale = clamp(qualityScale, 0.25, 1.0);
-    // Patchy, and strongly so: these genera occupy part of the sky, not all of it. 0.30 is a third
-    // of the field's own 0.479 range, enough that a low patch takes its whole neighbourhood under
-    // the cutoff.
-    deck.patchiness = 0.30;
+    deck.tier = tier;
+    // Patchy, and strongly so: these genera occupy part of the sky, not all of it. Picked off plan
+    // views of the live candidate field at the altocumulus row: 0.30 is an even stipple with no open
+    // sky, 0.55 opens banks with gaps between them, 0.80 leaves isolated shreds. Amplitude does
+    // nothing without a patch period sized to the visible deck (PLAGUE_CLOUD_PATCH_BLOCKS).
+    deck.patchiness = 0.55;
     deck.biomeResponse = 0.0;
     // Candidates, not a layer. Cirrus is fibrous streaks and the two cumuliform genera are fields
     // of cells; a sheet floor makes any of them a closed overcast covering the whole sky. Only the
@@ -828,7 +851,7 @@ PlagueCloudDeck plagueCloudNimbostratusDeck(float stratiformWeight, float thunde
                           PLAGUE_CLOUD_SHEET_FLOOR, stratiformWeight);
     deck.convectiveLift = 0.0;   // a rain sheet is not convection
     deck.stepScale = 1.0;
-    deck.qualityScale = clamp(u_CloudQualityStratiform, 0.25, 1.0);
+    deck.tier = u_CloudTierNimbostratus;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
 
@@ -876,16 +899,47 @@ float plagueCloudTransitionDecks(float rainFactor, float thunderFactor, float we
 // warm front, so it arrives on a spell that is only beginning to moisten and stays through the rest;
 // altocumulus needs the middle levels wet, which happens later; cirrocumulus needs the high levels
 // unstable as well, which is why it is the rarest of the three.
-const float PLAGUE_CLOUD_CIRRUS_ONSET = 0.30;
-const float PLAGUE_CLOUD_CIRRUS_FULL = 0.55;
-const float PLAGUE_CLOUD_ALTOCUMULUS_ONSET = 0.50;
-const float PLAGUE_CLOUD_ALTOCUMULUS_FULL = 0.72;
+//
+// Placed against the spell's own measured distribution, as PLAGUE_CLOUD_SPELL_ONSET is, not against
+// a nominal 0..1: humidSpell occupies 0.37..0.76 between its 10th and 90th percentiles over 4000
+// in-game days, median 0.572, p60 0.612. An onset under that range can never be un-met.
+//
+// 0.55 sits a little under the median, 0.60 at the 60th percentile, keeping the front's ordering
+// with a gap between them. On a clear night that is cirrus present 47%, altocumulus 36%, and 68% of
+// the sky clear to the stars. Spans unchanged.
+const float PLAGUE_CLOUD_CIRRUS_ONSET = 0.55;
+const float PLAGUE_CLOUD_CIRRUS_FULL = 0.80;
+const float PLAGUE_CLOUD_ALTOCUMULUS_ONSET = 0.60;
+const float PLAGUE_CLOUD_ALTOCUMULUS_FULL = 0.82;
 const float PLAGUE_CLOUD_CIRROCUMULUS_ONSET = 0.66;
 const float PLAGUE_CLOUD_CIRROCUMULUS_FULL = 0.85;
 
 /** A layer's on/off switch, as a 0/1 multiplier on its mask. */
 float plagueCloudLayerSwitch(float option) {
     return option > 0.5 ? 1.0 : 0.0;
+}
+
+// --- Per-deck step budget -----------------------------------------------------------------------
+//
+// The three numbers a tier owns, matching what the global CLOUD_RESOLUTION arms used to hand every
+// deck at once. Compared against half-integers so a float option that arrives as 1.999 or 2.001
+// still lands on the tier the player chose.
+//
+// Off returns Fast's budget rather than zero: an off deck is never marched, and zero here would
+// divide by zero in step sizing if that invariant broke.
+float plagueCloudTierSlabSteps(float tier) {
+    return tier < 1.5 ? 2.0 : (tier < 2.5 ? 6.0 : 12.0);
+}
+
+// Only Fast shortens the ray's reach. Past 64 the extra steps land beyond 256 blocks, where a cloud
+// has no detail left to resolve (tools/measure_cloud_step_budget.py).
+float plagueCloudTierStepCap(float tier) {
+    return tier < 1.5 ? 32.0 : 64.0;
+}
+
+// Self-shadowing march, run per lit sample, so this scales with coverage rather than with sky area.
+int plagueCloudTierSunTaps(float tier) {
+    return tier < 1.5 ? 1 : (tier < 2.5 ? 2 : 3);
 }
 
 /**
@@ -904,8 +958,8 @@ void plagueCloudUpperDecks(out PlagueCloudDeck cirrus, out PlagueCloudDeck cirro
     PlagueWeatherState w = plagueCloudWeather();
     float humid = clamp(w.humidSpell, 0.0, 1.0);
 
-    float highOn = plagueCloudLayerSwitch(u_CloudLayerHigh);
-    float midOn = plagueCloudLayerSwitch(u_CloudLayerMid);
+    float highOn = u_CloudTierCirrus > 0.5 ? 1.0 : 0.0;
+    float midOn = u_CloudTierAltocumulus > 0.5 ? 1.0 : 0.0;
     masks.x = smoothstep(PLAGUE_CLOUD_CIRRUS_ONSET, PLAGUE_CLOUD_CIRRUS_FULL, humid) * highOn;
     masks.y = smoothstep(PLAGUE_CLOUD_CIRROCUMULUS_ONSET, PLAGUE_CLOUD_CIRROCUMULUS_FULL, humid)
             * w.unstableSpell * highOn;
@@ -916,7 +970,7 @@ void plagueCloudUpperDecks(out PlagueCloudDeck cirrus, out PlagueCloudDeck cirro
                                   PLAGUE_CLOUD_CIRRUS_CELL, PLAGUE_CLOUD_CIRRUS_SHEAR,
                                   PLAGUE_CLOUD_CIRRUS_TAU, PLAGUE_CLOUD_CIRRUS_COVER,
                                   masks.x, PLAGUE_CLOUD_THIN_STEP_SCALE,
-                                  u_CloudQualityHigh);
+                                  u_CloudTierCirrus);
     cirrocumulus = plagueCloudUpperDeck(PLAGUE_CLOUD_CIRROCUMULUS_BASE,
                                         PLAGUE_CLOUD_CIRROCUMULUS_DEPTH,
                                         PLAGUE_CLOUD_CIRROCUMULUS_CELL,
@@ -924,7 +978,7 @@ void plagueCloudUpperDecks(out PlagueCloudDeck cirrus, out PlagueCloudDeck cirro
                                         PLAGUE_CLOUD_CIRROCUMULUS_TAU,
                                         PLAGUE_CLOUD_CIRROCUMULUS_COVER,
                                         masks.y, PLAGUE_CLOUD_THIN_STEP_SCALE,
-                                        u_CloudQualityHigh);
+                                        u_CloudTierCirrus);
     altocumulus = plagueCloudUpperDeck(PLAGUE_CLOUD_ALTOCUMULUS_BASE,
                                         PLAGUE_CLOUD_ALTOCUMULUS_DEPTH,
                                         PLAGUE_CLOUD_ALTOCUMULUS_CELL,
@@ -932,7 +986,7 @@ void plagueCloudUpperDecks(out PlagueCloudDeck cirrus, out PlagueCloudDeck cirro
                                         PLAGUE_CLOUD_ALTOCUMULUS_TAU,
                                         PLAGUE_CLOUD_ALTOCUMULUS_COVER,
                                         masks.z, PLAGUE_CLOUD_MID_STEP_SCALE,
-                                        u_CloudQualityMid);
+                                        u_CloudTierAltocumulus);
 }
 
 /**
@@ -950,7 +1004,7 @@ float plagueCloudStratocumulus(float snowWeight, out PlagueCloudDeck deck) {
     float form = smoothstep(PLAGUE_CLOUD_SHEET_FORM_SC, PLAGUE_CLOUD_SHEET_FORM_ST,
                             plagueCloudAirMassStability(w));
     float mask = clamp(moist * stable, 0.0, 1.0) * (1.0 - form);
-    mask *= plagueCloudLayerSwitch(u_CloudLayerSheets);
+    mask *= u_CloudTierStratus > 0.5 ? 1.0 : 0.0;
     deck = plagueCloudStratocumulusDeck(mask, snowWeight);
     return mask;
 }
@@ -962,7 +1016,7 @@ float plagueCloudLowStratiform(float snowWeight, out PlagueCloudDeck sheet) {
     float stable = mix(plagueCloudStability(weather), clamp(u_CloudStability, 0.0, 1.0), hold);
     sheet = plagueCloudLowStratiformDeck(moist, stable, plagueCloudAirMassStability(weather),
                                          snowWeight);
-    return moist * stable * plagueCloudLayerSwitch(u_CloudLayerSheets);
+    return moist * stable * (u_CloudTierStratus > 0.5 ? 1.0 : 0.0);
 }
 
 #endif // PLAGUE_CLOUD_TYPES

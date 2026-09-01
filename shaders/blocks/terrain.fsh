@@ -34,7 +34,7 @@ const float PLAGUE_ATLAS_GHOST_DIST = 32.0;
 // Read BY NAME by the engine (gates the water pre-pass on SSR_WATER_MODE/SSR_QUALITY) — a contract,
 // not a pack choice. Every declaring file must match byte-identically.
 #define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
-#define SSR_WATER_MODE 3 //[0 1 2 3] compile "Water Reflections" {0="Off" 1="Highlights" 2="Traced" 3="High"}
+#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 
 // Wave complexity is fixed at compile time; only strength (u_WaveStrength, bridged below) is a runtime scalar.
 #define PLAGUE_WATER_INTERACTION 1 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Quality" 2="Performance"}
@@ -746,9 +746,10 @@ void main() {
 #elif !defined(USE_WATER_PREPASS)
     // Forward TRANSLUCENT arm. Water draws here by default (texture * tint * lightmap over the
     // tonemapped frame) unless the deferred chain owns it, in which case this must NOT also draw it.
-    // The gate below must match the graph's condition exactly — testing SSR_WATER_MODE alone would
-    // discard water here even when SSR_QUALITY == 0 has switched the replacement off, deleting it.
-#if SSR_WATER_MODE > 1 && SSR_QUALITY != 0
+    // The gate below must match the graph's condition for water_composite exactly, or both arms
+    // draw water or neither does. That is SSR_WATER_MODE alone, the same gate the engine puts its
+    // water pre-pass behind: SSR_QUALITY is the opaque reflection option and does not own water.
+#if SSR_WATER_MODE > 0
     if (isWater) {
         discard;
     }

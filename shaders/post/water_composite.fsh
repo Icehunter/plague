@@ -70,7 +70,7 @@ layout(std140) uniform u_PassParams {
 };
 
 #define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
-#define SSR_WATER_MODE 3 //[0 1 2 3] compile "Water Reflections" {0="Off" 1="Highlights" 2="Traced" 3="High"}
+#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 #define PLAGUE_WATER_REFLECTION_DEBUG 0 //[0 1 2 3 4] compile "Water Reflection View" {0="Off" 1="Roughness" 2="Trace Confidence" 3="Fallback Sky" 4="Source Mix"}
 #define WATER_FOAM //[] compile "Shoreline Foam"
 // Must match terrain.vsh/terrain.fsh byte-identically: the settled-surface classification below
@@ -275,7 +275,13 @@ void main() {
         return;
     }
 
+    // Reflective only. Shaded draws the whole surface without a mirror: zero confidence here
+    // leaves body, fog, glint and foam to shade it, so water keeps its waves and its sun track.
+#if SSR_WATER_MODE > 1 && SSR_QUALITY != 0
     vec4 reflSample = texture(u_Input2, texCoord);
+#else
+    vec4 reflSample = vec4(0.0);
+#endif
 
     // Shared day/night lighting model, built once before the reflection fallback and body use it,
     // so water is lit consistently with the sky instead of a fixed tint.
@@ -334,6 +340,8 @@ void main() {
 
     // Real screen-space occlusion raymarch (glint_occlusion.fsh) against opaque depth. The air-side
     // glitter keeps the active-light lane; underwater celestial lobes select their own direction.
+    // Unguarded: glint_occlusion is a depth raymarch, not a reflection, and runs wherever this pass
+    // does. The sun track belongs to the surface, so it survives every tier above Vanilla.
     vec3 glintVisibility = texture(u_Input6, texCoord).rgb;
     float glintShadowVis = glintVisibility.r;
     float uwSunShadowVis = glintVisibility.g;
@@ -346,6 +354,10 @@ void main() {
     vec2 environmentUv = plagueWaterEnvironmentUv(
             reflectDir, trueSunDir, vec3(0.0, 1.0, 0.0));
     float environmentLod = plagueWaterEnvironmentLod(waterRoughness);
+    // The sky in the water, and the only reflection Shaded has. Unguarded: this is what makes a
+    // surface read as water rather than as a black hole, and the probe it samples is a fixed
+    // 128-square render that does not depend on opaque reflections. The LOD is chosen by the
+    // surface's own roughness, so calm water mirrors and chop diffuses, from Shaded up.
     vec3 environmentFallback = max(
             textureLod(u_Input11, environmentUv, environmentLod).rgb, vec3(0.0))
             * SKY_FALLBACK_DAMP;

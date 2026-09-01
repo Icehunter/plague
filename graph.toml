@@ -306,12 +306,20 @@ outputs = ["ssr"]
 # Must be LAST in the reflection chain: seeds from `ssr`, which both tiers finish writing above.
 # Gated pass reading an ungated target (`ssr`) is always safe — the opposite direction gate-
 # consistency forbids.
+#
+# UNGATED, and it must stay that way. A MIPCHAIN target is allocated by its own pass, not by its
+# declaration: GraphInputResolver looks in the mipchain map first and the target registry second,
+# and `ssrPrefilter` is in neither once this pass is gated off. `resolve` reads it unconditionally
+# (positional input 11), so at SSR_QUALITY == 0 that read fails; three failed frames and the runner
+# disables `resolve` for the rest of the session: no albedo, no land, no sky, no water normals.
+# Ungating the target declaration is enough for a plain target (`ssao`, `ssr`) and does nothing
+# here. The seed is unwritten at SSR_QUALITY == 0 and never sampled: the resolve's own
+# `#if SSR_QUALITY != 0` skips it.
 [[pass]]
 name = "ssr_prefilter"
 type = "mipchain"
 shader = "shaders/post/ssr_prefilter_downsample.fsh"
 target = "ssrPrefilter"
-enabled_if = "SSR_QUALITY != 0"
 inputs = ["ssr"]
 outputs = []
 
@@ -450,7 +458,7 @@ enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
 format = "rgba16f"
 scale = 1.0
 history = true
-enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+enabled_if = "SSR_WATER_MODE > 0"
 
 # Fixed-size graph images containing Plague's directional sky radiance and its filtered hierarchy.
 # They are independent of resource-pack texture resolution and never enter the pack texture loader.
@@ -459,14 +467,14 @@ format = "rgba16f"
 width = 128
 height = 128
 filter = "linear"
-enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+enabled_if = "SSR_WATER_MODE > 0"
 
 [targets.waterEnvironment]
 format = "rgba16f"
 width = 128
 height = 128
 filter = "linear"
-enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+enabled_if = "SSR_WATER_MODE > 0"
 
 # Exists to break a validator cycle: water_composite can't blend into sceneHdr, since the trace reads
 # sceneHdr and GraphValidator treats any reader as depending on ALL writers of a target.
@@ -519,20 +527,20 @@ format = "rgba16f"
 scale = 0.5
 filter = "linear"
 storage = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY != 2"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
 
 [targets.cloudsVolumeDistance]
 format = "r32f"
 scale = 0.5
 filter = "linear"
 storage = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY != 2"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
 
 [[pass]]
 name = "clouds_march_volume"
 type = "compute"
 shader = "shaders/compute/clouds_march_volume.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY != 2"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 # dispatch above is an unused placeholder: local_size makes the engine derive real group counts
@@ -545,11 +553,45 @@ outputs = ["cloudsVolumeCompute", "cloudsVolumeDistance"]
 name = "clouds_composite"
 type = "fullscreen"
 shader = "shaders/post/clouds_composite.fsh"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY != 2"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
 blend = "translucent"
 # sceneHdr absent from inputs: blend-only write (see water_composite for the same convention).
 # builtin.waterDepth appended so the underwater veil sizes its in-water leg correctly.
 inputs = ["cloudsVolumeCompute", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistance"]
+outputs = ["sceneHdr"]
+
+# 0.25: a quarter of Half's pixel count, ~0.18x its work. Cloud edges soften, which is the trade.
+[targets.cloudsVolumeComputeQuarter]
+format = "rgba16f"
+scale = 0.25
+filter = "linear"
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsVolumeDistanceQuarter]
+format = "r32f"
+scale = 0.25
+filter = "linear"
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[[pass]]
+name = "clouds_march_volume_quarter"
+type = "compute"
+shader = "shaders/compute/clouds_march_volume.comp"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap"]
+outputs = ["cloudsVolumeComputeQuarter", "cloudsVolumeDistanceQuarter"]
+
+[[pass]]
+name = "clouds_composite_quarter"
+type = "fullscreen"
+shader = "shaders/post/clouds_composite.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+blend = "translucent"
+inputs = ["cloudsVolumeComputeQuarter", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistanceQuarter"]
 outputs = ["sceneHdr"]
 
 # 0.75, not 1.0. March resolution is this tier's largest cost term: 4x Balanced's pixels against
@@ -560,20 +602,20 @@ format = "rgba16f"
 scale = 0.75
 filter = "linear"
 storage = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY == 2"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 
 [targets.cloudsVolumeDistanceFull]
 format = "r32f"
 scale = 0.75
 filter = "linear"
 storage = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY == 2"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 
 [[pass]]
 name = "clouds_march_volume_full"
 type = "compute"
 shader = "shaders/compute/clouds_march_volume.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY == 2"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap"]
@@ -583,7 +625,7 @@ outputs = ["cloudsVolumeComputeFull", "cloudsVolumeDistanceFull"]
 name = "clouds_composite_full"
 type = "fullscreen"
 shader = "shaders/post/clouds_composite.fsh"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_QUALITY == 2"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 blend = "translucent"
 # builtin.waterDepth: same underwater-veil input as the half-res composite above.
 # cloudsVolumeComputeFull, not cloudsRawFull: this tier reads the compute march's targets too.
@@ -603,18 +645,22 @@ outputs = ["sceneHdrComposited"]
 name = "water_environment_seed"
 type = "fullscreen"
 shader = "shaders/post/water_environment.fsh"
-enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+enabled_if = "SSR_WATER_MODE > 0"
 # builtin.noise: the cloud imposter's erosion lattice. The probe now carries the cloud deck, so
 # a reflected sky is no longer clear under an overcast one. See the imposter note in the shader.
 inputs = ["builtin.noise"]
 outputs = ["waterEnvironmentSeed"]
 
 [[pass]]
+# UNGATED past SSR_QUALITY, like ssr_prefilter and for the same reason: a MIPCHAIN target is
+# allocated by its own pass, so widening only [targets.waterEnvironment] leaves water_composite
+# reading a target that does not exist. It downsamples an unwritten seed at Reflections Off, which
+# water_composite's own SSR_QUALITY arm never samples.
 name = "water_environment_mips"
 type = "mipchain"
 shader = "shaders/post/water_environment_downsample.fsh"
 target = "waterEnvironment"
-enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+enabled_if = "SSR_WATER_MODE > 0"
 inputs = ["waterEnvironmentSeed"]
 outputs = []
 
@@ -645,7 +691,7 @@ outputs = ["ssrWater"]
 [targets.glintOcclusion]
 format = "rgba16f"
 scale = 1.0
-enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+enabled_if = "SSR_WATER_MODE > 0"
 
 # Screen-space raymarch toward the light direction (same family as ssr_trace_water, coarse-march
 # half only — no bisection/backface test, a binary answer needs neither). Runs before
@@ -655,7 +701,7 @@ enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
 name = "glint_occlusion"
 type = "fullscreen"
 shader = "shaders/post/glint_occlusion.fsh"
-enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+enabled_if = "SSR_WATER_MODE > 0"
 inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth"]
 outputs = ["glintOcclusion"]
 
@@ -689,7 +735,12 @@ outputs = ["waterVolumeScatter"]
 name = "water_composite"
 type = "fullscreen"
 shader = "shaders/post/water_composite.fsh"
-enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+# The ENGINE's own pre-pass gate, WaterSurfaceManager.shouldRenderPrepass, which reads
+# SSR_WATER_MODE alone. This pass shades the water surface: waves, normals, foam, caustics, body
+# colour, glint, distance fog, the Snell-window discs. SSR_QUALITY, the OPAQUE reflection option,
+# must not decide whether water has waves. Must match terrain.fsh's forward-arm discard
+# exactly, or both draw water or neither does; verify_graph_resolves.py pins the pair.
+enabled_if = "SSR_WATER_MODE > 0"
 blend = "translucent"
 inputs = ["builtin.waterNormal", "builtin.waterDepth", "ssrWater", "builtin.depth", "builtin.noise", "causticsTexture", "glintOcclusion", "builtin.celestials", "foamTexture", "foamNormalTexture", "foamHeightTexture", "waterEnvironment", "moonAlbedo", "moonNormal"]
 outputs = ["sceneHdrComposited"]

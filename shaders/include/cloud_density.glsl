@@ -94,12 +94,20 @@ const float PLAGUE_CLOUD_SIZE_DENSITY_GAIN = 0.24;
 // varies thickness over. Without it a closed sheet is a flat lid over the volume's fine stipple.
 const float PLAGUE_CLOUD_SHEET_SCALE = 32.0;
 
-// Scale of the field that decides WHERE a genus is at all, in deck cells. The candidate lattice is
+// Scale of the field that decides WHERE a genus is at all, in WORLD BLOCKS. The candidate lattice is
 // uniform, so without this every genus fills the whole sky at whatever density its population sets:
 // cirrocumulus puts 901 cells in a 512-block patch and a fifth of them active covers everything.
-// Real cirrus and altocumulus sit in patches with clear sky between, on a scale far larger than
-// their own cells. 24 cells is that scale for the finest genus and stays large for the coarsest.
-const float PLAGUE_CLOUD_PATCH_SCALE = 24.0;
+//
+// One distance for every genus: patchiness belongs to the air mass. In blocks rather than deck
+// cells, or the patch shrinks with the genus and the finest-celled decks get the smallest patches.
+//
+// Sized against a deck's VISIBLE extent, not the cloud draw distance. Altocumulus sits 768 blocks
+// up, so by 15 degrees elevation it is 2866 blocks away and nearly all of it is nearer; a period
+// near the 4000-block draw distance exceeds the whole visible deck and reads as no patchiness at
+// all. 1200 puts two to three banks and their gaps across the sky. Picked off plan views of the
+// live candidate field over that visible extent: 600 breaks into clumps too small to be masses,
+// 1000-1500 reads as banks.
+const float PLAGUE_CLOUD_PATCH_BLOCKS = 1200.0;
 // Amplitude, against a floor whose whole range is 0.479 (early-out to SHEET_FLOOR). At 0.20 a
 // mid-strength sheet opens real holes while a full one only thins: breaking up versus overcast.
 const float PLAGUE_CLOUD_SHEET_VARIATION = 0.20;
@@ -183,8 +191,10 @@ float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudD
     // cells evenly. Costs one fbm on decks that ask for it and nothing on decks that do not.
     float patchGate = 0.0;
     if (deck.patchiness > 0.0) {
+        // deck.cell takes cell-normalised allocationQ back to world blocks. Shear and drift ride
+        // along, elongating a patch downwind and advecting it.
         patchGate = deck.patchiness
-                  * (1.0 - plagueSkyFbm(allocationQ / PLAGUE_CLOUD_PATCH_SCALE, 2));
+                  * (1.0 - plagueSkyFbm(allocationQ * deck.cell / PLAGUE_CLOUD_PATCH_BLOCKS, 2));
     }
 
     float bestPotential = -1e6;
