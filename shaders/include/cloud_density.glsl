@@ -474,6 +474,23 @@ float plagueCloudErosion(vec3 p, float h) {
 }
 
 /**
+ * World XZ displaced downwind in proportion to height inside the deck: the base trails the top by
+ * `deck.fallShear` cells across the full depth, centred so mid-height keeps its place and the layer
+ * leans rather than sliding.
+ *
+ * Applied before BOTH the allocation and sample coordinates, never just the sample one. The
+ * allocation coordinate is what decides where a candidate sits at all, so shearing only the sample
+ * coordinate perturbs the noise inside a blob and leaves the blob itself upright.
+ */
+vec2 plagueCloudFallShearXZ(vec3 worldPos, PlagueCloudDeck deck) {
+    if (deck.fallShear <= 0.0) {
+        return worldPos.xz;
+    }
+    float h = clamp((worldPos.y - deck.base) / max(deck.depth, 1e-3), 0.0, 1.0);
+    return worldPos.xz + PLAGUE_CLOUD_WIND_UNIT * (deck.fallShear * deck.cell * (h - 0.5));
+}
+
+/**
  * NORMALISED density at a world position, 0..1. The whole three-factor field. The march turns this
  * into an extinction coefficient by multiplying by `tau / depth` (the genus's vertical optical depth
  * over its own thickness), which is why nothing in this file needs an extinction constant of its own.
@@ -488,14 +505,15 @@ float plagueCloudErosion(vec3 p, float h) {
  * plagueCloudBaseShape.
  */
 float plagueCloudDensityAt(vec3 worldPos, PlagueCloudDeck deck, vec2 drift) {
-    vec2 allocationQ = plagueCloudAllocationCoord(worldPos.xz, deck.cell, deck.shear, drift);
+    vec2 shearedXZ = plagueCloudFallShearXZ(worldPos, deck);
+    vec2 allocationQ = plagueCloudAllocationCoord(shearedXZ, deck.cell, deck.shear, drift);
     float ownerH;
     float potential = plagueCloudCandidatePotential(allocationQ, worldPos.y, deck, ownerH);
     if (potential <= deck.cut - PLAGUE_CLOUD_FIELD_TOP) {
         return 0.0;
     }
 
-    vec2 q = plagueCloudSampleCoord(worldPos.xz, deck.cell, deck.shear, drift);
+    vec2 q = plagueCloudSampleCoord(shearedXZ, deck.cell, deck.shear, drift);
     // Absolute height above the shared reference base keeps the volume phase fixed while ownerH
     // supplies each candidate's independent locally-flat base and vertical morphology.
     float noiseY = (worldPos.y - deck.base) / plagueCloudHeightRef(deck);
@@ -527,13 +545,14 @@ float plagueCloudDensityAt(vec3 worldPos, PlagueCloudDeck deck, vec2 drift) {
  * smoother field.
  */
 float plagueCloudDensityCoarseIn(vec3 worldPos, PlagueCloudDeck deck, vec2 drift) {
-    vec2 allocationQ = plagueCloudAllocationCoord(worldPos.xz, deck.cell, deck.shear, drift);
+    vec2 shearedXZ = plagueCloudFallShearXZ(worldPos, deck);
+    vec2 allocationQ = plagueCloudAllocationCoord(shearedXZ, deck.cell, deck.shear, drift);
     float ownerH;
     float potential = plagueCloudCandidatePotential(allocationQ, worldPos.y, deck, ownerH);
     if (potential <= deck.cut - PLAGUE_CLOUD_FIELD_TOP) {
         return 0.0;
     }
-    vec2 q = plagueCloudSampleCoord(worldPos.xz, deck.cell, deck.shear, drift);
+    vec2 q = plagueCloudSampleCoord(shearedXZ, deck.cell, deck.shear, drift);
     float noiseY = (worldPos.y - deck.base) / plagueCloudHeightRef(deck);
     float baseShape = plagueCloudBaseShape(vec3(q.x, noiseY, q.y), deck);
     return plagueCloudCoverage(baseShape, deck, potential);
