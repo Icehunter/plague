@@ -204,6 +204,7 @@ struct PlagueCloudDeck {
     float stepScale;    // multiplies the march's step budget; below 1 for a thin deck
     float tier;        // this deck's own Off/Fast/Balanced/Ultra; sets slab steps, cap and sun taps
     float fallShear;   // downwind lean of the base against the top, in cells across the full depth
+    float axisSwing;   // radians the shear axis may turn from the wind; 0 pins it to the wind
     float patchiness;   // how hard a large-scale field gates candidates; 0 fills the sky evenly
     float biomeResponse; // how far a dry column below thins this deck; 0 for decks above the weather
 };
@@ -296,6 +297,13 @@ const float PLAGUE_CLOUD_CIRRUS_COVER       =    0.2500;   // 2 oktas
 // and 25 as streaks, with occupied area moving only 13.1% to 12.0%, so it restructures the deck
 // rather than thinning it.
 const float PLAGUE_CLOUD_CIRRUS_FALL_SHEAR  =   25.0000;
+// How far the shear axis may turn from the prevailing wind, radians. deck.shear elongates along one
+// global vector, so without this every streak in the world is parallel. The axis turns, not the
+// coordinate: rotating a coordinate displaces a point by |p| times the angle and tears a
+// world-anchored field.
+// 45 degrees off plan views of the live candidate field: 15 is one uniform rotation, 30 bends
+// slightly, 45 gives the curved fibrous bands of a cirrus sky, occupied area 26.2% to 21.7%.
+const float PLAGUE_CLOUD_CIRRUS_AXIS_SWING  =    0.7854;   // pi/4
 
 // Cirrocumulus, high deck, ice
 const float PLAGUE_CLOUD_CIRROCUMULUS_BASE  =   1344.00;   // 7000 m
@@ -558,6 +566,7 @@ PlagueCloudDeck plagueCloudLowStratiformDeck(float moisture, float stability, fl
     deck.convectiveLift = 0.0;
     deck.stepScale = 1.0;
     deck.fallShear = 0.0;   // only ice falling from a generating head trails
+    deck.axisSwing = 0.0;   // only a fibrous deck wanders off the wind
     deck.tier = u_CloudTierStratus;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
@@ -698,6 +707,7 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
     deck.tau *= mix(PLAGUE_CLOUD_DRY_TAU_FLOOR, 1.0, condensation);
     deck.stepScale = 1.0;
     deck.fallShear = 0.0;   // only ice falling from a generating head trails
+    deck.axisSwing = 0.0;   // only a fibrous deck wanders off the wind
     deck.tier = u_CloudTierCumulus;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
@@ -741,6 +751,7 @@ PlagueCloudDeck plagueCloudStratocumulusDeck(float amountMask, float snowWeight)
     deck.convectiveLift = 0.0;
     deck.stepScale = 1.0;
     deck.fallShear = 0.0;   // only ice falling from a generating head trails
+    deck.axisSwing = 0.0;   // only a fibrous deck wanders off the wind
     deck.tier = u_CloudTierStratus;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
@@ -764,7 +775,7 @@ PlagueCloudDeck plagueCloudStratocumulusDeck(float amountMask, float snowWeight)
  */
 PlagueCloudDeck plagueCloudUpperDeck(float base, float depth, float cell, float shear, float tau,
                                      float cover, float mask, float stepScale, float fallShear,
-                                     float tier) {
+                                     float axisSwing, float tier) {
     PlagueCloudDeck deck;
     float physicalScale = pow(max(u_CloudScale, 0.05) / PLAGUE_CLOUD_REFERENCE_SCALE,
                               PLAGUE_CLOUD_SIZE_EXPONENT);
@@ -789,6 +800,7 @@ PlagueCloudDeck plagueCloudUpperDeck(float base, float depth, float cell, float 
     deck.convectiveLift = 0.0;
     deck.stepScale = stepScale;
     deck.fallShear = fallShear;
+    deck.axisSwing = axisSwing;
     deck.tier = tier;
     // Patchy, and strongly so: these genera occupy part of the sky, not all of it. Picked off plan
     // views of the live candidate field at the altocumulus row: 0.30 is an even stipple with no open
@@ -868,6 +880,7 @@ PlagueCloudDeck plagueCloudNimbostratusDeck(float stratiformWeight, float thunde
     deck.convectiveLift = 0.0;   // a rain sheet is not convection
     deck.stepScale = 1.0;
     deck.fallShear = 0.0;   // only ice falling from a generating head trails
+    deck.axisSwing = 0.0;   // only a fibrous deck wanders off the wind
     deck.tier = u_CloudTierNimbostratus;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
@@ -987,7 +1000,8 @@ void plagueCloudUpperDecks(out PlagueCloudDeck cirrus, out PlagueCloudDeck cirro
                                   PLAGUE_CLOUD_CIRRUS_CELL, PLAGUE_CLOUD_CIRRUS_SHEAR,
                                   PLAGUE_CLOUD_CIRRUS_TAU, PLAGUE_CLOUD_CIRRUS_COVER,
                                   masks.x, PLAGUE_CLOUD_THIN_STEP_SCALE,
-                                  PLAGUE_CLOUD_CIRRUS_FALL_SHEAR, u_CloudTierCirrus);
+                                  PLAGUE_CLOUD_CIRRUS_FALL_SHEAR,
+                                  PLAGUE_CLOUD_CIRRUS_AXIS_SWING, u_CloudTierCirrus);
     cirrocumulus = plagueCloudUpperDeck(PLAGUE_CLOUD_CIRROCUMULUS_BASE,
                                         PLAGUE_CLOUD_CIRROCUMULUS_DEPTH,
                                         PLAGUE_CLOUD_CIRROCUMULUS_CELL,
@@ -995,7 +1009,7 @@ void plagueCloudUpperDecks(out PlagueCloudDeck cirrus, out PlagueCloudDeck cirro
                                         PLAGUE_CLOUD_CIRROCUMULUS_TAU,
                                         PLAGUE_CLOUD_CIRROCUMULUS_COVER,
                                         masks.y, PLAGUE_CLOUD_THIN_STEP_SCALE,
-                                        0.0, u_CloudTierCirrus);
+                                        0.0, 0.0, u_CloudTierCirrus);
     altocumulus = plagueCloudUpperDeck(PLAGUE_CLOUD_ALTOCUMULUS_BASE,
                                         PLAGUE_CLOUD_ALTOCUMULUS_DEPTH,
                                         PLAGUE_CLOUD_ALTOCUMULUS_CELL,
@@ -1003,7 +1017,7 @@ void plagueCloudUpperDecks(out PlagueCloudDeck cirrus, out PlagueCloudDeck cirro
                                         PLAGUE_CLOUD_ALTOCUMULUS_TAU,
                                         PLAGUE_CLOUD_ALTOCUMULUS_COVER,
                                         masks.z, PLAGUE_CLOUD_MID_STEP_SCALE,
-                                        0.0, u_CloudTierAltocumulus);
+                                        0.0, 0.0, u_CloudTierAltocumulus);
 }
 
 /**

@@ -40,16 +40,38 @@ vec2 plagueCloudDrift(PlagueCloudDeck deck, float syncedTime) {
  * cells per cycle decorrelates repeats far enough apart to break the Moire pattern while barely
  * moving within any one cell, leaving a single cloud's own silhouette untouched.
  */
-vec2 plagueCloudAllocationCoord(vec2 worldXZ, float cell, float shear, vec2 drift) {
+// Distance over which the shear axis turns, world blocks. Cirrus sits 1728 blocks up, so 6448 away
+// at 15 degrees of elevation: about one turn across a deck's visible extent, giving long sweeping
+// bands. Shorter periods bend the streaks into turbulence; at 4000 the sky reads busier than cirrus.
+const float PLAGUE_CLOUD_AXIS_BLOCKS = 6500.0;
+
+vec2 plagueCloudShearAxis(vec2 worldXZ, float axisSwing) {
+    if (axisSwing <= 0.0) {
+        return PLAGUE_CLOUD_WIND_UNIT;
+    }
+    // World blocks, not cell units, so the bearing turns over one distance for every genus.
+    float turn = axisSwing
+               * (plagueSkyFbm(worldXZ / PLAGUE_CLOUD_AXIS_BLOCKS, 2) - 0.5) * 2.0;
+    float c = cos(turn);
+    float s = sin(turn);
+    return vec2(PLAGUE_CLOUD_WIND_UNIT.x * c - PLAGUE_CLOUD_WIND_UNIT.y * s,
+                PLAGUE_CLOUD_WIND_UNIT.x * s + PLAGUE_CLOUD_WIND_UNIT.y * c);
+}
+
+vec2 plagueCloudAllocationCoord(vec2 worldXZ, float cell, float shear, float axisSwing,
+                                vec2 drift) {
     vec2 q = worldXZ / max(cell, 1e-3);
-    float along = dot(q, PLAGUE_CLOUD_WIND_UNIT);
-    q += PLAGUE_CLOUD_WIND_UNIT * (along / max(shear, 1e-3) - along);
+    // Only the axis direction varies with position; q is untouched, so the field stays anchored to
+    // world origin and nothing is rescaled.
+    vec2 axis = plagueCloudShearAxis(worldXZ, axisSwing);
+    float along = dot(q, axis);
+    q += axis * (along / max(shear, 1e-3) - along);
     q += drift;
     return q;
 }
 
-vec2 plagueCloudSampleCoord(vec2 worldXZ, float cell, float shear, vec2 drift) {
-    vec2 q = plagueCloudAllocationCoord(worldXZ, cell, shear, drift);
+vec2 plagueCloudSampleCoord(vec2 worldXZ, float cell, float shear, float axisSwing, vec2 drift) {
+    vec2 q = plagueCloudAllocationCoord(worldXZ, cell, shear, axisSwing, drift);
 
     vec2 warpCoord = q / PLAGUE_CLOUD_WEATHER_CLOUDS;
     vec2 warp = vec2(plagueSkyFbm(warpCoord, 2),
@@ -506,14 +528,15 @@ vec2 plagueCloudFallShearXZ(vec3 worldPos, PlagueCloudDeck deck) {
  */
 float plagueCloudDensityAt(vec3 worldPos, PlagueCloudDeck deck, vec2 drift) {
     vec2 shearedXZ = plagueCloudFallShearXZ(worldPos, deck);
-    vec2 allocationQ = plagueCloudAllocationCoord(shearedXZ, deck.cell, deck.shear, drift);
+    vec2 allocationQ = plagueCloudAllocationCoord(shearedXZ, deck.cell, deck.shear,
+                                                 deck.axisSwing, drift);
     float ownerH;
     float potential = plagueCloudCandidatePotential(allocationQ, worldPos.y, deck, ownerH);
     if (potential <= deck.cut - PLAGUE_CLOUD_FIELD_TOP) {
         return 0.0;
     }
 
-    vec2 q = plagueCloudSampleCoord(shearedXZ, deck.cell, deck.shear, drift);
+    vec2 q = plagueCloudSampleCoord(shearedXZ, deck.cell, deck.shear, deck.axisSwing, drift);
     // Absolute height above the shared reference base keeps the volume phase fixed while ownerH
     // supplies each candidate's independent locally-flat base and vertical morphology.
     float noiseY = (worldPos.y - deck.base) / plagueCloudHeightRef(deck);
@@ -546,13 +569,14 @@ float plagueCloudDensityAt(vec3 worldPos, PlagueCloudDeck deck, vec2 drift) {
  */
 float plagueCloudDensityCoarseIn(vec3 worldPos, PlagueCloudDeck deck, vec2 drift) {
     vec2 shearedXZ = plagueCloudFallShearXZ(worldPos, deck);
-    vec2 allocationQ = plagueCloudAllocationCoord(shearedXZ, deck.cell, deck.shear, drift);
+    vec2 allocationQ = plagueCloudAllocationCoord(shearedXZ, deck.cell, deck.shear,
+                                                 deck.axisSwing, drift);
     float ownerH;
     float potential = plagueCloudCandidatePotential(allocationQ, worldPos.y, deck, ownerH);
     if (potential <= deck.cut - PLAGUE_CLOUD_FIELD_TOP) {
         return 0.0;
     }
-    vec2 q = plagueCloudSampleCoord(shearedXZ, deck.cell, deck.shear, drift);
+    vec2 q = plagueCloudSampleCoord(shearedXZ, deck.cell, deck.shear, deck.axisSwing, drift);
     float noiseY = (worldPos.y - deck.base) / plagueCloudHeightRef(deck);
     float baseShape = plagueCloudBaseShape(vec3(q.x, noiseY, q.y), deck);
     return plagueCloudCoverage(baseShape, deck, potential);
