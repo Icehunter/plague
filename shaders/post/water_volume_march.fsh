@@ -347,15 +347,12 @@ void main() {
                 displacedSurfaceExit)) {
             // Midpoint of the light segment, not the cell: that path climbs to the interface, so
             // charging it the cell's own murk puts out every shaft reaching deep water.
-            float lightLoad = reservoirBaseHeightValid
-                    ? plagueWaterTurbidityLoad(
-                            // interfacePosition is camera-relative, reservoirBaseHeight and
-                            // sampleAbs absolute. Lift it before averaging.
-                            reservoirBaseHeight
-                                    - 0.5 * (sampleAbs.y
-                                            + interfacePosition.y + u_CameraAbs.y),
-                            u_WaterTurbidityDepth)
-                    : 1.0;
+            // interfacePosition is camera-relative, reservoirBaseHeight and sampleAbs absolute.
+            // Lift it before averaging.
+            float lightLoad = plagueWaterTurbidityLoad(
+                    reservoirBaseHeight
+                            - 0.5 * (sampleAbs.y + interfacePosition.y + u_CameraAbs.y),
+                    u_WaterTurbidityDepth);
             vec3 lightTransmittance = exp(
                     -plagueWaterSigmaTLoaded(clarity, lightLoad) * max(lightDistance, 0.0));
             float refractiveFocus = displacedSurfaceExit
