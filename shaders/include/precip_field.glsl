@@ -13,10 +13,13 @@
 // Without it every query reports not covered and callers keep their camera-local value, which is
 // what the fullscreen passes reaching this file through clouds.glsl do.
 
-// PrecipCoarseClipmapBuffer's ABI: 4-block cells, 128 per axis, one word each. Low byte is the
-// value, bit 8 marks a sampled word, upper 16 bits are 8 tile-index bits per axis. The tag makes a
-// read self-validating, so no window anchor has to reach the shader: a cell outside the uploaded
-// window fails it and reads as not covered.
+// PrecipCoarseClipmapBuffer's ABI: 4-block cells, 128 per axis, four words each (one ivec4). Word 0
+// is the precipitation record: low byte the value, bit 8 marks a sampled word, upper 16 bits are 8
+// tile-index bits per axis. The tag makes a read self-validating, so no window anchor has to reach
+// the shader: a cell outside the uploaded window fails it and reads as not covered. Word 1: surface
+// temperature behind the classification (signed 16-bit, 1/256 steps), downfall 0..255, a byte of
+// biome tags. Word 2: biome nominal temperature. See plagueClimateColumn.
+const int PLAGUE_PRECIP_WORDS_PER_CELL = 4;
 const int PLAGUE_PRECIP_CELL_STRIDE_LOG2 = 2;
 const int PLAGUE_PRECIP_GRID = 128;
 const int PLAGUE_PRECIP_GRID_SHIFT = 7;
@@ -68,12 +71,61 @@ bool plaguePrecipColumn(vec2 worldXZ, out int precipType) {
 #ifdef PLAGUE_PRECIP_CLIPMAP
     ivec2 block = ivec2(floor(worldXZ));
     ivec2 cell = block >> PLAGUE_PRECIP_CELL_STRIDE_LOG2;
-    int word = PLAGUE_PRECIP_CLIPMAP(plaguePrecipSlot(cell));
+    int word = PLAGUE_PRECIP_CLIPMAP(plaguePrecipSlot(cell) * PLAGUE_PRECIP_WORDS_PER_CELL);
     if ((word & PLAGUE_PRECIP_VALID_MASK) == 0
             || (word & 0xFFFF0000) != plaguePrecipTag(cell)) {
         return false;
     }
     precipType = word & PLAGUE_PRECIP_VALUE_MASK;
+    return true;
+#else
+    return false;
+#endif
+}
+
+// Biome tag bits, word 1's top byte.
+const int PLAGUE_CLIMATE_TAG_HOT = 1;
+const int PLAGUE_CLIMATE_TAG_COLD = 2;
+const int PLAGUE_CLIMATE_TAG_WET = 4;
+const int PLAGUE_CLIMATE_TAG_DRY = 8;
+const int PLAGUE_CLIMATE_TAG_OCEAN = 16;
+const int PLAGUE_CLIMATE_TAG_JUNGLE = 32;
+const int PLAGUE_CLIMATE_TAG_BADLANDS = 64;
+const int PLAGUE_CLIMATE_TAG_MOUNTAIN = 128;
+
+/** Low 16 bits of a word as signed 1/256 fixed-point temperature. */
+float plagueClimateTemperature(int word) {
+    return float((word << 16) >> 16) / 256.0;
+}
+
+/**
+ * One column's climate, or false outside the uploaded window. A cell's four words are written
+ * together, so word 0's tag vouches for all of them.
+ *
+ * temperatureSurface is what the rain-or-snow decision thresholded at the column's surface height;
+ * temperatureBiome is the biome's nominal value. Their difference is altitude.
+ */
+bool plagueClimateColumn(vec2 worldXZ, out float temperatureSurface, out float temperatureBiome,
+                         out float downfall, out int tags) {
+    temperatureSurface = 0.0;
+    temperatureBiome = 0.0;
+    downfall = 0.0;
+    tags = 0;
+#ifdef PLAGUE_PRECIP_CLIPMAP
+    ivec2 block = ivec2(floor(worldXZ));
+    ivec2 cell = block >> PLAGUE_PRECIP_CELL_STRIDE_LOG2;
+    int base = plaguePrecipSlot(cell) * PLAGUE_PRECIP_WORDS_PER_CELL;
+    int word0 = PLAGUE_PRECIP_CLIPMAP(base);
+    if ((word0 & PLAGUE_PRECIP_VALID_MASK) == 0
+            || (word0 & 0xFFFF0000) != plaguePrecipTag(cell)) {
+        return false;
+    }
+    int word1 = PLAGUE_PRECIP_CLIPMAP(base + 1);
+    int word2 = PLAGUE_PRECIP_CLIPMAP(base + 2);
+    temperatureSurface = plagueClimateTemperature(word1);
+    downfall = float((word1 >> 16) & 0xFF) / 255.0;
+    tags = (word1 >> 24) & 0xFF;
+    temperatureBiome = plagueClimateTemperature(word2);
     return true;
 #else
     return false;

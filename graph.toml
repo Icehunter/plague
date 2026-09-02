@@ -155,9 +155,10 @@ count = 5
 [targets.surfaceFluidClipmap]
 kind = "buffer"
 
-# Engine-filled (Fornax PrecipCoarseClipmapBuffer): 4-block cells over a 512-block window, one word
-# per column, none/rain/snow with height-adjusted temperature folded in. No stride or count: the
-# engine sizes it, and skips the upload for a pack that never declares this target.
+# Engine-filled (Fornax PrecipCoarseClipmapBuffer): 4-block cells over a 512-block window, four
+# words per column: none/rain/snow record; surface temperature behind that decision, downfall,
+# biome tags; biome nominal temperature. No stride or count: the engine sizes it, and skips the
+# upload for a pack that never declares this target.
 [targets.precipCoarseClipmap]
 kind = "buffer"
 
