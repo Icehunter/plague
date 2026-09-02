@@ -1,0 +1,40 @@
+#version 450
+
+// The transmittance table: for every (altitude, direction above the horizon), what fraction of
+// light survives from that point to the top of the atmosphere. Forty steps of the density profiles
+// along the ray, then Beer-Lambert. See atmo_lut.glsl for the mapping and the method.
+
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:atmo_lut.glsl>
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Bindings mirror graph.toml's inputs-then-outputs: 0 globals (above), 1 packOptions (engine-injected,
+// carries the air sliders), 2 the table.
+layout(rgba16f, set = 0, binding = 2) uniform writeonly image2D u_OutTransmittance;
+
+void main() {
+    ivec2 size = imageSize(u_OutTransmittance);
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(texel, size))) {
+        return;
+    }
+
+    float r;
+    float mu;
+    plagueAtmoTransmittanceParams(plagueAtmoTexelUnit(texel, size), r, mu);
+    PlagueAtmoAir air = plagueAtmoAir(clamp(u_SkyState.x, 0.0, 1.0), clamp(u_FrameState.z, 0.0, 1.0));
+
+    float end = plagueAtmoDistanceToTop(r, mu);
+    float dt = end / float(PLAGUE_ATMO_TRANSMITTANCE_STEPS);
+    vec3 column = vec3(0.0);
+    for (int i = 0; i < PLAGUE_ATMO_TRANSMITTANCE_STEPS; i++) {
+        float t = (float(i) + 0.5) * dt;
+        // Distance from the centre along the ray: sqrt(r^2 + t^2 + 2 r t mu).
+        float rs = sqrt(max(r * r + t * t + 2.0 * r * t * mu, 0.0));
+        column += plagueAtmoDensity(rs - PLAGUE_PLANET_RADIUS, air) * dt;
+    }
+    imageStore(u_OutTransmittance, texel, vec4(exp(-plagueAtmoExtinction(column)), 1.0));
+}

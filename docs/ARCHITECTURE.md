@@ -17,8 +17,21 @@ all.
 
 ## The frame, in order
 
-`graph.toml` declares **54 passes** writing **41 targets**. They run in the order they appear in the
+`graph.toml` declares **57 passes** writing **44 targets**. They run in the order they appear in the
 file. Grouped by what they are for:
+
+### 0. Atmosphere: 3 compute passes
+
+`atmo_transmittance` → `atmo_multiscatter` → `atmo_skyview`, first in the file because nothing
+before them needs the sky and the resolve does. Each writes one small fixed-size table
+(256 × 64, 32 × 32, 192 × 108, all rgba16f) every frame: what survives from a point in the air to
+space, what arrives there after more than one bounce, and the dome as the camera sees it from its
+own altitude, marched per texel and lit by the true sun and the moon opposite it. The mappings
+live in `shaders/include/atmo_lut.glsl`, one function per writer/reader pair. The passes are gated
+on `PLAGUE_SKY_MODEL == 1`; the tables are not, because `resolve` and `water_environment_seed`
+list `atmoSkyView` as an input under either setting and the gate-consistency check refuses a pass
+that can run while a target it reads does not exist. Under `Palette` the tables stay zero and
+unread and the five-key palette in `sky.glsl` paints the dome.
 
 ### 1. Geometry: 7 passes
 
@@ -46,7 +59,8 @@ file compiled as two passes at two resolutions, because every size-dependent qua
 
 ### 3. The deferred resolve: 1 pass
 
-`resolve` is where the frame is actually lit: the G-buffer is read, the sky and sun are evaluated,
+`resolve` is where the frame is lit: the G-buffer is read, the sky is sampled from the
+sky-view table (or the palette, per `PLAGUE_SKY_MODEL`) and the sun is evaluated,
 shadows are filtered, ambient and blocklight are applied, reflections are composited in, and fog is
 laid over the result. It is by far the largest shader in the pack.
 

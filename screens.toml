@@ -251,6 +251,7 @@ elements = [
 title = "Sky"
 elements = [
     "SKY_PROCEDURAL",
+    "PLAGUE_SKY_MODEL",
 
     "<group:Stars>",
     "PLAGUE_STAR_AMOUNT",
@@ -644,6 +645,7 @@ elements = [
     "<group:Aurora>",
     "PLAGUE_DEBUG_AURORA_ONLY",
     "u_AuroraDebugGain",
+    "PLAGUE_DEBUG_VIEWS",
 
     "<group:Clouds>",
     "u_CloudFormHold|requires:CLOUDS_VOLUMETRIC",

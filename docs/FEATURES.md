@@ -10,8 +10,13 @@ covers what the pack itself does, not the engine underneath it.
 
 ## Sky
 
-- Procedural sky dome: a nine-colour day/night gradient, a separate sunset horizon band, horizon
-  scattering, and sun and moon glare.
+- Procedural sky dome, two models behind one option. `Scattering` (the default) marches the air:
+  Rayleigh, aerosol and ozone with multiple scattering, from the camera's own altitude, into three
+  small tables rebuilt every frame; sunset, twilight blue and the sun's aureole come out of the
+  integral. `Palette` is a nine-colour gradient with sunset band and glare sliders, kept for
+  side-by-side comparison while the scattering dome's brightness is tuned. Water
+  reflections and screen-space misses follow whichever dome is selected. Ambient light, fog colour
+  and cloud lighting read the palette under both settings.
 - Stars, with amount, size, roundness and softness controls.
 - Night nebula (intensity, zoom, amount).
 - Shooting stars (count, speed, frequency).

@@ -20,6 +20,14 @@ working notes; what is here is what a reader needs to know the limitation exists
 
 - **The climate signal snaps at biome borders**, so fog character can change abruptly across a line.
 - **Thunder is not its own fog driver.** Heavy weather reads as ordinary rain.
+- **The resolve is one sampler under Metal's ceiling of 16 live samplers per fragment function.**
+  The motion and raw-shadow-map debug views are compiled out for it (`PLAGUE_DEBUG_VIEWS`, usable
+  only with the Palette sky), and the aerial-perspective table cannot be added to
+  `shaders/post/gbuffer_resolve.fsh` without displacing an input. Raising the ceiling means Metal
+  argument buffers, which is an engine matter.
+- **Under the scattering sky, the halo and sunset-band sliders do not reach the dome, and ambient,
+  fog and cloud lighting come from the palette**, so the two can disagree at dusk. Closes when
+  aerial perspective and cloud lighting read the tables (`shaders/include/atmo_lut.glsl`).
 
 ## Clouds
 

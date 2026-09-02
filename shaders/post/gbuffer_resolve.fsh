@@ -9,6 +9,8 @@
 #moj_import <fornax_runtime:env_brdf.glsl>
 #moj_import <fornax_runtime:atmosphere.glsl>
 #moj_import <fornax_runtime:sky.glsl>
+#define PLAGUE_ATMO_READS_SKYVIEW
+#moj_import <fornax_runtime:atmo_lut.glsl>
 #moj_import <fornax_runtime:stars.glsl>
 #moj_import <fornax_runtime:nebula.glsl>
 #moj_import <fornax_runtime:shooting_stars.glsl>
@@ -49,6 +51,20 @@ uniform sampler2D u_Input15; // moonAlbedo, equirectangular, near side centred
 uniform sampler2D u_Input16; // moonNormal, tangent-space relief for the same projection
 // cloudShadowMask, quarter scale. Ground cloud-shadow TRANSMITTANCE: 1.0 full sun, lower is shaded.
 uniform sampler2D u_Input17;
+uniform sampler2D u_Input18; // atmoSkyView, the marched dome (atmo_lut.glsl); zero under Palette
+
+vec4 plagueAtmoFetchSkyView(vec2 uv) {
+    return texture(u_Input18, uv);
+}
+
+// Metal allows 16 samplers per fragment function, counting only the ones the code reads, and this
+// pass sits at that ceiling. The two reads below serve debug views alone, so they are compiled out
+// unless asked for: live under Scattering, the dome table is the seventeenth sampler and the
+// resolve pipeline refuses to build, with nothing in the game log but a pipeline error. Metal
+// compiler count: 15 live samplers as shipped, 16 with these views under Palette, 17 under
+// Scattering. Enable only with PLAGUE_SKY_MODEL at Palette. Any further input to this pass must
+// displace a remaining read.
+//#define PLAGUE_DEBUG_VIEWS //[] compile "Motion and Shadow-Map Debug Views"
 
 // Must come after u_Input10's declaration: PLAGUE_CLOUD_NOISE expands inline wherever clouds.glsl
 // calls it, so an earlier import would reference u_Input10 before it exists. Also declares
@@ -153,6 +169,12 @@ uniform sampler2D u_Input17;
 // The ENGINE reads this exact name to cancel vanilla's sky pass (GraphRunner.packOwnsSky). Off:
 // vanilla's sky shows through and this shader discards those fragments.
 #define SKY_PROCEDURAL //[] compile "Procedural Sky"
+
+// Which dome the sky, the reflection probe and the screen-space miss sample: the five-key palette
+// in sky.glsl, or the scattering tables in atmo_lut.glsl. Declared byte-identically in
+// water_environment.fsh. Under Scattering the halo and sunset-band sliders do not reach the dome:
+// the aureole is the aerosol's own forward lobe and the band is the air.
+#define PLAGUE_SKY_MODEL 1 //[0 1] compile "Sky Model" {0="Palette" 1="Scattering"}
 
 // Zenith-direction sample of the pack's own sky function, evaluated directly rather than through a
 // LUT: cheaper and exact for the single direction ambient needs.
@@ -393,7 +415,9 @@ int debugView = int(u_Param3 + 0.5);
         if (debugView == DBG_NORMALS)  { fragColor = vec4(normalSample.xyz * 0.5 + 0.5, 1.0); return; }
         if (debugView == DBG_ALBEDO)   { fragColor = vec4(albedoSample.rgb, 1.0); return; }
         if (debugView == DBG_MATERIAL) { fragColor = vec4(texture(u_Input2, texCoord).rgb, 1.0); return; }
+#ifdef PLAGUE_DEBUG_VIEWS
         if (debugView == DBG_MOTION)   { fragColor = vec4(abs(texture(u_Input8, texCoord).rg) * 40.0, 0.0, 1.0); return; }
+#endif
         if (debugView == DBG_SSAO)     { fragColor = vec4(vec3(texture(u_Input7, texCoord).r), 1.0); return; }
         if (debugView == DBG_AO)       { fragColor = vec4(vec3(texture(u_Input3, texCoord).r), 1.0); return; }
         if (debugView == DBG_RT_SHADOW) {
@@ -428,8 +452,13 @@ int debugView = int(u_Param3 + 0.5);
 #ifdef SHADOWS
             const float SHADOW_MAP_VIEW_OCCUPIED = 0.2;
             const vec3 SHADOW_MAP_VIEW_CLEAR_COLOR = vec3(1.0, 0.0, 0.7);
+#ifdef PLAGUE_DEBUG_VIEWS
             ivec2 dbgShadowMapTexel = ivec2(texCoord * vec2(textureSize(u_Input14, 0)));
             float dbgShadowMapDepth = texelFetch(u_Input14, dbgShadowMapTexel, 0).r;
+#else
+            // Without the raw shadow-map read compiled in, the view shows its clear sentinel.
+            float dbgShadowMapDepth = 1.0;
+#endif
             if (dbgShadowMapDepth >= 0.999) {
                 fragColor = vec4(SHADOW_MAP_VIEW_CLEAR_COLOR, 1.0);
             } else {
@@ -559,7 +588,14 @@ int debugView = int(u_Param3 + 0.5);
             // Graded so the dome agrees with the aerial haze and border fog it fades into; all
             // three read the same atmColorMult. Additive stars/nebula/discs/aurora below are
             // separate light sources, not haze, and stay ungraded.
+#if PLAGUE_SKY_MODEL == 1
+            // One table read, dithered as plagueGetSky is: a smooth gradient is where banding
+            // shows first.
+            skyOut = plagueAtmoSkyView(viewRay, sunDirTrue, plagueAtmoCameraRadius()).rgb * atmColorMult;
+            skyOut = max(skyOut + (skyDither - 0.5) / 128.0, vec3(0.0));
+#else
             skyOut = plagueGetSky(skyColours, VdotU, VdotS, skyDither, true, false) * atmColorMult;
+#endif
 
             // Additive, not blended: stars are emitters seen through the atmosphere, so a bright
             // sky washes them out via the day/night term inside plagueGetStars.
@@ -773,8 +809,12 @@ int debugView = int(u_Param3 + 0.5);
         // DBG_SHADOW_QUERY_3: the actual stored depth at dbgShadowUv, read through u_Input14 as a
         // plain sampler2D — u_Input6's sampler2DShadow can only return a pass/fail compare, never
         // the raw texel. Clamped UV means this is only meaningful when QUERY_2's inRange was 1.0.
+#ifdef PLAGUE_DEBUG_VIEWS
         ivec2 dbgShadowTexel = ivec2(clamp(dbgShadowUv, 0.0, 1.0) * vec2(textureSize(u_Input14, 0)));
         float dbgStoredDepth = texelFetch(u_Input14, dbgShadowTexel, 0).r;
+#else
+        float dbgStoredDepth = 0.0;
+#endif
         // Red = the depth this query compares (the raw light-clip z, the write side stores it
         // unscaled), blue = what the map actually holds there; green intentionally empty. Matching
         // red/blue means the comparison would pass.
@@ -1441,8 +1481,12 @@ int debugView = int(u_Param3 + 0.5);
     // Same sky the pack paints, sampled once along the mirror direction, celestial disc suppressed.
     // Graded so a reflection miss agrees with the dome it is reflecting.
     vec3 reflDir = reflect(-viewDir, normal);
+#if PLAGUE_SKY_MODEL == 1
+    vec3 skyMiss = plagueAtmoSkyView(reflDir, sunDirTrue, plagueAtmoCameraRadius()).rgb * atmColorMult;
+#else
     vec3 skyMiss = plagueGetSky(skyColours, reflDir.y, dot(reflDir, sunDirTrue), 0.5,
                                 false, true) * atmColorMult;
+#endif
     // Same night correction the diffuse path takes (skyReflectionLift), applied before the warm
     // pull and the underwater override so every consumer of the sky guess agrees. 1.0 in daylight.
     skyMiss *= skyReflectionLift;

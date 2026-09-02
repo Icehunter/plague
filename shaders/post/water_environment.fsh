@@ -7,8 +7,18 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:light_and_ambient_colors.glsl>
 #moj_import <fornax_runtime:sky.glsl>
+#define PLAGUE_ATMO_READS_SKYVIEW
+#moj_import <fornax_runtime:atmo_lut.glsl>
+
+// Byte-identical to gbuffer_resolve.fsh's declaration: the probe paints the dome the resolve paints.
+#define PLAGUE_SKY_MODEL 1 //[0 1] compile "Sky Model" {0="Palette" 1="Scattering"}
 
 uniform sampler2D u_Input0; // builtin.noise: the cloud field's erosion lattice
+uniform sampler2D u_Input1; // atmoSkyView, the marched dome (atmo_lut.glsl); zero under Palette
+
+vec4 plagueAtmoFetchSkyView(vec2 uv) {
+    return texture(u_Input1, uv);
+}
 
 // The noise hook, per the contract at the top of clouds.glsl: defined over this pass's own input
 // slot, after the sampler's declaration and before the import.
@@ -80,8 +90,13 @@ void main() {
             vec3(u_AtmNightR, u_AtmNightG, u_AtmNightB) * u_AtmNightI,
             vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
 #endif
+#if PLAGUE_SKY_MODEL == 1
+    vec3 radiance = plagueAtmoSkyView(direction, trueSunDirection, plagueAtmoCameraRadius()).rgb
+            * atmColorMult;
+#else
     vec3 radiance = plagueGetSky(
             skyColours, direction.y, VdotS, 0.5, false, true) * atmColorMult;
+#endif
 
 #if CLOUDS_VOLUMETRIC
     // A screen-space trace can never return the reflected sky (no depth to hit), so every

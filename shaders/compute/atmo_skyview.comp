@@ -1,0 +1,58 @@
+#version 450
+
+// The sky-view table: the dome from the camera's own altitude this frame, one marched ray per
+// texel, lit by the true sun and the moon opposite it. The resolve, the reflection probe and the
+// screen-space miss all sample this rather than a palette. See atmo_lut.glsl for the mapping.
+
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#define PLAGUE_ATMO_READS_TRANSMITTANCE
+#define PLAGUE_ATMO_READS_MULTISCATTER
+#moj_import <fornax_runtime:atmo_lut.glsl>
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Bindings: 0 globals, 1 packOptions (engine-injected), 2 atmoTransmittance, 3 atmoMultiScatter,
+// 4 the table. Storage targets are storage images here, never samplers (see atmo_multiscatter).
+layout(rgba16f, set = 0, binding = 2) uniform readonly image2D u_Transmittance;
+layout(rgba16f, set = 0, binding = 3) uniform readonly image2D u_MultiScatter;
+layout(rgba16f, set = 0, binding = 4) uniform writeonly image2D u_OutSkyView;
+
+vec4 plagueAtmoFetchTransmittance(vec2 uv) {
+    ivec2 i0;
+    ivec2 i1;
+    vec2 f;
+    plagueAtmoBilinearSetup(uv, imageSize(u_Transmittance), i0, i1, f);
+    return plagueAtmoBilinearMix(imageLoad(u_Transmittance, i0), imageLoad(u_Transmittance, ivec2(i1.x, i0.y)),
+                                 imageLoad(u_Transmittance, ivec2(i0.x, i1.y)), imageLoad(u_Transmittance, i1), f);
+}
+
+vec4 plagueAtmoFetchMultiScatter(vec2 uv) {
+    ivec2 i0;
+    ivec2 i1;
+    vec2 f;
+    plagueAtmoBilinearSetup(uv, imageSize(u_MultiScatter), i0, i1, f);
+    return plagueAtmoBilinearMix(imageLoad(u_MultiScatter, i0), imageLoad(u_MultiScatter, ivec2(i1.x, i0.y)),
+                                 imageLoad(u_MultiScatter, ivec2(i0.x, i1.y)), imageLoad(u_MultiScatter, i1), f);
+}
+
+void main() {
+    ivec2 size = imageSize(u_OutSkyView);
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(texel, size))) {
+        return;
+    }
+
+    // The TRUE sun, never the active light: the moon at midnight sits where the sun sits at noon.
+    vec3 sunDir = dot(u_SkyCelestial.xyz, u_SkyCelestial.xyz) > 1e-6
+            ? normalize(u_SkyCelestial.xyz) : vec3(0.0, 1.0, 0.0);
+    float r = plagueAtmoCameraRadius();
+    vec3 dir = plagueAtmoSkyViewDir(plagueAtmoTexelUnit(texel, size), sunDir, r);
+    PlagueAtmoAir air = plagueAtmoAir(clamp(u_SkyState.x, 0.0, 1.0), clamp(u_FrameState.z, 0.0, 1.0));
+
+    vec4 sky = plagueAtmoMarch(vec3(0.0, r, 0.0), dir, sunDir,
+                               plagueAtmoSunRadiance(), plagueAtmoMoonRadiance(), air,
+                               PLAGUE_ATMO_SKYVIEW_STEPS);
+    imageStore(u_OutSkyView, texel, sky);
+}

@@ -1,0 +1,99 @@
+#version 450
+
+// The multiple-scattering table: for every (altitude, sun elevation), the light that reaches a
+// point after scattering more than once, per unit sunlight, taken as isotropic. Hillaire 2020 §5.5:
+// the second order is integrated over the sphere of directions (64 here, 20 steps each, with the
+// ground's bounce at the end of a ray that reaches it), and the geometric series of higher orders
+// closes it as L2 / (1 - f_ms). See atmo_lut.glsl.
+
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#define PLAGUE_ATMO_READS_TRANSMITTANCE
+#moj_import <fornax_runtime:atmo_lut.glsl>
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Bindings: 0 globals, 1 packOptions (engine-injected), 2 atmoTransmittance, 3 the table. A storage
+// target reaches a compute pass as a storage IMAGE (ComputePassRunner binds by target kind), never
+// a sampler: declaring sampler2D here fails at pipeline build with no message in the game log.
+layout(rgba16f, set = 0, binding = 2) uniform readonly image2D u_Transmittance;
+layout(rgba16f, set = 0, binding = 3) uniform writeonly image2D u_OutMultiScatter;
+
+vec4 plagueAtmoFetchTransmittance(vec2 uv) {
+    ivec2 i0;
+    ivec2 i1;
+    vec2 f;
+    plagueAtmoBilinearSetup(uv, imageSize(u_Transmittance), i0, i1, f);
+    return plagueAtmoBilinearMix(imageLoad(u_Transmittance, i0), imageLoad(u_Transmittance, ivec2(i1.x, i0.y)),
+                                 imageLoad(u_Transmittance, ivec2(i0.x, i1.y)), imageLoad(u_Transmittance, i1), f);
+}
+
+void main() {
+    ivec2 size = imageSize(u_OutMultiScatter);
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(texel, size))) {
+        return;
+    }
+
+    float r;
+    float muLight;
+    plagueAtmoMultiScatterParams(plagueAtmoTexelUnit(texel, size), r, muLight);
+    r = max(r, PLAGUE_PLANET_RADIUS + 1.0);
+    PlagueAtmoAir air = plagueAtmoAir(clamp(u_SkyState.x, 0.0, 1.0), clamp(u_FrameState.z, 0.0, 1.0));
+
+    vec3 origin = vec3(0.0, r, 0.0);
+    vec3 lightDir = vec3(sqrt(max(1.0 - muLight * muLight, 0.0)), muLight, 0.0);
+    const float isotropic = 1.0 / (4.0 * PLAGUE_ATMO_PI);
+    const float goldenAngle = 2.39996322972865;
+
+    vec3 secondOrder = vec3(0.0);
+    vec3 transfer = vec3(0.0);
+    for (int d = 0; d < PLAGUE_ATMO_MULTISCATTER_DIRECTIONS; d++) {
+        // Fibonacci sphere: uniform over the sphere, so the mean over directions is the 1/(4 pi)
+        // solid-angle integral.
+        float z = 1.0 - 2.0 * (float(d) + 0.5) / float(PLAGUE_ATMO_MULTISCATTER_DIRECTIONS);
+        float ring = sqrt(max(1.0 - z * z, 0.0));
+        float phi = goldenAngle * float(d);
+        vec3 dir = vec3(ring * cos(phi), z, ring * sin(phi));
+
+        float toGround = plagueAtmoDistanceToGround(r, dir.y);
+        float end = toGround > 0.0 ? toGround : plagueAtmoDistanceToTop(r, dir.y);
+        float dt = end / float(PLAGUE_ATMO_MULTISCATTER_STEPS);
+
+        vec3 radiance = vec3(0.0);
+        vec3 scatteredAgain = vec3(0.0);
+        vec3 transmittance = vec3(1.0);
+        for (int i = 0; i < PLAGUE_ATMO_MULTISCATTER_STEPS; i++) {
+            vec3 pos = origin + dir * ((float(i) + 0.5) * dt);
+            float rs = length(pos);
+            vec3 density = plagueAtmoDensity(rs - PLAGUE_PLANET_RADIUS, air);
+            vec3 scattering = plagueAtmoScattering(density);
+            vec3 extinction = plagueAtmoExtinction(density);
+            vec3 stepTransmittance = exp(-extinction * dt);
+            vec3 safeExtinction = max(extinction, vec3(1e-12));
+
+            vec3 lit = plagueAtmoTransmittanceToLight(rs, dot(pos / rs, lightDir))
+                    * scattering * isotropic;
+            radiance += transmittance * (lit - lit * stepTransmittance) / safeExtinction;
+            scatteredAgain += transmittance
+                    * (scattering - scattering * stepTransmittance) / safeExtinction;
+            transmittance *= stepTransmittance;
+        }
+        if (toGround > 0.0) {
+            vec3 ground = origin + dir * toGround;
+            vec3 normal = ground / length(ground);
+            float cosLight = dot(normal, lightDir);
+            radiance += transmittance
+                    * plagueAtmoTransmittanceToLight(PLAGUE_PLANET_RADIUS + 1.0, cosLight)
+                    * (PLAGUE_ATMO_GROUND_ALBEDO / PLAGUE_ATMO_PI) * max(cosLight, 0.0);
+        }
+        secondOrder += radiance;
+        transfer += scatteredAgain;
+    }
+    secondOrder /= float(PLAGUE_ATMO_MULTISCATTER_DIRECTIONS);
+    transfer /= float(PLAGUE_ATMO_MULTISCATTER_DIRECTIONS);
+
+    vec3 psi = secondOrder / max(vec3(1.0) - transfer, vec3(1e-4));
+    imageStore(u_OutMultiScatter, texel, vec4(psi, 1.0));
+}

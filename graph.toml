@@ -167,6 +167,68 @@ kind = "buffer"
 [targets.waterActors]
 kind = "buffer"
 
+# --- Atmosphere -----------------------------------------------------------------------------------
+# Three scattering tables, rewritten every frame (no pass can run less often; a table dies on any
+# reallocation). Fixed sizes, storage for the compute writers, linear for their readers. Mappings:
+# shaders/include/atmo_lut.glsl. Ungated on purpose: the resolve lists atmoSkyView as an input
+# whatever PLAGUE_SKY_MODEL says, and the gate-consistency check refuses a pass that can be enabled
+# while a target it reads is not. Under Palette the three passes are elided and the tables stay
+# zero and unread.
+[targets.atmoTransmittance]
+format = "rgba16f"
+width = 256
+height = 64
+filter = "linear"
+storage = true
+
+[targets.atmoMultiScatter]
+format = "rgba16f"
+width = 32
+height = 32
+filter = "linear"
+storage = true
+
+[targets.atmoSkyView]
+format = "rgba16f"
+width = 192
+height = 108
+filter = "linear"
+storage = true
+
+# First in the frame: nothing before them needs the sky; the resolve needs the sky-view table.
+# Each reads the true sun from u_SkyCelestial, never u_SunDirection, so none is on the engine's
+# per-pass-name uniform list and its silent permanent-noon default. local_size makes the engine
+# derive group counts from the first output; dispatch is the required placeholder.
+[[pass]]
+name = "atmo_transmittance"
+type = "compute"
+shader = "shaders/compute/atmo_transmittance.comp"
+enabled_if = "PLAGUE_SKY_MODEL == 1"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions"]
+outputs = ["atmoTransmittance"]
+
+[[pass]]
+name = "atmo_multiscatter"
+type = "compute"
+shader = "shaders/compute/atmo_multiscatter.comp"
+enabled_if = "PLAGUE_SKY_MODEL == 1"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "atmoTransmittance"]
+outputs = ["atmoMultiScatter"]
+
+[[pass]]
+name = "atmo_skyview"
+type = "compute"
+shader = "shaders/compute/atmo_skyview.comp"
+enabled_if = "PLAGUE_SKY_MODEL == 1"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "atmoTransmittance", "atmoMultiScatter"]
+outputs = ["atmoSkyView"]
+
 [targets.ssaoRaw]
 format = "r8"
 scale = 1.0
@@ -408,7 +470,7 @@ shader = "shaders/post/gbuffer_resolve.fsh"
 # sunShadowMapRaw aliases the same texture under a different target name so the comparison-sampler
 # branch (keyed by exact target string) doesn't wrongly attach to this plain-sampler debug read. A
 # shader uniform and its graph.toml binding are one atomic contract — never remove one side alone.
-inputs = ["builtin.gNormal", "builtin.gAlbedo", "builtin.gMaterial", "builtin.gAo", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "cloudShadowMask"]
+inputs = ["builtin.gNormal", "builtin.gAlbedo", "builtin.gMaterial", "builtin.gAo", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "cloudShadowMask", "atmoSkyView"]
 outputs = ["sceneHdr"]
 
 # Tileable grayscale focusing pattern, sampled by two rotated flowing layers with mirror-repeat UVs.
@@ -689,7 +751,9 @@ shader = "shaders/post/water_environment.fsh"
 enabled_if = "SSR_WATER_MODE > 0"
 # builtin.noise: the cloud imposter's erosion lattice. The probe now carries the cloud deck, so
 # a reflected sky is no longer clear under an overcast one. See the imposter note in the shader.
-inputs = ["builtin.noise"]
+# atmoSkyView: the probe paints the dome the resolve paints, or water reflects a different sky
+# than the one above it.
+inputs = ["builtin.noise", "atmoSkyView"]
 outputs = ["waterEnvironmentSeed"]
 
 [[pass]]
