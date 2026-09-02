@@ -122,6 +122,8 @@ void main() {
     vec3 filteredColour = vec3(0.0);
     float filteredConfidence = 0.0;
     float filterWeight = 0.0;
+    // filterWeight with confidence left out. The ratio is the fraction of the neighbourhood that hit.
+    float coverageWeight = 0.0;
     for (int tap = 0; tap < 9; tap++) {
         vec2 sampleUv = clamp(
                 texCoord + PLAGUE_WATER_FILTER_OFFSETS[tap] * texelSize * radiusPx,
@@ -134,8 +136,13 @@ void main() {
         filteredColour += sampleValue.rgb * weight;
         filteredConfidence += confidence * weight;
         filterWeight += weight;
+        coverageWeight += agreement * PLAGUE_WATER_FILTER_WEIGHTS[tap];
     }
-    if (filterWeight > 1e-5) {
+    // A miss is filled only when it is a pinhole inside a hit region. Filling at the region's edge
+    // bleeds the hit outward as a halo over water that correctly missed. Half: a pinhole has hits
+    // all round, an edge has hits on one side.
+    bool fillableMiss = raw.a > 0.0 || filterWeight >= 0.5 * coverageWeight;
+    if (filterWeight > 1e-5 && fillableMiss) {
         float confidence = filteredConfidence / filterWeight;
         if (raw.a <= 0.0) {
             confidence = min(confidence * filterWeight, 0.45);

@@ -28,6 +28,10 @@ layout(std140) uniform u_PassParams {
 const int WATER_MARCH_SAMPLES = 30;
 const int WATER_MARCH_REFINEMENTS = 8;  // halvings per bracket: residual = bracket / 256
 const int WATER_MAX_REFINE_CYCLES = 6;
+// A rejected crossing this many thickness windows behind the surface passed it rather than
+// skimmed it. Two: one window for the acceptance, one for the bisection residual of a head-on hit.
+// Treating a farther bracket as a near miss paints a wall over the reflection of the hill behind it.
+const float WATER_PASS_BEHIND = 2.0;
 
 in vec2 texCoord;
 out vec4 fragColor; // rgb = reflected colour, a = confidence
@@ -109,6 +113,11 @@ void main() {
     // grazing skim (keep marching) and a hit behind a thin occluder (facing angle tells them apart).
     float bestRejectFacing = 0.0;
     vec3 bestRejectScreen = vec3(0.0);
+    // First back-face crossing the ray reached: a hillside met at a tread, or a roof met at its top
+    // because its underside is never drawn. Wrong face, right block. Painted at half confidence;
+    // marching on ends in the sky.
+    bool haveBackface = false;
+    vec3 backfaceScreen = vec3(0.0);
 
     for (int i = 0; i < WATER_MARCH_SAMPLES; i++) {
         step *= 1.4;                                   // geometric growth: near detail, far reach
@@ -168,6 +177,18 @@ void main() {
             break;
         }
 
+        // The ray passed the surface. Not a hit, not a reject, not a spend against the retry
+        // budget, which is for ambiguous brackets. Charging it here strands the ray inside the
+        // occluder short of the background it should reflect.
+        if (finalBehind >= WATER_PASS_BEHIND * acceptThickness) {
+            continue;
+        }
+
+        if (backface && !haveBackface && finalBehind > 0.0) {
+            haveBackface = true;
+            backfaceScreen = finalScreen;
+        }
+
         if (!backface && finalBehind > 0.0 && facing > bestRejectFacing) {
             bestRejectFacing = facing;
             bestRejectScreen = finalScreen;
@@ -189,6 +210,15 @@ void main() {
             vec2 rdist = abs(bestRejectScreen.xy - 0.5) * 2.0;
             float rejectEdge = clamp(1.0 - pow(max(rdist.x, rdist.y), 8.0), 0.0, 1.0);
             fragColor = vec4(rejectColour, 0.40 * rejectEdge * smoothstep(0.35, 0.8, bestRejectFacing));
+            return;
+        }
+
+        // Half: right block, wrong face, so the probe gets an equal say.
+        if (haveBackface) {
+            vec3 backfaceColour = texture(u_Input2, backfaceScreen.xy).rgb;
+            vec2 bdist = abs(backfaceScreen.xy - 0.5) * 2.0;
+            float backfaceEdge = clamp(1.0 - pow(max(bdist.x, bdist.y), 8.0), 0.0, 1.0);
+            fragColor = vec4(backfaceColour, 0.5 * backfaceEdge);
             return;
         }
 

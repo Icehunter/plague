@@ -96,9 +96,6 @@ const vec3 WATER_EXTINCTION = vec3(0.46, 0.10, 0.055);
 
 // How opaque water can ever get, so an abyss still hints at what's under it.
 const float WATER_MAX_OPACITY = 0.96;
-// Damped because a mirror-direction sky sample has no occlusion awareness — undamped, it paints
-// full sky brightness through hillsides plainly in the way.
-const float SKY_FALLBACK_DAMP = 0.5;
 
 // Foam's ALBEDO, not its finished radiance: churned bubbles scatter broadly and shouldn't render
 // unlit. Multiplied by ambient below rather than painted directly, so foam brightness follows time
@@ -385,9 +382,12 @@ void main() {
     // surface read as water rather than as a black hole, and the probe it samples is a fixed
     // 128-square render that does not depend on opaque reflections. The LOD is chosen by the
     // surface's own roughness, so calm water mirrors and chop diffuses, from Shaded up.
+    // Undamped. Whether the ray meets geometry is the trace's question; a miss means the probe is
+    // the right sky at the right brightness. Damping by depth at the ray's infinity pixel is
+    // meaningless there (every ray sits behind everything) and paints a half-dark ghost of what
+    // the ray passed behind.
     vec3 environmentFallback = max(
-            textureLod(u_Input11, environmentUv, environmentLod).rgb, vec3(0.0))
-            * SKY_FALLBACK_DAMP;
+            textureLod(u_Input11, environmentUv, environmentLod).rgb, vec3(0.0));
 
     // Rays that see no sky contribute nothing rather than contributing black: indoors and in caves
     // the fallback has to vanish, not darken the water.
