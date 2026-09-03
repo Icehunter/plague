@@ -13,10 +13,14 @@ covers what the pack itself does, not the engine underneath it.
 - Procedural sky dome, two models behind one option. `Scattering` (the default) marches the air:
   Rayleigh, aerosol and ozone with multiple scattering, from the camera's own altitude, into three
   small tables rebuilt every frame; sunset, twilight blue and the sun's aureole come out of the
-  integral. `Palette` is a nine-colour gradient with sunset band and glare sliders, kept for
+  integral, with an adaptation gain on the sun's light through twilight standing in for the
+  metering the pack does not have yet. `Palette` is a nine-colour gradient with sunset band and glare sliders, kept for
   side-by-side comparison while the scattering dome's brightness is tuned. Water
-  reflections and screen-space misses follow whichever dome is selected. Ambient light, fog colour
-  and cloud lighting read the palette under both settings.
+  reflections and screen-space misses follow whichever dome is selected. Under `Scattering` the
+  aerial haze on terrain, water and glass is marched too (in-scatter and transmittance per screen
+  froxel, with the fog drive's morning, night, after-rain and snow mist as a shallow layer) and
+  the render-edge veil dissolves into the sky along the same ray. The night-sky gate follows the selected
+  dome; ambient light, cloud lighting, smoke and banner fog read the palette under both settings.
 - Stars, with amount, size, roundness and softness controls.
 - Night nebula (intensity, zoom, amount).
 - Shooting stars (count, speed, frequency).

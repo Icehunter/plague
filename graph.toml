@@ -12,7 +12,8 @@ program = "shaders/blocks/terrain"
 # sceneHdrComposited and builtin.depth_opaque are read by the TRANSLUCENT arm only. The opaque
 # sub-draws run before the passes that fill them and would read last frame's content with no error.
 inputs = ["builtin.spriteBounds", "builtin.spriteHeightRange", "builtin.noise", "waterWaveB.history",
-          "sceneHdrComposited", "builtin.depth_opaque", "shoreWetness.history"]
+          "sceneHdrComposited", "builtin.depth_opaque", "shoreWetness.history",
+          "atmoAerial"]
 outputs = []
 
 # Ships both vsh/fsh stages: vanilla's entity vertex shader consumes Normal and never forwards it, so
@@ -195,6 +196,15 @@ height = 108
 filter = "linear"
 storage = true
 
+# 34 slices of 32 x 32 screen froxels: 32 depth slices, the sky along each froxel's ray, and the
+# frame's transmittance chroma. One texture, because the resolve has one sampler left.
+[targets.atmoAerial]
+format = "rgba16f"
+width = 1088
+height = 32
+filter = "linear"
+storage = true
+
 # First in the frame: nothing before them needs the sky; the resolve needs the sky-view table.
 # Each reads the true sun from u_SkyCelestial, never u_SunDirection, so none is on the engine's
 # per-pass-name uniform list and its silent permanent-noon default. local_size makes the engine
@@ -228,6 +238,16 @@ local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "atmoTransmittance", "atmoMultiScatter"]
 outputs = ["atmoSkyView"]
+
+[[pass]]
+name = "atmo_aerial"
+type = "compute"
+shader = "shaders/compute/atmo_aerial.comp"
+enabled_if = "PLAGUE_SKY_MODEL == 1"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+outputs = ["atmoAerial"]
 
 [targets.ssaoRaw]
 format = "r8"
@@ -470,7 +490,7 @@ shader = "shaders/post/gbuffer_resolve.fsh"
 # sunShadowMapRaw aliases the same texture under a different target name so the comparison-sampler
 # branch (keyed by exact target string) doesn't wrongly attach to this plain-sampler debug read. A
 # shader uniform and its graph.toml binding are one atomic contract — never remove one side alone.
-inputs = ["builtin.gNormal", "builtin.gAlbedo", "builtin.gMaterial", "builtin.gAo", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "cloudShadowMask", "atmoSkyView"]
+inputs = ["builtin.gNormal", "builtin.gAlbedo", "builtin.gMaterial", "builtin.gAo", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "cloudShadowMask", "atmoSkyView", "atmoAerial"]
 outputs = ["sceneHdr"]
 
 # Tileable grayscale focusing pattern, sampled by two rotated flowing layers with mirror-repeat UVs.
@@ -609,7 +629,7 @@ dispatch = [1, 1, 1]
 # dispatch above is an unused placeholder: local_size makes the engine derive real group counts
 # from cloudsVolumeCompute's own resolved pixel size every dispatch (ComputePassRunner), which is
 # what lets this pass track window resize the same way its own 0.5 scale factor already does.
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView"]
 outputs = ["cloudsVolumeCompute", "cloudsVolumeDistance"]
 
 [[pass]]
@@ -645,7 +665,7 @@ shader = "shaders/compute/clouds_march_volume.comp"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView"]
 outputs = ["cloudsVolumeComputeQuarter", "cloudsVolumeDistanceQuarter"]
 
 [[pass]]
@@ -681,7 +701,7 @@ shader = "shaders/compute/clouds_march_volume.comp"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView"]
 outputs = ["cloudsVolumeComputeFull", "cloudsVolumeDistanceFull"]
 
 [[pass]]
@@ -847,7 +867,7 @@ shader = "shaders/post/water_composite.fsh"
 # exactly, or both draw water or neither does; verify_graph_resolves.py pins the pair.
 enabled_if = "SSR_WATER_MODE > 0"
 blend = "translucent"
-inputs = ["builtin.waterNormal", "builtin.waterDepth", "ssrWater", "builtin.depth", "builtin.noise", "causticsTexture", "glintOcclusion", "builtin.celestials", "foamTexture", "foamNormalTexture", "foamHeightTexture", "waterEnvironment", "moonAlbedo", "moonNormal", "cloudFront"]
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "ssrWater", "builtin.depth", "builtin.noise", "causticsTexture", "glintOcclusion", "builtin.celestials", "foamTexture", "foamNormalTexture", "foamHeightTexture", "waterEnvironment", "moonAlbedo", "moonNormal", "cloudFront", "atmoSkyView", "atmoAerial"]
 outputs = ["sceneHdrComposited"]
 
 # Placed after the last scene writer, BEFORE bloom and underwater_refraction: accumulating a

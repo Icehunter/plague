@@ -17,21 +17,28 @@ all.
 
 ## The frame, in order
 
-`graph.toml` declares **57 passes** writing **44 targets**. They run in the order they appear in the
+`graph.toml` declares **58 passes** writing **45 targets**. They run in the order they appear in the
 file. Grouped by what they are for:
 
-### 0. Atmosphere: 3 compute passes
+### 0. Atmosphere: 4 compute passes
 
-`atmo_transmittance` → `atmo_multiscatter` → `atmo_skyview`, first in the file because nothing
-before them needs the sky and the resolve does. Each writes one small fixed-size table
-(256 × 64, 32 × 32, 192 × 108, all rgba16f) every frame: what survives from a point in the air to
-space, what arrives there after more than one bounce, and the dome as the camera sees it from its
-own altitude, marched per texel and lit by the true sun and the moon opposite it. The mappings
-live in `shaders/include/atmo_lut.glsl`, one function per writer/reader pair. The passes are gated
-on `PLAGUE_SKY_MODEL == 1`; the tables are not, because `resolve` and `water_environment_seed`
-list `atmoSkyView` as an input under either setting and the gate-consistency check refuses a pass
-that can run while a target it reads does not exist. Under `Palette` the tables stay zero and
-unread and the five-key palette in `sky.glsl` paints the dome.
+`atmo_transmittance` → `atmo_multiscatter` → `atmo_skyview` → `atmo_aerial`, first in the file
+because nothing before them needs the sky and the resolve does. Each writes one small fixed-size
+table (256 × 64, 32 × 32, 192 × 108, 1088 × 32, all rgba16f) every frame: what survives from a
+point in the air to space, what arrives there after more than one bounce, the dome as the camera
+sees it from its own altitude, and the same march bounded at each screen froxel's depth (32 × 32
+froxels, 32 depth slices to twice the render distance, plus a slice of the sky along each froxel
+and one of the frame's transmittance chroma). All lit by the true sun and the moon opposite it;
+the aerial pass adds the fog drive's mist as a shallow layer. The mappings live in
+`shaders/include/atmo_lut.glsl`, one function per writer/reader pair; a compute reader loads the
+tables as storage images, a fullscreen one samples them. The passes are gated on
+`PLAGUE_SKY_MODEL == 1`; the tables are not, because `resolve`, `water_composite`,
+`water_environment_seed` and `terrain` list them as inputs under either setting and the
+gate-consistency check refuses a pass that can run while a target it reads does not exist. Under
+`Palette` the tables stay zero and unread; the five-key palette in `sky.glsl` paints the dome and
+the Weibull haze in `fog_model.glsl` fogs the world, as before. Under `Scattering`,
+`fog_aerial.glsl` composes the same `PlagueFogTerms` from the aerial table and the sky along the
+ray, so a pixel at the render cutoff is the same table read as the sky beside it.
 
 ### 1. Geometry: 7 passes
 

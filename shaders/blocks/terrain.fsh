@@ -34,6 +34,9 @@ const float PLAGUE_ATLAS_GHOST_DIST = 32.0;
 // Read BY NAME by the engine (gates the water pre-pass on SSR_WATER_MODE/SSR_QUALITY) — a contract,
 // not a pack choice. Every declaring file must match byte-identically.
 #define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
+
+// Byte-identical to gbuffer_resolve.fsh's declaration: a pane's fog is the wall's fog behind it.
+#define PLAGUE_SKY_MODEL 1 //[0 1] compile "Sky Model" {0="Palette" 1="Scattering"}
 #define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 
 // Wave complexity is fixed at compile time; only strength (u_WaveStrength, bridged below) is a runtime scalar.
@@ -93,6 +96,9 @@ uniform sampler2D u_GeomInput5;
 // shoreWetness.history: (film, soak) left on dry blocks by a crest clearing their top, on the wave
 // solve's own actor-centred grid. Appended last; every earlier index keeps its slot.
 uniform sampler2D u_GeomInput6;
+// atmoAerial: the marched air per screen froxel (atmo_lut.glsl), for the forward arm's fog. The
+// eighth and last geometry slot.
+uniform sampler2D u_GeomInput7;
 
 
 
@@ -212,6 +218,13 @@ layout(std140) uniform u_PbrSettings {
 // Shared fog + sky colour. One definition across five call sites (gbuffer_resolve, water_composite,
 // banner_patterns, particles_translucent, here) that must agree or glass hazes to a different colour.
 #moj_import <fornax_runtime:fog.glsl>
+#define PLAGUE_ATMO_READS_AERIAL
+#moj_import <fornax_runtime:atmo_lut.glsl>
+#moj_import <fornax_runtime:fog_aerial.glsl>
+
+vec4 plagueAtmoFetchAerial(vec2 uv) {
+    return texture(u_GeomInput7, uv);
+}
 // The display transform, shared with tonemap.fsh. Needed because this arm's output is
 // display-referred and the fog colour is linear scene light; see plagueCompositeLinearOverDisplay.
 #moj_import <fornax_runtime:tonemap.glsl>
@@ -230,6 +243,7 @@ in float v_BlockLight;
 in float v_SkyLight;
 in vec2 v_MotionVector;
 in vec3 v_SunDirection;
+in vec3 v_Clip;
 flat in vec3 v_CameraAbs;
 flat in float v_Wetness;
 flat in uint v_MaterialId;
@@ -1046,11 +1060,29 @@ void main() {
             fragColor.rgb = max(fragColor.rgb, uwRelit);
         }
 
+#if PLAGUE_SKY_MODEL == 1
+        // The aerial table alone: a geometry pass has no sky-view sampler to spare, so the sky this
+        // pane dissolves into is the table's own sky slice along its froxel (fog_aerial.glsl).
+        vec2 fogNdcUv = (v_Clip.xy / v_Clip.z) * 0.5 + 0.5;
+        float fogDist = length(v_WorldPos);
+        float fogFar = plagueAtmoAerialFar();
+        vec4 fogAerial = plagueAtmoAerial(fogNdcUv, fogDist, fogFar);
+        float fogNearT = plagueAtmoAerial(fogNdcUv, max(fogDist - PLAGUE_FOG_SKY_LIGHT_REACH, 0.0), fogFar).a;
+        PlagueFogDrive fogDrive = PLAGUE_FOG_DRIVE(fogLighting);
+        PlagueFogTerms fogTerms = plagueFogTermsAerial(v_WorldPos, v_SkyLight, u_CameraSkyLight.x,
+                                                 renderDistance, fogAerial, fogNearT,
+                                                 plagueAtmoAerialSky(fogNdcUv),
+                                                 plagueAtmoAerialChroma(fogNdcUv), fogDrive,
+                                                 u_FogBorderDensity, u_DepthDarkness,
+                                                 0.0, 32.0, 32.0, vec3(0.80, 0.87, 0.97),
+                                                 vec3(1.0, 1.0, 999.0), fogLighting, vec3(1.0));
+#else
         PlagueFogTerms fogTerms = plagueFogTerms(v_WorldPos, v_SkyLight, u_CameraSkyLight.x,
                                                  renderDistance,
                                                  v_CameraAbs.y, fogDither, fogSky, fogLighting,
                                                  fogSunDir, u_FogDensity, u_FogBorderDensity,
                                                  u_DepthDarkness);
+#endif
         // Per-channel vec3, not scalar: underwater tint differs by wavelength (red dies first);
         // above water every channel agrees exactly, so this costs nothing there.
         vec3 fogOpacity = plagueFogOpacity(fogTerms);

@@ -342,6 +342,32 @@ vec3 plagueWarmLowSun(vec3 light, float sunUp) {
 }
 
 /**
+ * The same warmth plagueSkyRadiance's sunward band gives the palette, given instead to a sky
+ * sample from ANY dome (the scattering march has no authored band of its own). Luminance-
+ * preserving like plagueWarmLowSun, so it moves hue without adding brightness: a physical dome is
+ * already the right exposure, it is only missing the pack's own idea of how far the warmth should
+ * reach and how strong. Weighted the same way plagueSkyRadiance's band is (how level, how far
+ * around toward the sun) and the same way plagueWarmLowSun's weight is (u_SunsetSkyWarmth, and
+ * only during the pack's own sunset window), so turning either slider to 0 restores the sample
+ * exactly.
+ *
+ * @param VdotU view dotted with world up, of the direction the sample itself came from: not
+ *              necessarily the camera's own view ray, since a border-fog site samples the sky
+ *              along the fragment's ray, not the eye's.
+ */
+vec3 plagueWarmSkyBand(vec3 sky, float VdotU, float VdotS, float sunUp) {
+    float weight = plagueSunsetWeight(plagueSkyPhase(sunUp)) * u_SunsetSkyWarmth;
+    if (weight <= 0.0) {
+        return sky;
+    }
+    float up = clamp(VdotU, -1.0, 1.0);
+    float band = pow(max(1.0 - abs(up), 0.0), max(u_SunsetBandHeight, 0.05))
+               * pow(max(VdotS, 0.0), max(u_SunsetBandWidth, 0.05));
+    float luma = max(dot(sky, vec3(0.2126, 0.7152, 0.0722)), 1e-6);
+    return mix(sky, plagueBlackbody(u_SunsetTemp) * luma, weight * clamp(band, 0.0, 1.0));
+}
+
+/**
  * The whole visible dome, cosine-weighted: what a flat upward-facing surface is actually lit by.
  * This is what ambient wants — sampling the zenith alone lit a sunset with its bluest, least
  * representative direction and lost the warm bounce off water and open ground.

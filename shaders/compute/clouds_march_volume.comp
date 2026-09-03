@@ -13,25 +13,46 @@
 #moj_import <fornax_runtime:light_options.glsl>
 #moj_import <fornax_runtime:sky.glsl>
 
+// Byte-identical to the resolve's own declaration (verify_atmo_lut.py asserts this across every
+// program that declares it). clouds.glsl itself tests no compile option (an import is spliced
+// before the program's own defines, so a #if there would silently read 0); this program picks
+// which plagueGetClouds overload to call, below.
+#define PLAGUE_SKY_MODEL 1 //[0 1] compile "Sky Model" {0="Palette" 1="Scattering"}
+
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 // Binding order mirrors graph.toml's declared inputs-then-outputs for this pass exactly:
 // 0 globals (above), 1 packOptions (auto-injected by the engine, no declaration needed here),
-// 2 cloudBaseShape, 3 cloudDetailShape, 4 precipCoarseClipmap, 5 colour, 6 cloud-front distance.
-// Terrain visibility is resolved against the destination pixel in clouds_composite, so this compute
-// pass intentionally has no unused 2D depth descriptor mixed into its 3D-volume descriptor set.
+// 2 cloudBaseShape, 3 cloudDetailShape, 4 precipCoarseClipmap, 5 atmoSkyView, 6 colour, 7
+// cloud-front distance. Terrain visibility is resolved against the destination pixel in
+// clouds_composite, so this compute pass intentionally has no unused 2D depth descriptor mixed
+// into its 3D-volume descriptor set.
 layout(set = 0, binding = 2) uniform sampler3D u_CloudBaseShapeVolume;
 layout(set = 0, binding = 3) uniform sampler3D u_CloudDetailShapeVolume;
 layout(std430, set = 0, binding = 4) readonly buffer PrecipCoarseClipmap {
     int words[];
 } precipCoarseClipmap;
-layout(rgba16f, set = 0, binding = 5) uniform writeonly image2D u_OutClouds;
-layout(r32f, set = 0, binding = 6) uniform writeonly image2D u_OutCloudDistance;
+// Always bound (graph.toml never gates the atmoSkyView target on PLAGUE_SKY_MODEL): under Palette
+// this stays the zero-initialised table the three atmo_* passes never ran to fill, and the branch
+// in clouds.glsl that would read it is compiled away, so it is never sampled.
+layout(rgba16f, set = 0, binding = 5) uniform readonly image2D u_SkyView;
+layout(rgba16f, set = 0, binding = 6) uniform writeonly image2D u_OutClouds;
+layout(r32f, set = 0, binding = 7) uniform writeonly image2D u_OutCloudDistance;
 
 #define PLAGUE_CLOUD_NOISE_3D(uvw) texture(u_CloudBaseShapeVolume, uvw)
 #define PLAGUE_CLOUD_DETAIL_3D(uvw) texture(u_CloudDetailShapeVolume, uvw)
 #define PLAGUE_PRECIP_CLIPMAP(slot) precipCoarseClipmap.words[slot]
+#define PLAGUE_ATMO_READS_SKYVIEW
 #moj_import <fornax_runtime:clouds.glsl>
+
+vec4 plagueAtmoFetchSkyView(vec2 uv) {
+    ivec2 i0;
+    ivec2 i1;
+    vec2 f;
+    plagueAtmoBilinearSetup(uv, imageSize(u_SkyView), i0, i1, f);
+    return plagueAtmoBilinearMix(imageLoad(u_SkyView, i0), imageLoad(u_SkyView, ivec2(i1.x, i0.y)),
+                                 imageLoad(u_SkyView, ivec2(i0.x, i1.y)), imageLoad(u_SkyView, i1), f);
+}
 
 void main() {
     ivec2 outSize = imageSize(u_OutClouds);
@@ -123,6 +144,21 @@ void main() {
             vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
 #endif
 
+    // The two colours every tier below shares: the sky's own hemisphere and what a ray dissolves
+    // into at the render cutoff, computed once rather than per tier since neither depends on the
+    // deck. Under the scattering sky, both come from atmo_lut.glsl (the same table the sky and the
+    // terrain fog beside this cloud already read) with the pack's own sunset-band warmth
+    // (plagueWarmSkyBand, sky.glsl) rather than the palette's separately-authored colours.
+#if PLAGUE_SKY_MODEL == 1
+    vec3 ambientDome = plagueAtmoSkyHemisphere(sunDirTrue, plagueAtmoCameraRadius());
+    vec3 skyAlong = plagueAtmoSkyView(viewDir, sunDirTrue, plagueAtmoCameraRadius()).rgb;
+    skyAlong = plagueWarmSkyBand(skyAlong, viewDir.y, dot(viewDir, sunDirTrue), sunDirTrue.y) * atmColorMult;
+#else
+    vec3 ambientDome = plagueSkyHemisphere(skyColours, skyColours.lightUp);
+    vec3 skyAlong = plagueGetSky(skyColours, viewDir.y, dot(viewDir, sunDirTrue), dither, true, false)
+                   * atmColorMult;
+#endif
+
     // Three contributors, each marched only when it has something to draw: the convective low
     // deck, the low etage's smooth forms, the deep precipitating object. Compositing premultiplied
     // in ray order IS the union 1 - prod(1 - a), so forms coexist rather than trade. The smooth
@@ -157,41 +193,41 @@ void main() {
         // opacity change. Without it the layer also drew at full strength right up to the frame the
         // gate closed, which is a cliff at stratiform 1.
         layer[0] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, dither,
-                                   convectiveDeck, skyColours, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, atmColorMult, front[0])
+                                   convectiveDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, front[0])
                  * (1.0 - stratiform);
     }
     if (lowSheet > 0.0) {
         layer[1] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.3333),
-                                   sheetDeck, skyColours, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, atmColorMult, front[1]);
+                                   sheetDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, front[1]);
     }
     // Nimbostratus on its own tier, not Stratus's: rain and thunder visibly fall out of this deck,
     // so a shared gate takes the cloud out from under a storm.
     if (rainOn > 0.0 && stratiform > 0.0) {
         layer[2] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.6667),
-                                   stratiformDeck, skyColours, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, atmColorMult, front[2]);
+                                   stratiformDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, front[2]);
     }
     if (lowRolls > 0.0) {
         layer[3] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.1667),
-                                   rollDeck, skyColours, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, atmColorMult, front[3]);
+                                   rollDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, front[3]);
     }
     if (upperMasks.z > 0.0) {
         layer[4] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.5),
-                                   altocumulusDeck, skyColours, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, atmColorMult, front[4]);
+                                   altocumulusDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, front[4]);
     }
     if (upperMasks.y > 0.0) {
         layer[5] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.8333),
-                                   cirrocumulusDeck, skyColours, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, atmColorMult, front[5]);
+                                   cirrocumulusDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, front[5]);
     }
     if (upperMasks.x > 0.0) {
         layer[6] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.25),
-                                   cirrusDeck, skyColours, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, atmColorMult, front[6]);
+                                   cirrusDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
+                                   renderDistance, front[6]);
     }
 
     // Sorted by where the ray first meets material. A missed deck reports front 0 and zero alpha;

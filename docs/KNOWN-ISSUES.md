@@ -20,14 +20,48 @@ working notes; what is here is what a reader needs to know the limitation exists
 
 - **The climate signal snaps at biome borders**, so fog character can change abruptly across a line.
 - **Thunder is not its own fog driver.** Heavy weather reads as ordinary rain.
-- **The resolve is one sampler under Metal's ceiling of 16 live samplers per fragment function.**
-  The motion and raw-shadow-map debug views are compiled out for it (`PLAGUE_DEBUG_VIEWS`, usable
-  only with the Palette sky), and the aerial-perspective table cannot be added to
-  `shaders/post/gbuffer_resolve.fsh` without displacing an input. Raising the ceiling means Metal
-  argument buffers, which is an engine matter.
-- **Under the scattering sky, the halo and sunset-band sliders do not reach the dome, and ambient,
-  fog and cloud lighting come from the palette**, so the two can disagree at dusk. Closes when
-  aerial perspective and cloud lighting read the tables (`shaders/include/atmo_lut.glsl`).
+- **The resolve is at Metal's ceiling of 16 live samplers per fragment function.** The motion and
+  raw-shadow-map debug views are compiled out for it (`PLAGUE_DEBUG_VIEWS`, usable only with the
+  Palette sky), and no further input can be added to `shaders/post/gbuffer_resolve.fsh` without
+  displacing one. Raising the ceiling means Metal argument buffers, which is an engine matter.
+  `tools/check_metal_pipelines.py` measures the count.
+- **Under the scattering sky, a cloud's DIRECT sun/moon light still comes from the palette**
+  (`lighting.light` / `plagueMoonColor` in `shaders/include/clouds.glsl`), so a cloud's lit side can
+  disagree with the air under it at dusk. A table-lit direct term was tried and rejected by eye:
+  clouds under a low deck's horizon went grey where the palette keeps them warm. Open. (A cloud's
+  ambient and its distance fade-to-sky DO read the scattering tables under
+  `PLAGUE_SKY_MODEL == 1`, via the `plagueGetClouds` overload `clouds_march_volume.comp` calls,
+  with the pack's own sunset-band warmth on the fade; only the direct term is still palette-only.
+  `clouds_march.fsh`, the non-live fullscreen fallback, still calls the palette overload
+  unconditionally.)
+- **The sun disc's own brightness is not on the dome's exposure ladder** (`PLAGUE_ATMO_SKY_GAIN`,
+  the twilight adaptation): it is gated off at sunset (`sunSetGate` in `gbuffer_resolve.fsh`) so
+  it does not sit bright on a dark sky, but while it is up its brightness is still
+  `plagueSunColor`'s own analytic calibration, independent of the table gain. Not attempted: doing
+  so unconditionally overexposed the disc at noon, where the un-gained disc is already the
+  accepted look.
+- **The scattering march does not apply atmospheric refraction.** A real sun is visible about
+  0.833 degrees (34 arcmin refraction plus its own 16 arcmin radius) past where its geometric
+  position would predict, which is why the disc's own set gate is offset by exactly that much; the
+  dome and aerial marches still use the un-refracted direction, so the sky's own colour continues
+  to shift about that much earlier than the disc vanishes. Measured as a minor effect on the
+  sunset's warmth, not attempted here.
+- **A far hill dissolved by the render-edge veil still hides the clouds behind it**, leaving a
+  sky-coloured cutout with no cloud in it (`shaders/post/clouds_composite.fsh` tests cloud depth
+  against terrain depth). A see-through weight on the veil was tried and rejected: at partial veil
+  it painted horizon cloud over terrain still in view.
+- **Smoke and banner fog use the palette haze under the scattering sky.** Those slots draw through
+  vanilla pipelines that receive no pack inputs, so they cannot read the aerial table; an engine
+  change. The smoke-fog mismatch below is the same seam.
+- **The scattering sky's twilight ends about five degrees earlier than the palette's.** Through
+  civil twilight the adaptation gain (`PLAGUE_ATMO_TWILIGHT_GAIN`) keeps the sun-side glow at the
+  palette's level; past six degrees below the horizon the sun reaches only the air above 15 km
+  and the glow is a fifth of the palette's by eight. Real skies keep more from high aerosol the
+  model does not carry. About twenty seconds of game time.
+- **The aerial table stores one transmittance channel** and readers reconstruct the other two
+  with an exponent taken at the camera's altitude (`plagueAtmoTransmittanceChroma`), exact for
+  one medium and within 3% at sea level for the mixed air. A second table would need a sampler
+  the resolve does not have.
 
 ## Clouds
 

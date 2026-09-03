@@ -52,7 +52,7 @@ void main() {
     PlagueAtmoAir air = plagueAtmoAir(clamp(u_SkyState.x, 0.0, 1.0), clamp(u_FrameState.z, 0.0, 1.0));
 
     vec4 sky = plagueAtmoMarch(vec3(0.0, r, 0.0), dir, sunDir,
-                               plagueAtmoSunRadiance(), plagueAtmoMoonRadiance(), air,
+                               plagueAtmoSunRadiance(sunDir), plagueAtmoMoonRadiance(), air,
                                PLAGUE_ATMO_SKYVIEW_STEPS);
     imageStore(u_OutSkyView, texel, sky);
 }

@@ -10,6 +10,7 @@
 #moj_import <fornax_runtime:atmosphere.glsl>
 #moj_import <fornax_runtime:sky.glsl>
 #define PLAGUE_ATMO_READS_SKYVIEW
+#define PLAGUE_ATMO_READS_AERIAL
 #moj_import <fornax_runtime:atmo_lut.glsl>
 #moj_import <fornax_runtime:stars.glsl>
 #moj_import <fornax_runtime:nebula.glsl>
@@ -20,6 +21,7 @@
 // Imported after sky.glsl: fog colour samples plagueGetSky along the view ray, which is why the
 // render-distance edge disappears rather than hardening. water_composite.fsh imports the same file.
 #moj_import <fornax_runtime:fog.glsl>
+#moj_import <fornax_runtime:fog_aerial.glsl>
 #moj_import <fornax_runtime:ocean_caustics.glsl>
 
 uniform sampler2D u_Input0; // builtin.gNormal
@@ -55,6 +57,11 @@ uniform sampler2D u_Input18; // atmoSkyView, the marched dome (atmo_lut.glsl); z
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
     return texture(u_Input18, uv);
+}
+uniform sampler2D u_Input19; // atmoAerial, in-scatter and transmittance per screen froxel; zero under Palette
+
+vec4 plagueAtmoFetchAerial(vec2 uv) {
+    return texture(u_Input19, uv);
 }
 
 // Metal allows 16 samplers per fragment function, counting only the ones the code reads, and this
@@ -588,10 +595,20 @@ int debugView = int(u_Param3 + 0.5);
             // Graded so the dome agrees with the aerial haze and border fog it fades into; all
             // three read the same atmColorMult. Additive stars/nebula/discs/aurora below are
             // separate light sources, not haze, and stay ungraded.
+            // How much of the additive night sky shows: under the marched dome, gated on the sun's
+            // elevation through twilight (atmo_lut.glsl), so stars wait for the sky to go dark
+            // rather than for the palette's night factor.
+            float nightGate = 1.0;
 #if PLAGUE_SKY_MODEL == 1
             // One table read, dithered as plagueGetSky is: a smooth gradient is where banding
-            // shows first.
-            skyOut = plagueAtmoSkyView(viewRay, sunDirTrue, plagueAtmoCameraRadius()).rgb * atmColorMult;
+            // shows first. Warmed by the pack's own sunset band (sky.glsl) before atmColorMult:
+            // a clear physical sky is white well before it is dark, since the reddened sunlight
+            // that colours it is confined to a shrinking band near the sun, not spread across the
+            // dome the way the palette's authored band was.
+            vec3 skyPhysical = plagueAtmoSkyView(viewRay, sunDirTrue, plagueAtmoCameraRadius()).rgb;
+            skyPhysical = plagueWarmSkyBand(skyPhysical, VdotU, VdotS, sunDirTrue.y);
+            skyOut = skyPhysical * atmColorMult;
+            nightGate = plagueAtmoNightGate(sunDirTrue.y);
             skyOut = max(skyOut + (skyDither - 0.5) / 128.0, vec3(0.0));
 #else
             skyOut = plagueGetSky(skyColours, VdotU, VdotS, skyDither, true, false) * atmColorMult;
@@ -604,18 +621,18 @@ int debugView = int(u_Param3 + 0.5);
             vec2 starCoord = plagueStarCoord(viewRay, PLAGUE_STAR_SPHERENESS, syncedTime);
             skyOut += plagueGetStars(starCoord, VdotU, VdotS, 1.0, 0.0,
                                      invNoonFactor * invNoonFactor,
-                                     plagueSunVisibility, 1.0 - rainFactor, u_SunriseColor.w);
+                                     plagueSunVisibility, 1.0 - rainFactor, u_SunriseColor.w) * nightGate;
 
             // Own coords (sphereness 0.75, not the star field's 0.5); additive order vs. stars
             // doesn't matter.
             skyOut += plagueGetNightNebula(viewRay, VdotU, VdotS, syncedTime,
-                                           plagueNightFactor, 1.0 - rainFactor, u_SunriseColor.w);
+                                           plagueNightFactor, 1.0 - rainFactor, u_SunriseColor.w) * nightGate;
 
             // Reuses starCoord so meteors travel the same projected plane as the stars. moon phase
             // index (u_SkyCelestial.w): a new moon lets more of them through.
             skyOut += plagueGetShootingStars(starCoord, VdotU, VdotS, syncedTime,
                                              invNoonFactor * invNoonFactor, plagueSunVisibility,
-                                             1.0 - rainFactor, u_SunriseColor.w, u_SkyCelestial.w);
+                                             1.0 - rainFactor, u_SunriseColor.w, u_SkyCelestial.w) * nightGate;
 
             // --- Sun and moon discs -------------------------------------------------------------
             //
@@ -628,19 +645,26 @@ int debugView = int(u_Param3 + 0.5);
             float plagueMoonDiscGlow = smoothstep(-0.03, 0.08, -sunDirTrue.y)
                                       * (1.0 - plagueSunVisibility);
             // Same radiances the world is lit by, so the disc and its shadows can never disagree
-            // about colour, and it reddens through sunset because its light does.
+            // about colour, and it reddens through sunset because its light does. plagueSunColor's
+            // own transmittance is clamped at the horizon (atmosphere.glsl), by design, since below
+            // it the ray has hit the planet and reddening it further is meaningless, so nothing
+            // upstream ever dims the disc once it sets, and it sits at full brightness on the water
+            // after the sky around it has gone dark. Faded out over the same 0.833 degrees (34
+            // arcmin horizontal refraction plus the sun's own 16 arcmin radius) that define sunset:
+            // the last sliver above a level horizon is where the real sun visually disappears.
             vec3 discEyePos = plagueAirEyePos(u_CameraAbs.y);
+            float sunSetGate = smoothstep(-0.014535, 0.0, sunDirTrue.y);
             skyOut += plagueCelestialDiscs(viewRay, sunDirTrue, u_SkyCelestial.w, u_WorldClock.x,
                                            u_Input15, u_Input16,
                                            1.0 - rainFactor, plagueMoonDiscGlow,
-                                           plagueSunColor(discEyePos, sunDirTrue),
+                                           plagueSunColor(discEyePos, sunDirTrue) * sunSetGate,
                                            plagueMoonColor(discEyePos, -sunDirTrue));
 
             // Marches the flattened view ray, so it's the only sky element with a real cost curve;
             // gated to zero for daylight, rain, and anything but a full moon by default.
             auroraTerm = plagueGetAurora(viewRay, VdotU, skyDither, u_CameraAbs.xz, syncedTime,
                                          plagueSunVisibility, rainFactor, u_SkyCelestial.w,
-                                         u_Input10);
+                                         u_Input10) * nightGate;
             skyOut += auroraTerm;
         }
 
@@ -1858,6 +1882,31 @@ int debugView = int(u_Param3 + 0.5);
                 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
         // atmColorMult is computed above the sky branch (see there) so the dome and the fog it
         // fades into agree.
+#if PLAGUE_SKY_MODEL == 1
+        // The marched air along this pixel's froxel, and the sky it dissolves into, from the tables
+        // (fog_aerial.glsl). texCoord is the froxel coordinate: the same NDC the ray came from.
+        float fogDist = length(worldPos);
+        float fogFar = plagueAtmoAerialFar();
+        vec4 fogAerial = plagueAtmoAerial(texCoord, fogDist, fogFar);
+        float fogNearT = plagueAtmoAerial(texCoord, max(fogDist - PLAGUE_FOG_SKY_LIGHT_REACH, 0.0), fogFar).a;
+        vec3 fogDir = worldPos / max(fogDist, 1e-4);
+        vec3 fogSky = plagueAtmoSkyView(fogDir, sunDirTrue, plagueAtmoCameraRadius()).rgb;
+        // Same warmth the open dome above the horizon gets (sky.glsl), sampled along the border's
+        // own ray rather than the eye's: without it, geometry dissolving into the border veil fades
+        // to a sky that is warm above eye level and flatly white just below it.
+        fogSky = plagueWarmSkyBand(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y);
+        PlagueFogDrive fogDrive = PLAGUE_FOG_DRIVE(lighting);
+        PlagueFogTerms fogTerms = plagueFogTermsAerial(worldPos, skyLight, u_CameraSkyLight.x,
+                                                 renderDistance, fogAerial, fogNearT, fogSky,
+                                                 plagueAtmoAerialChroma(texCoord), fogDrive,
+                                                 u_FogBorderDensity, u_DepthDarkness,
+                                                 plagueChunksToBlocks(u_UnderwaterFogStart),
+                                                 plagueChunksToBlocks(u_WaterDistanceFog),
+                                                 plagueChunksToBlocks(u_WaterDepthFog),
+                                                 vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
+                                                 vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
+                                                      plagueChunksToBlocks(u_WaterDarknessDepth)), lighting, atmColorMult);
+#else
         PlagueFogTerms fogTerms = plagueFogTerms(worldPos, skyLight, u_CameraSkyLight.x,
                                                  renderDistance, u_CameraAbs.y, fogDither,
                                                  skyColours, lighting, sunDirTrue,
@@ -1868,6 +1917,7 @@ int debugView = int(u_Param3 + 0.5);
                                                  vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
                                                  vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
                                                       plagueChunksToBlocks(u_WaterDarknessDepth)), atmColorMult);
+#endif
         // No in-water-leg cap on the veil: fogs the whole eye-to-fragment ray. The water term is
         // the only thing that seals the horizon underwater — the border curve (d/renderDistance)^16
         // contributes nothing below ~160 blocks — so capping it left the above-water leg with no

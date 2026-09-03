@@ -59,6 +59,44 @@ struct PlagueFogTerms {
     vec3 uwTint;        // underwater scene tint; EXACTLY vec3(1.0) above water
 };
 
+// The eye-in-water terms, shared by this dispatcher and the aerial-table one (fog_aerial.glsl):
+// exact identities above water.
+void plagueFogWaterTerms(inout PlagueFogTerms terms, vec3 worldPos, float rayLength,
+                         float renderDistance, PlagueLighting lighting, float uwDepthFloor,
+                         float uwFogStartBlocks, float uwDistanceFogBlocks, float uwDepthFogBlocks,
+                         vec3 uwTintBase, vec3 uwDarkness) {
+#if PLAGUE_UNDERWATER
+    if (u_WaterState.x > 0.5) {
+        // WATER_VEIL and WATER_ABSORPTION_TINT are separate gates sharing the outer u_WaterState
+        // branch: a single shared gate would let turning off "Water Fog" silently remove the
+        // whole scene tint too, ~30-45% per channel. Named WATER_ABSORPTION_TINT rather than
+        // WATER_TINT since water_composite.fsh already declares an unrelated local constant of
+        // that name.
+#if WATER_VEIL
+        // No dither on the mix factor: a factor dither's error scales with veil-to-scene
+        // contrast, so it peaks along the veil's own gradient as visible structured lines
+        // (quantisation is handled once, at the end of tonemap.fsh). Lamp glow ADDS with its own
+        // falloff rather than lifting the lit scale, since it's a local source.
+        terms.water = plagueGetWaterFogAniso(worldPos, uwFogStartBlocks,
+                                             uwDistanceFogBlocks, uwDepthFogBlocks);
+        terms.waterColor = plagueWaterFogColor(lighting)
+                         * plagueWaterVeilDarkness(worldPos, uwDistanceFogBlocks, uwDarkness.z,
+                                                   uwDarkness.x, uwDarkness.y)
+                         + plagueWaterLampGlow(lighting, rayLength);
+#endif
+#if WATER_ABSORPTION_TINT
+        // Display-referred ratio, converted to linear once here. CARRIES DEPTH: while depth-blind,
+        // descending made the frame BRIGHTER since near blocks were lit as if at the surface
+        // (measured live, Y=33 brighter than Y=58).
+        terms.uwTint = plagueAuthoredToLinear(
+                plagueUnderwaterMult(rayLength, renderDistance, uwDepthFloor, lighting,
+                                     uwTintBase) * 0.85)
+                     * plagueWaterDepthDim(worldPos, uwDarkness.z, uwDarkness.y);
+#endif
+    }
+#endif
+}
+
 // The dispatcher: every fog quantity for one fragment, computed once, handed out as terms.
 PlagueFogTerms plagueFogTerms(vec3 worldPos, float skyLight, float cameraSkyLight,
                               float renderDistance, float cameraAltitude, float dither,
@@ -160,36 +198,9 @@ PlagueFogTerms plagueFogTerms(vec3 worldPos, float skyLight, float cameraSkyLigh
     terms.borderColor = plagueGetSky(skyColours, VdotU, VdotS, dither, true, false)
                        * atmColorMult;
 
-#if PLAGUE_UNDERWATER
-    if (u_WaterState.x > 0.5) {
-        // WATER_VEIL and WATER_ABSORPTION_TINT are separate gates sharing the outer u_WaterState
-        // branch (they used to share one, and turning off "Water Fog" silently removed the whole
-        // scene tint with it, ~30-45% per channel). Named WATER_ABSORPTION_TINT rather than
-        // WATER_TINT since water_composite.fsh already declares an unrelated local constant of
-        // that name.
-#if WATER_VEIL
-        // No dither on the mix factor: a factor dither's error scales with veil-to-scene
-        // contrast, so it peaks along the veil's own gradient as visible structured lines
-        // (quantisation is handled once, at the end of tonemap.fsh). Lamp glow ADDS with its own
-        // falloff rather than lifting the lit scale, since it's a local source.
-        terms.water = plagueGetWaterFogAniso(worldPos, uwFogStartBlocks,
-                                             uwDistanceFogBlocks, uwDepthFogBlocks);
-        terms.waterColor = plagueWaterFogColor(lighting)
-                         * plagueWaterVeilDarkness(worldPos, uwDistanceFogBlocks, uwDarkness.z,
-                                                   uwDarkness.x, uwDarkness.y)
-                         + plagueWaterLampGlow(lighting, rayLength);
-#endif
-#if WATER_ABSORPTION_TINT
-        // Display-referred ratio, converted to linear once here. CARRIES DEPTH: while depth-blind,
-        // descending made the frame BRIGHTER since near blocks were lit as if at the surface
-        // (measured live, Y=33 brighter than Y=58).
-        terms.uwTint = plagueAuthoredToLinear(
-                plagueUnderwaterMult(rayLength, renderDistance, uwDepthFloor, lighting,
-                                     uwTintBase) * 0.85)
-                     * plagueWaterDepthDim(worldPos, uwDarkness.z, uwDarkness.y);
-#endif
-    }
-#endif
+    plagueFogWaterTerms(terms, worldPos, rayLength, renderDistance, lighting, uwDepthFloor,
+                        uwFogStartBlocks, uwDistanceFogBlocks, uwDepthFogBlocks, uwTintBase,
+                        uwDarkness);
     return terms;
 }
 

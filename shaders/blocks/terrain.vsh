@@ -27,6 +27,8 @@ out float v_SkyLight;
 out vec2 v_MotionVector;
 // Forwarded because push constants are declared per stage and the fragment stage can't see them.
 out vec3 v_SunDirection;
+// Clip x, y, w: the fragment's own NDC, the coordinate the aerial-perspective table is indexed by.
+out vec3 v_Clip;
 
 // u_Globals IS visible to the fragment stage (Blaze3D gives every bind-group entry the same
 // VERTEX|FRAGMENT stage mask), unlike push constants; forwarded anyway since they're already here
@@ -165,6 +167,7 @@ void main() {
     }
 
     gl_Position = u_ProjectionMatrix * u_ModelViewMatrix * vec4(worldPosition, 1.0);
+    v_Clip = gl_Position.xyw;
     vec4 previousClipPosition = u_PrevProjectionMatrix * u_PrevModelViewMatrix * vec4(previousWorldPosition, 1.0);
 
     // Subtracting each frame's own jitter cancels TAA's baked-in NDC offset; skipping it leaves the

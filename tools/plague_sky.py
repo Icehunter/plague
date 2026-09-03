@@ -191,6 +191,21 @@ class Sky:
         warm = self.air.blackbody(self.options["u_SunsetTemp"]) * luma
         return light + (warm - light) * weight
 
+    def warm_sky_band(self, sky, vdotu, vdots, sun_up):
+        """plagueWarmSkyBand: the same warmth, luminance-preserving, given to a sky sample from
+        any dome rather than a light, weighted by the sunward-band shape plagueSkyRadiance uses."""
+        weight = sunset_weight(self.phase(sun_up)) * self.options["u_SunsetSkyWarmth"]
+        if weight <= 0.0:
+            return np.asarray(sky, dtype=float)
+        up = max(min(vdotu, 1.0), -1.0)
+        band = (max(1.0 - abs(up), 0.0) ** max(self.options["u_SunsetBandHeight"], 0.05)
+                * max(vdots, 0.0) ** max(self.options["u_SunsetBandWidth"], 0.05))
+        band = min(max(band, 0.0), 1.0)
+        sky = np.asarray(sky, dtype=float)
+        luma = max(float(sky @ LUMA), 1e-6)
+        warm = self.air.blackbody(self.options["u_SunsetTemp"]) * luma
+        return sky + (warm - sky) * (weight * band)
+
     # --- what the calibration is solved against ---------------------------------------
 
     def dome_average(self, light_dir_true, elevations=60, azimuths=13, **kw):

@@ -34,6 +34,11 @@ def _literal_quotient(expr, name):
 
 
 def _const(src, kind, name):
+    if kind == "vec2":
+        m = re.search(r"const\s+vec2\s+" + name + r"\s*=\s*vec2\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)\s*;", src)
+        if not m:
+            raise SystemExit(f"plague_atmo_lut: {name} not found in {SHADER.name}")
+        return (float(m.group(1)), float(m.group(2)))
     if kind == "ivec2":
         m = re.search(r"const\s+ivec2\s+" + name + r"\s*=\s*ivec2\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*;", src)
         if not m:
@@ -63,6 +68,7 @@ class AtmoLut:
         self.sea_level_fallback = _const(src, "float", "PLAGUE_ATMO_SEA_LEVEL_FALLBACK")
         self.mie_g = _const(src, "float", "PLAGUE_ATMO_MIE_G")
         self.ground_albedo = _const(src, "float", "PLAGUE_ATMO_GROUND_ALBEDO")
+        self.ground_band_deg = _const(src, "float", "PLAGUE_ATMO_GROUND_BAND_DEG")
         self.sky_gain = _const(src, "float", "PLAGUE_ATMO_SKY_GAIN")
         self.moon_hold = _const(src, "float", "PLAGUE_ATMO_MOON_HOLD")
         self.transmittance_size = _const(src, "ivec2", "PLAGUE_ATMO_TRANSMITTANCE_SIZE")
@@ -72,6 +78,18 @@ class AtmoLut:
         self.multiscatter_directions = _const(src, "int", "PLAGUE_ATMO_MULTISCATTER_DIRECTIONS")
         self.multiscatter_steps = _const(src, "int", "PLAGUE_ATMO_MULTISCATTER_STEPS")
         self.skyview_steps = _const(src, "int", "PLAGUE_ATMO_SKYVIEW_STEPS")
+        self.mist_sigma = _const(src, "float", "PLAGUE_ATMO_MIST_SIGMA")
+        self.night_begin_deg = _const(src, "float", "PLAGUE_ATMO_NIGHT_BEGIN_DEG")
+        self.night_full_deg = _const(src, "float", "PLAGUE_ATMO_NIGHT_FULL_DEG")
+        self.twilight_gain = _const(src, "float", "PLAGUE_ATMO_TWILIGHT_GAIN")
+        self.twilight_rise = _const(src, "vec2", "PLAGUE_ATMO_TWILIGHT_RISE")
+        self.twilight_fall = _const(src, "vec2", "PLAGUE_ATMO_TWILIGHT_FALL")
+        self.aerial_grid = _const(src, "int", "PLAGUE_ATMO_AERIAL_GRID")
+        self.aerial_slices = _const(src, "int", "PLAGUE_ATMO_AERIAL_SLICES")
+        self.aerial_size = _const(src, "ivec2", "PLAGUE_ATMO_AERIAL_SIZE")
+        self.aerial_steps = _const(src, "int", "PLAGUE_ATMO_AERIAL_STEPS")
+        self.mist_density = 0.0
+        self.mist_height = 1.0
 
         self.rg = self.air.planet_radius
         self.rt = self.air.atmosphere_top
@@ -94,6 +112,25 @@ class AtmoLut:
 
     def camera_radius(self, world_y, sea_level=None):
         return self.rg + self.altitude(world_y, sea_level)
+
+    def with_mist(self, mist_amount, fog_amount, mist_height_blocks):
+        """plagueAtmoAirWithMist: the fog drive's mist as a shallow layer, for the aerial table."""
+        self.mist_density = self.mist_sigma * max(mist_amount, 0.0) * max(fog_amount, 0.0)
+        self.mist_height = max(mist_height_blocks, 1.0) * self.metres_per_block
+        return self
+
+    def mist(self, altitude):
+        h = np.maximum(np.asarray(altitude, dtype=float), 0.0)
+        return self.mist_density * np.exp(-h / self.mist_height)
+
+    def chroma(self, altitude):
+        """plagueAtmoTransmittanceChroma: the per-channel exponent on a luminance transmittance."""
+        ext = self.extinction(self.density(np.array([altitude])))[0] + self.mist(altitude)
+        return ext / max(float(ext @ LUMA), 1e-12)
+
+    def aerial_slice_depth(self, slice_index, far):
+        s = (slice_index + 1) / self.aerial_slices
+        return far * s * s
 
     def density(self, altitude):
         """(N, 3) per-component density at (N,) altitudes in metres."""
@@ -346,10 +383,17 @@ class AtmoLut:
 
     # --- lights ------------------------------------------------------------------------
 
-    def sun_radiance(self):
+    def twilight_gain_at(self, sun_elevation_sine):
+        e = math.degrees(math.asin(max(-1.0, min(1.0, float(sun_elevation_sine)))))
+        bump = ((1.0 - float(smoothstep(self.twilight_rise[0], self.twilight_rise[1], e)))
+                * float(smoothstep(self.twilight_fall[0], self.twilight_fall[1], e)))
+        return 1.0 + (self.twilight_gain - 1.0) * bump
+
+    def sun_radiance(self, sun_dir=None):
         a = self.air
+        gain = self.twilight_gain_at(np.asarray(sun_dir, dtype=float)[1]) if sun_dir is not None else 1.0
         return (a.blackbody(a.sun_temperature)
-                * (a.sun_luminance * a.options["u_SunIntensity"] * self.sky_gain))
+                * (a.sun_luminance * a.options["u_SunIntensity"] * self.sky_gain * gain))
 
     def moon_radiance(self):
         a = self.air
@@ -360,23 +404,64 @@ class AtmoLut:
     # --- the march ---------------------------------------------------------------------
 
     def march(self, origins, dirs, sun_dir, steps=None):
-        """(N, 4): rgb in-scatter and luminance transmittance for (N, 3) origins and directions."""
+        """(N, 4): rgb in-scatter and luminance transmittance for (N, 3) origins and directions,
+        to the ground if the ray reaches it, else to the top of the atmosphere. Below the horizon,
+        blended toward the ground term over ground_band_deg (plagueAtmoMarch) so the value equals
+        the sky branch's own at the boundary, rather than stepping to ground_albedo times it."""
         if steps is None:
             steps = self.skyview_steps
         o = np.asarray(origins, dtype=float)
         d = np.asarray(dirs, dtype=float)
-        sun = np.asarray(sun_dir, dtype=float)
         r0 = np.linalg.norm(o, axis=-1)
         mu0 = np.einsum("nk,nk->n", o, d) / r0
+        mu_h = self.horizon_mu(r0)
+        hits = mu0 <= mu_h
         to_ground = self.distance_to_ground(r0, mu0)
-        end = np.where(to_ground > 0.0, to_ground, self.distance_to_top(r0, mu0))
+        end = np.where(hits, to_ground, self.distance_to_top(r0, mu0))
+        out, trans = self.march_to(o, d, sun_dir, end, steps, with_transmittance=True)
+        if not np.any(hits):
+            return out
+        as_if_sky = self.march_to(o, d, sun_dir, self.distance_to_top(r0, mu0), steps)
+        up = o / r0[:, None]
+        flat = d - up * mu0[:, None]
+        flat_len = np.linalg.norm(flat, axis=-1, keepdims=True)
+        flat = np.where(flat_len > 1e-5, flat / np.maximum(flat_len, 1e-12), np.array([1.0, 0.0, 0.0]))
+        horizon = flat * np.sqrt(np.maximum(1.0 - mu_h * mu_h, 0.0))[:, None] + up * mu_h[:, None]
+        horizon /= np.linalg.norm(horizon, axis=-1, keepdims=True)
+        horizon_sky = self.march_to(o, horizon, sun_dir, self.distance_to_top(r0, mu_h), steps)
+        ground_point = o + d * np.where(hits, to_ground, 0.0)[:, None]
+        ground_up = ground_point / np.linalg.norm(ground_point, axis=-1, keepdims=True)
+        cos_sun = ground_up @ np.asarray(sun_dir, dtype=float)
+        ground_r = np.full(r0.shape, self.rg + 1.0)
+        direct = (self.transmittance_to_light(ground_r, cos_sun) * self.sun_radiance(sun_dir)
+                  * np.maximum(cos_sun, 0.0)[:, None]
+                  + self.transmittance_to_light(ground_r, -cos_sun) * self.moon_radiance()
+                  * np.maximum(-cos_sun, 0.0)[:, None])
+        ground = self.ground_albedo * (direct / math.pi + horizon_sky[:, :3])
+        ground_formula = out.copy()
+        ground_formula[:, :3] = out[:, :3] + trans * ground
+
+        below_deg = np.degrees(np.arcsin(np.clip(mu_h, -1.0, 1.0)) - np.arcsin(np.clip(mu0, -1.0, 1.0)))
+        band = np.clip(below_deg / self.ground_band_deg, 0.0, 1.0)
+        band = (band * band * (3.0 - 2.0 * band))[:, None]
+        result = out.copy()
+        result[hits] = as_if_sky[hits] * (1.0 - band[hits]) + ground_formula[hits] * band[hits]
+        return result
+
+    def march_to(self, origins, dirs, sun_dir, end, steps, with_transmittance=False):
+        """plagueAtmoMarchTo: the same march bounded at (N,) distances in metres."""
+        o = np.asarray(origins, dtype=float)
+        d = np.asarray(dirs, dtype=float)
+        sun = np.asarray(sun_dir, dtype=float)
+        r0 = np.linalg.norm(o, axis=-1)
+        end = np.broadcast_to(np.asarray(end, dtype=float), r0.shape)
 
         cos_sun = d @ sun
         pr_s = self.phase_rayleigh(cos_sun)[:, None]
         pm_s = self.phase_mie(cos_sun)[:, None]
         pr_m = self.phase_rayleigh(-cos_sun)[:, None]
         pm_m = self.phase_mie(-cos_sun)[:, None]
-        sun_rad = self.sun_radiance()
+        sun_rad = self.sun_radiance(sun)
         moon_rad = self.moon_radiance()
 
         radiance = np.zeros(o.shape)
@@ -390,21 +475,25 @@ class AtmoLut:
             t_prev = t_next
             pos = o + d * t[:, None]
             r = np.linalg.norm(pos, axis=-1)
+            r_table = np.maximum(r, self.rg + 1.0)
             up = pos / r[:, None]
-            dens = self.density(r - self.rg)
+            altitude = r - self.rg
+            dens = self.density(altitude)
+            mist = self.mist(altitude)[:, None]
             sc_air = self.air.rayleigh * dens[:, 0:1]
-            sc_haze = self.air.aerosol_scatter * dens[:, 1:2] * np.ones(3)
-            ex = self.extinction(dens)
+            sc_haze = (self.air.aerosol_scatter * dens[:, 1:2] + mist) * np.ones(3)
+            ex = self.extinction(dens) + mist
             mu_sun = up @ sun
-            sun_term = (self.transmittance_to_light(r, mu_sun) * (sc_air * pr_s + sc_haze * pm_s)
-                        + self.multiscatter(r, mu_sun) * (sc_air + sc_haze))
-            moon_term = (self.transmittance_to_light(r, -mu_sun) * (sc_air * pr_m + sc_haze * pm_m)
-                         + self.multiscatter(r, -mu_sun) * (sc_air + sc_haze))
+            sun_term = (self.transmittance_to_light(r_table, mu_sun) * (sc_air * pr_s + sc_haze * pm_s)
+                        + self.multiscatter(r_table, mu_sun) * (sc_air + sc_haze))
+            moon_term = (self.transmittance_to_light(r_table, -mu_sun) * (sc_air * pr_m + sc_haze * pm_m)
+                         + self.multiscatter(r_table, -mu_sun) * (sc_air + sc_haze))
             scattered = sun_term * sun_rad + moon_term * moon_rad
             step_t = np.exp(-ex * dt[:, None])
             radiance += trans * (scattered - scattered * step_t) / np.maximum(ex, 1e-12)
             trans *= step_t
-        return np.concatenate([radiance, (trans @ LUMA)[:, None]], axis=-1)
+        out = np.concatenate([radiance, (trans @ LUMA)[:, None]], axis=-1)
+        return (out, trans) if with_transmittance else out
 
     def radiance(self, view_dirs, sun_dir, camera_y=64.0, sea_level=None):
         """What the sky-view table stores for these directions, marched at the camera's radius."""
@@ -412,6 +501,36 @@ class AtmoLut:
         v = np.atleast_2d(np.asarray(view_dirs, dtype=float))
         origins = np.tile(np.array([0.0, r, 0.0]), (v.shape[0], 1))
         return self.march(origins, v, sun_dir)
+
+    def night_gate(self, sun_elevation_sine):
+        e = math.degrees(math.asin(max(-1.0, min(1.0, float(sun_elevation_sine)))))
+        return 1.0 - float(smoothstep(self.night_full_deg, self.night_begin_deg, e))
+
+    def aerial_beyond(self, aerial_far, sky_along, extra_metres, extinction_per_metre):
+        """plagueAtmoAerialBeyond: the aerial pair past the table's far edge, through clear air."""
+        t = math.exp(-max(extinction_per_metre, 0.0) * max(extra_metres, 0.0))
+        return np.concatenate([aerial_far[:3] + aerial_far[3] * np.asarray(sky_along) * (1.0 - t),
+                               [aerial_far[3] * t]])
+
+    def cloud_ambient(self, sun_dir, camera_y=64.0):
+        """plagueAtmoCloudAmbient: the hemisphere reads plus the horizon band, for a cloud."""
+        return self._dome_reads(sun_dir, camera_y, [(1.000, 0.000, 0.0, 0.30), (0.819, 0.574, 1.0, 0.22),
+                                                    (0.819, 0.574, -1.0, 0.22), (0.423, 0.906, 1.0, 0.16),
+                                                    (0.423, 0.906, -1.0, 0.10), (0.087, 0.996, 1.0, 0.17),
+                                                    (0.087, 0.996, -1.0, 0.08)])
+
+    def sky_hemisphere(self, sun_dir, camera_y=64.0):
+        """plagueAtmoSkyHemisphere: the palette's five cosine-weighted reads, on the marched dome."""
+        return self._dome_reads(sun_dir, camera_y, [(1.000, 0.000, 0.0, 0.30), (0.819, 0.574, 1.0, 0.22),
+                                                    (0.819, 0.574, -1.0, 0.22), (0.423, 0.906, 1.0, 0.16),
+                                                    (0.423, 0.906, -1.0, 0.10)])
+
+    def _dome_reads(self, sun_dir, camera_y, samples):
+        az = self.light_azimuth(sun_dir)
+        dirs = np.array([[az[0] * c * sgn, s, az[1] * c * sgn] for s, c, sgn, _ in samples])
+        weights = np.array([w for *_, w in samples])
+        rad = self.radiance(dirs, sun_dir, camera_y)[:, :3]
+        return (rad * weights[:, None]).sum(axis=0) / weights.sum()
 
     def dome_average(self, sun_dir, camera_y=64.0, elevations=60, azimuths=13):
         """Cosine-weighted mean over the visible hemisphere: the same sampling plague_sky.py's

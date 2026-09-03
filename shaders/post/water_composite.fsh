@@ -18,6 +18,10 @@
 // puddle beside it read as being rained on by visibly the same rain.
 #moj_import <fornax_runtime:puddles.glsl>
 #moj_import <fornax_runtime:fog.glsl>
+#define PLAGUE_ATMO_READS_SKYVIEW
+#define PLAGUE_ATMO_READS_AERIAL
+#moj_import <fornax_runtime:atmo_lut.glsl>
+#moj_import <fornax_runtime:fog_aerial.glsl>
 // plagueSunColor/plagueMoonColor: same per-body radiance gbuffer_resolve.fsh's Physical-model arm
 // uses, so the glint's light matches every other lit surface in the scene.
 #moj_import <fornax_runtime:atmosphere.glsl>
@@ -54,6 +58,16 @@ uniform sampler2D u_Input11; // waterEnvironment, filtered Plague sky radiance
 uniform sampler2D u_Input12; // moonAlbedo, equirectangular, near side centred
 uniform sampler2D u_Input13; // moonNormal, tangent-space relief for the same projection
 uniform sampler2D u_Input14; // cloudFront: live tier's first-hit cloud distance (0.0 = empty ray)
+uniform sampler2D u_Input15; // atmoSkyView, the marched dome (atmo_lut.glsl); zero under Palette
+uniform sampler2D u_Input16; // atmoAerial, in-scatter and transmittance per screen froxel; zero under Palette
+
+vec4 plagueAtmoFetchSkyView(vec2 uv) {
+    return texture(u_Input15, uv);
+}
+
+vec4 plagueAtmoFetchAerial(vec2 uv) {
+    return texture(u_Input16, uv);
+}
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -71,6 +85,9 @@ layout(std140) uniform u_PassParams {
 };
 
 #define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
+
+// Byte-identical to gbuffer_resolve.fsh's declaration: the water's fog is the terrain's fog.
+#define PLAGUE_SKY_MODEL 1 //[0 1] compile "Sky Model" {0="Palette" 1="Scattering"}
 #define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 #define PLAGUE_WATER_REFLECTION_DEBUG 0 //[0 1 2 3 4] compile "Water Reflection View" {0="Off" 1="Roughness" 2="Trace Confidence" 3="Fallback Sky" 4="Source Mix"}
 // Byte-identical to clouds.glsl's declaration: the option scanner merges same-name declarations
@@ -737,6 +754,33 @@ void main() {
 
         // atmColorMult is computed at the top of the pass (see there) so this fog term agrees
         // with the zenith and underwater-exit sky samples above.
+#if PLAGUE_SKY_MODEL == 1
+        // The same table reads the resolve makes for the terrain beside this water (fog_aerial.glsl).
+        float fogDist = length(worldPos);
+        float fogFar = plagueAtmoAerialFar();
+        vec4 fogAerial = plagueAtmoAerial(texCoord, fogDist, fogFar);
+        float fogNearT = plagueAtmoAerial(texCoord, max(fogDist - PLAGUE_FOG_SKY_LIGHT_REACH, 0.0), fogFar).a;
+        vec3 fogDir = worldPos / max(fogDist, 1e-4);
+        vec3 fogSkyAlong = plagueAtmoSkyView(fogDir, fogSunDir, plagueAtmoCameraRadius()).rgb;
+        // Same warmth the resolve's border term gets (fog_aerial.glsl / sky.glsl), so the water's
+        // own horizon does not disagree with the shoreline beside it.
+        fogSkyAlong = plagueWarmSkyBand(fogSkyAlong, fogDir.y, dot(fogDir, fogSunDir), fogSunDir.y);
+        PlagueFogDrive fogDrive = PLAGUE_FOG_DRIVE(lighting);
+        PlagueFogTerms fogTerms = plagueFogTermsAerial(worldPos, skyLight, u_CameraSkyLight.x,
+                                 renderDistance, fogAerial, fogNearT, fogSkyAlong,
+                                 plagueAtmoAerialChroma(texCoord), fogDrive,
+                                 u_FogBorderDensity, u_DepthDarkness,
+                                 plagueChunksToBlocks(u_UnderwaterFogStart),
+                                 plagueChunksToBlocks(u_WaterDistanceFog),
+                                 plagueChunksToBlocks(u_WaterDepthFog),
+                                                 vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
+                                                 vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
+                                                      plagueChunksToBlocks(u_WaterDarknessDepth)), lighting, atmColorMult);
+        surface = mix(surface, fogTerms.atmColor, clamp(fogTerms.atm, 0.0, 1.0));
+        surface = mix(surface, fogTerms.borderColor, clamp(fogTerms.border, 0.0, 1.0));
+        surface = mix(surface, fogTerms.waterColor, clamp(fogTerms.water, 0.0, 1.0));
+        surface *= fogTerms.uwTint;
+#else
         surface = plagueApplyFog(surface, worldPos, skyLight, u_CameraSkyLight.x,
                                  renderDistance, u_CameraAbs.y,
                                  fogDither, fogSky, lighting, fogSunDir,
@@ -747,6 +791,7 @@ void main() {
                                                  vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
                                                  vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
                                                       plagueChunksToBlocks(u_WaterDarknessDepth)), atmColorMult);
+#endif
 
 #if PLAGUE_UNDERWATER
         // Matches the resolve's own far-field water-fog handover exactly (byte-identical logic,
