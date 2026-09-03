@@ -110,6 +110,7 @@ float plagueFogDayHash(float dayIndex) {
 // fog_options.glsl rather than calling this directly.
 PlagueFogDrive plagueFogDrive(float rainRaw, float wetness, float precipType,
                               float nightFactor, float dayFrac, float dayIndex,
+                              float dayCrossfade,
                               float optDistance, float optSharpness, float optHeight,
                               float optHighAlt, float optMorning, float optNight,
                               float optDayVar, float optRainResponse, float optRainDepth,
@@ -137,14 +138,13 @@ PlagueFogDrive plagueFogDrive(float rainRaw, float wetness, float precipType,
     // Daily variation scales only the morning term, so away from dawn the defaults reproduce the
     // fitted model exactly regardless of world clock.
     //
-    // Blended across the day boundary (floor/fract value noise) instead of keyed on dayIndex
-    // directly: dayIndex steps at midnight, exactly where morningW peaks, so a bare index would
-    // swap to an unrelated random draw at the one tick the window is most visible.
-    float dayPos = dayIndex + dayFrac;
-    float dayI = floor(dayPos);
-    float dayS = fract(dayPos);
-    dayS = dayS * dayS * (3.0 - 2.0 * dayS);
-    float dailyHash = mix(plagueFogDayHash(dayI), plagueFogDayHash(dayI + 1.0), dayS);
+    // Crossfaded on dayCrossfade (u_WorldClock.z), not blended across dayFrac: dayFrac's own
+    // fraction-of-a-day only covers a fixed window of game time, which a high clock rate sweeps
+    // through in a fraction of a real second, snapping instead of fading. dayCrossfade is timed in
+    // real seconds by the engine instead (see globals.glsl's u_WorldClock doc); a shader has no
+    // frame memory to do that itself. dayIndex - 1.0 stays precision-safe regardless of how large
+    // dayIndex has grown, since it only ever subtracts the small integer 1, never adds a fraction.
+    float dailyHash = mix(plagueFogDayHash(dayIndex - 1.0), plagueFogDayHash(dayIndex), dayCrossfade);
     float dayFactor = 1.0 + optDayVar * (2.0 * dailyHash - 1.0);
     float morningMist = enableMNWC.x * optMorning * morningW * max(dayFactor, 0.0);
 

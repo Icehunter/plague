@@ -121,10 +121,19 @@ float plagueShootingStar(vec2 uv, vec2 startPos, vec2 direction, float moonPhase
  *
  * @param starCoord the STAR FIELD's own coordinate, reused directly
  * @param VdotS     view dotted with the TRUE sun
+ * @param dayIndex  u_WorldClock.x: whole days elapsed on this dimension's own /time-set-aware
+ *                  clock, deciding tonight's meteor pattern. NOT syncedTime: that tracks
+ *                  getGameTime(), which ignores /time set, doDaylightCycle and the clock rate, so
+ *                  the pattern would reseed on a real-world 20-minute timer with no relationship to
+ *                  the displayed night, untestable by setting the clock and unpredictable in play.
+ * @param dayFrac   u_WorldClock.y, the fraction through the current day. Kept separate from
+ *                  dayIndex on purpose: summing them loses float32 precision on an aged world,
+ *                  see the function body below.
  */
 vec3 plagueGetShootingStars(vec2 starCoord, float VdotU, float VdotS, float syncedTime,
-                            float invNoonFactor2, float sunVisibility, float invRainFactor,
-                            float starBrightness, float moonPhase) {
+                            float dayIndex, float dayFrac, float invNoonFactor2,
+                            float sunVisibility, float invRainFactor, float starBrightness,
+                            float moonPhase) {
 #ifndef PLAGUE_SHOOTING_STARS
     return vec3(0.0);
 #else
@@ -146,7 +155,22 @@ vec3 plagueGetShootingStars(vec2 starCoord, float VdotU, float VdotS, float sync
 
     vec2 uv = starCoord * 6.0 * (1.0 - u_ShootingStarSize);
     float speed = syncedTime * u_ShootingStarSpeed;
-    float nightIndex = floor(syncedTime / 1200.0);
+
+    // dayIndex reseeds the radiant and every origin below (plagueShootingStarOrigin's own
+    // dayIndex * 1.1 rotation) with a hard step, not a blend: there is no way to interpolate
+    // between two unrelated sets of line segments, so this fades the whole field to black across
+    // the boundary instead and reseeds while invisible. The blackout window is sized off dayFrac
+    // alone, never dayIndex + dayFrac: summing them in float32 loses precision the same way
+    // fog_model.glsl's dayFactor comment describes, quantising the window's edges back into hard
+    // steps on an aged world. The window covers the last/first 0.001 of a day (24 ticks, 1.2
+    // seconds real time) on either side of midnight, read directly off dayFrac.
+    float signedFrac = dayFrac > 0.5 ? dayFrac - 1.0 : dayFrac;
+    float reseedBlackout = smoothstep(0.0, 0.001, abs(signedFrac));
+    visibility *= reseedBlackout;
+    if (visibility <= 0.01) {
+        return vec3(0.0);
+    }
+    float nightIndex = dayIndex;
 
     // Tonight's radiant, somewhere off the patch so the trails diverge across it rather than
     // fanning out from a point in the middle of view.

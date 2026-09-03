@@ -155,6 +155,7 @@ def _smoothstep(e0, e1, x):
 
 
 def drive(rain_raw, wetness=None, precip=1.0, night_factor=0.0, dfrac=0.25, day_index=0.0,
+          day_crossfade=1.0,
           opt_distance=None, opt_sharpness=None, opt_height=None, opt_high_alt=None,
           opt_morning=None, opt_night=None, opt_day_var=None, opt_rain_response=None,
           opt_rain_depth=None, opt_wet_mist=None, opt_mist_reach=None, opt_cold_mist=None,
@@ -200,13 +201,11 @@ def drive(rain_raw, wetness=None, precip=1.0, night_factor=0.0, dfrac=0.25, day_
 
     m = _fract(dfrac + 0.5) - 0.5
     morning_w = _smoothstep(-0.06, -0.015, m) * (1.0 - _smoothstep(0.02, 0.14, m))
-    # Blended across the day boundary, matching fog_model.glsl's own dayFactor (see that file's
-    # comment for why a bare day_index snaps once a day, at the instant morning_w peaks).
-    day_pos = day_index + dfrac
-    day_i = math.floor(day_pos)
-    day_s = _fract(day_pos)
-    day_s = day_s * day_s * (3.0 - 2.0 * day_s)
-    daily_hash = day_hash(day_i) + (day_hash(day_i + 1.0) - day_hash(day_i)) * day_s
+    # Matches fog_model.glsl's own dayFactor: crossfades on day_crossfade (u_WorldClock.z, the
+    # engine's real-time day-boundary ramp), not on dfrac. A fraction-of-a-day window is swept
+    # through instantly at a high clock rate, and summed with a large day_index still loses
+    # precision regardless. day_index - 1.0 stays exact for any day_index this project supports.
+    daily_hash = day_hash(day_index - 1.0) + (day_hash(day_index) - day_hash(day_index - 1.0)) * day_crossfade
     day_factor = 1.0 + opt_day_var * (2.0 * daily_hash - 1.0)
     morning_mist = en["Morning"] * opt_morning * morning_w * max(day_factor, 0.0)
 

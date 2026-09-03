@@ -35,7 +35,7 @@ vec3 plagueUnderwaterSunDiscSample(vec2 centreUv, float softness,
 }
 
 vec3 plagueUnderwaterCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, float moonPhaseIndex,
-                                    float dayPos,
+                                    float dayIndex, float dayFrac,
                                     sampler2D moonAlbedoMap, sampler2D moonNormalMap,
                                     float softness, float invRainFactor, float moonGlow) {
     // Edge fade width tracks softness (one knob for both), floored above zero so the on/off edge
@@ -67,7 +67,7 @@ vec3 plagueUnderwaterCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, float moonPha
         float rim;
         vec2 uv;
         if (plagueMoonSurface(viewRay, moonDir, max(u_MoonDiscSize, 0.001) * (1.0 + softness),
-                              dayPos, normal, rim, uv, poleAxis)) {
+                              dayIndex, dayFrac, normal, rim, uv, poleAxis)) {
             vec3 moonRadiance = plagueMoonColor(plagueAirEyePos(u_CameraAbs.y), moonDir);
             vec3 lightDir = plagueMoonLightDir(moonDir, moonPhaseIndex);
             result += plagueShadeMoonSphere(normal, rim, uv, poleAxis, lightDir,

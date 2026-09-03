@@ -176,7 +176,7 @@ float plagueCloudStability(PlagueWeatherState w) {
 /** The world's own weather, read from the globals every cloud pass already has. */
 PlagueWeatherState plagueCloudWeather() {
     return plagueWeatherState(u_SkyState.x, u_FrameState.z, u_FrameState.w, u_SkyState.y,
-                              u_WorldClock.x, u_WorldClock.y, 0.0);
+                              u_WorldClock.x, u_WorldClock.y, u_WorldClock.z, 0.0);
 }
 
 // --- One resolved deck --------------------------------------------------------------------------

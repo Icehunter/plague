@@ -66,10 +66,14 @@ float plagueWeatherDayHash(float dayIndex) {
  *
  * @param dayIndex     u_WorldClock.x, whole days on this dimension's clock. NOT u_SkyState.w.
  * @param dayFraction  u_WorldClock.y, how far through that day.
+ * @param dayCrossfade u_WorldClock.z, real-time crossfade progress into today. See
+ *                     globals.glsl's u_WorldClock doc and fog_model.glsl's plagueFogDrive for why
+ *                     a per-day value blends on this, not on dayFraction.
  */
 PlagueWeatherState plagueWeatherState(float rainRaw, float thunderRaw, float wetness,
                                       float sunAngleRadians,
-                                      float dayIndex, float dayFraction, float nightFactor) {
+                                      float dayIndex, float dayFraction, float dayCrossfade,
+                                      float nightFactor) {
     PlagueWeatherState w;
 
     w.rain = clamp(rainRaw, 0.0, 1.0);
@@ -85,14 +89,16 @@ PlagueWeatherState plagueWeatherState(float rainRaw, float thunderRaw, float wet
     float m = fract(w.dayFrac + 0.5) - 0.5;
     w.morningWindow = smoothstep(-0.06, -0.015, m) * (1.0 - smoothstep(0.02, 0.14, m));
 
+    // days (below) keeps the same dayIndex + fraction addition the slow FBM spell already
+    // tolerates: a continuous noise function degrades gracefully under the float32 precision loss
+    // fog_model.glsl's own comment describes, unlike a hash keyed on floor() of the same sum,
+    // which quantises back into hard per-day steps on an aged world. dayVariance crossfades on
+    // dayCrossfade instead, same as fog_model.glsl's own dayFactor: dayIndex - 1.0 stays
+    // precision-safe regardless of how large dayIndex has grown, and the fade is timed in real
+    // seconds by the engine rather than swept through by the clock rate.
     float days = dayIndex + clamp(dayFraction, 0.0, 1.0);
-    // Blended across the day boundary the same way fog_model.glsl's own dayFactor is (byte-
-    // identical; see that file's comment for why a bare dayIndex snaps at every dawn).
-    float dayPos = dayIndex + w.dayFrac;
-    float dayI = floor(dayPos);
-    float dayS = fract(dayPos);
-    dayS = dayS * dayS * (3.0 - 2.0 * dayS);
-    w.dayVariance = mix(plagueWeatherDayHash(dayI), plagueWeatherDayHash(dayI + 1.0), dayS);
+    w.dayVariance = mix(plagueWeatherDayHash(dayIndex - 1.0), plagueWeatherDayHash(dayIndex),
+                        dayCrossfade);
     w.humidSpell = plagueWeatherSpell(days, PLAGUE_WEATHER_HUMID_LANE);
     w.unstableSpell = plagueWeatherSpell(days, PLAGUE_WEATHER_UNSTABLE_LANE);
 

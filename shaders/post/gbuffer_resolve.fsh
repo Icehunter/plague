@@ -633,8 +633,11 @@ int debugView = int(u_Param3 + 0.5);
                                            plagueNightFactor, 1.0 - rainFactor, u_SunriseColor.w) * nightGate;
 
             // Reuses starCoord so meteors travel the same projected plane as the stars. moon phase
-            // index (u_SkyCelestial.w): a new moon lets more of them through.
+            // index (u_SkyCelestial.w): a new moon lets more of them through. u_WorldClock.x/.y
+            // (world-clock, /time-set-aware) pick tonight's pattern, passed separately, never
+            // summed; see plagueGetShootingStars's own doc.
             skyOut += plagueGetShootingStars(starCoord, VdotU, VdotS, syncedTime,
+                                             u_WorldClock.x, u_WorldClock.y,
                                              invNoonFactor * invNoonFactor, plagueSunVisibility,
                                              1.0 - rainFactor, u_SunriseColor.w, u_SkyCelestial.w) * nightGate;
 
@@ -659,7 +662,7 @@ int debugView = int(u_Param3 + 0.5);
             vec3 discEyePos = plagueAirEyePos(u_CameraAbs.y);
             float sunSetGate = smoothstep(-0.014535, 0.0, sunDirTrue.y);
             skyOut += plagueCelestialDiscs(viewRay, sunDirTrue, u_SkyCelestial.w,
-                                           u_WorldClock.x + u_WorldClock.y,
+                                           u_WorldClock.x, u_WorldClock.y,
                                            u_Input13, u_Input14,
                                            1.0 - rainFactor, plagueMoonDiscGlow,
                                            plagueSunColor(discEyePos, sunDirTrue) * sunSetGate,

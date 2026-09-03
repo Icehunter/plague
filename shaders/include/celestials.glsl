@@ -128,7 +128,7 @@ vec3 plagueShadeSunDisc(vec2 discUv, vec3 sunRadiance, float rainFactor) {
  * from the unit constraint. It is negated because the visible hemisphere faces the viewer, against
  * moonDir.
  */
-bool plagueMoonSurface(vec3 viewRay, vec3 moonDir, float radius, float dayPos,
+bool plagueMoonSurface(vec3 viewRay, vec3 moonDir, float radius, float dayIndex, float dayFrac,
                        out vec3 normal, out float rim, out vec2 uv, out vec3 poleAxis) {
     vec3 tangentX;
     plagueCelestialBasis(moonDir, tangentX, poleAxis);
@@ -148,10 +148,15 @@ bool plagueMoonSurface(vec3 viewRay, vec3 moonDir, float radius, float dayPos,
     float longitude = atan(offset.x, toward);
 
     // Two periods that do not divide each other, so the pair does not repeat every cycle and
-    // consecutive nights differ by 2 to 7 degrees of face rotation. Uses continuous dayPos, not the
-    // floored day index, so the angle doesn't jump TAU/8 at midnight while the moon is still up.
+    // consecutive nights differ by 2 to 7 degrees of face rotation. Reduced mod 8 before adding
+    // dayFrac, not dayPos = dayIndex + dayFrac directly: this angle repeats every 8 days, so
+    // dayIndex only ever needs to be known modulo 8 here, and reducing it first keeps the value
+    // added to dayFrac small regardless of how many days the world has existed. Summing the
+    // unreduced dayIndex (in the hundreds or thousands on an older world) into a 0..1 fraction in
+    // float32 measurably degrades that fraction's precision, the same trap fog_model.glsl's
+    // dayFactor comment describes for its own hash.
     float libration = radians(max(u_MoonLibration, 0.0));
-    float day = PLAGUE_CELESTIAL_TAU * dayPos / 8.0;
+    float day = PLAGUE_CELESTIAL_TAU * (mod(dayIndex, 8.0) + dayFrac) / 8.0;
     longitude += libration * sin(day);
     latitude += libration * sin(day * 0.53 + 1.1);
 
@@ -205,12 +210,14 @@ vec3 plagueShadeMoonSphere(vec3 normal, float rim, vec2 uv, vec3 poleAxis, vec3 
 /**
  * @param sunDirTrue the TRUE sun direction; the moon is its negation, vanilla's own convention
  * @param moonPhaseIndex u_SkyCelestial.w, 0 full through 4 new; sets where the terminator sits
- * @param dayPos     u_WorldClock.x + u_WorldClock.y, continuous day position for
- *                   plagueMoonSurface's libration angle
+ * @param dayIndex   u_WorldClock.x, whole days elapsed
+ * @param dayFrac    u_WorldClock.y, fraction through the current day. Kept separate for
+ *                   plagueMoonSurface's libration angle; see that function's comment on why
+ *                   summing them first loses precision on an aged world.
  * @param moonGlow   night ramp for the moon, so it is not painted onto a bright afternoon sky
  */
-vec3 plagueCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, float moonPhaseIndex, float dayPos,
-                          sampler2D moonAlbedoMap, sampler2D moonNormalMap,
+vec3 plagueCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, float moonPhaseIndex, float dayIndex,
+                          float dayFrac, sampler2D moonAlbedoMap, sampler2D moonNormalMap,
                           float invRainFactor, float moonGlow,
                           vec3 sunRadiance, vec3 moonRadiance) {
     vec3 result = vec3(0.0);
@@ -228,7 +235,7 @@ vec3 plagueCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, float moonPhaseIndex, f
         vec3 normal, poleAxis;
         float rim;
         vec2 uv;
-        if (plagueMoonSurface(viewRay, moonDir, max(u_MoonDiscSize, 0.001), dayPos,
+        if (plagueMoonSurface(viewRay, moonDir, max(u_MoonDiscSize, 0.001), dayIndex, dayFrac,
                               normal, rim, uv, poleAxis)) {
             vec3 lightDir = plagueMoonLightDir(moonDir, moonPhaseIndex);
             result += plagueShadeMoonSphere(normal, rim, uv, poleAxis, lightDir,
