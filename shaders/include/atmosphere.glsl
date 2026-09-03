@@ -58,9 +58,11 @@
 const vec3  PLAGUE_RAYLEIGH_SCATTER   = vec3(8.433571e-06, 1.310345e-05, 2.786892e-05);
 const vec3  PLAGUE_OZONE_ABSORB       = vec3(2.156649e-06, 1.543816e-06, 2.924076e-07);
 // Aerosols scatter near wavelength-independently (why haze is grey); extinction exceeds scattering
-// since they also absorb, the ratio being the single-scattering albedo. Only EXTINCT is read today
-// (transmittance only) — SCATTER awaits the in-scattering integration but is kept here so the pair
-// stays derived together.
+// since they also absorb, the ratio being the single-scattering albedo. Both feed the
+// in-scattering march (atmo_lut.glsl).
+//
+// Don't raise this to mask the render cutoff: aerosols are wavelength-neutral, so more of them
+// just drowns out Rayleigh, the term that actually makes the sky blue and sunsets orange.
 const float PLAGUE_AEROSOL_SCATTER    = 2.100000e-05;
 const float PLAGUE_AEROSOL_EXTINCT    = 2.333333e-05;
 

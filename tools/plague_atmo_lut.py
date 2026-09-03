@@ -68,7 +68,6 @@ class AtmoLut:
         self.sea_level_fallback = _const(src, "float", "PLAGUE_ATMO_SEA_LEVEL_FALLBACK")
         self.mie_g = _const(src, "float", "PLAGUE_ATMO_MIE_G")
         self.ground_albedo = _const(src, "float", "PLAGUE_ATMO_GROUND_ALBEDO")
-        self.ground_band_deg = _const(src, "float", "PLAGUE_ATMO_GROUND_BAND_DEG")
         self.sky_gain = _const(src, "float", "PLAGUE_ATMO_SKY_GAIN")
         self.moon_hold = _const(src, "float", "PLAGUE_ATMO_MOON_HOLD")
         self.transmittance_size = _const(src, "ivec2", "PLAGUE_ATMO_TRANSMITTANCE_SIZE")
@@ -88,6 +87,8 @@ class AtmoLut:
         self.aerial_slices = _const(src, "int", "PLAGUE_ATMO_AERIAL_SLICES")
         self.aerial_size = _const(src, "ivec2", "PLAGUE_ATMO_AERIAL_SIZE")
         self.aerial_steps = _const(src, "int", "PLAGUE_ATMO_AERIAL_STEPS")
+        self.horizon_top_deg = _const(src, "float", "PLAGUE_ATMO_HORIZON_TOP_DEG")
+        self.horizon_floor_deg = _const(src, "float", "PLAGUE_ATMO_HORIZON_FLOOR_DEG")
         self.mist_density = 0.0
         self.mist_height = 1.0
 
@@ -404,49 +405,39 @@ class AtmoLut:
     # --- the march ---------------------------------------------------------------------
 
     def march(self, origins, dirs, sun_dir, steps=None):
-        """(N, 4): rgb in-scatter and luminance transmittance for (N, 3) origins and directions,
-        to the ground if the ray reaches it, else to the top of the atmosphere. Below the horizon,
-        blended toward the ground term over ground_band_deg (plagueAtmoMarch) so the value equals
-        the sky branch's own at the boundary, rather than stepping to ground_albedo times it."""
+        """(N, 4): rgb in-scatter and luminance transmittance for (N, 3) origins and directions.
+        Marches to the top of the atmosphere in every direction; no ground branch, since the
+        world is flat (see plagueAtmoMarch's own comment).
+
+        Mirrors plagueAtmoMarch's horizon-band blend: outside [horizon_top_deg, -horizon_floor_deg]
+        the march runs as normal; inside it, blend between one march at each band edge."""
         if steps is None:
             steps = self.skyview_steps
         o = np.asarray(origins, dtype=float)
         d = np.asarray(dirs, dtype=float)
         r0 = np.linalg.norm(o, axis=-1)
         mu0 = np.einsum("nk,nk->n", o, d) / r0
-        mu_h = self.horizon_mu(r0)
-        hits = mu0 <= mu_h
-        to_ground = self.distance_to_ground(r0, mu0)
-        end = np.where(hits, to_ground, self.distance_to_top(r0, mu0))
-        out, trans = self.march_to(o, d, sun_dir, end, steps, with_transmittance=True)
-        if not np.any(hits):
-            return out
-        as_if_sky = self.march_to(o, d, sun_dir, self.distance_to_top(r0, mu0), steps)
-        up = o / r0[:, None]
-        flat = d - up * mu0[:, None]
-        flat_len = np.linalg.norm(flat, axis=-1, keepdims=True)
-        flat = np.where(flat_len > 1e-5, flat / np.maximum(flat_len, 1e-12), np.array([1.0, 0.0, 0.0]))
-        horizon = flat * np.sqrt(np.maximum(1.0 - mu_h * mu_h, 0.0))[:, None] + up * mu_h[:, None]
-        horizon /= np.linalg.norm(horizon, axis=-1, keepdims=True)
-        horizon_sky = self.march_to(o, horizon, sun_dir, self.distance_to_top(r0, mu_h), steps)
-        ground_point = o + d * np.where(hits, to_ground, 0.0)[:, None]
-        ground_up = ground_point / np.linalg.norm(ground_point, axis=-1, keepdims=True)
-        cos_sun = ground_up @ np.asarray(sun_dir, dtype=float)
-        ground_r = np.full(r0.shape, self.rg + 1.0)
-        direct = (self.transmittance_to_light(ground_r, cos_sun) * self.sun_radiance(sun_dir)
-                  * np.maximum(cos_sun, 0.0)[:, None]
-                  + self.transmittance_to_light(ground_r, -cos_sun) * self.moon_radiance()
-                  * np.maximum(-cos_sun, 0.0)[:, None])
-        ground = self.ground_albedo * (direct / math.pi + horizon_sky[:, :3])
-        ground_formula = out.copy()
-        ground_formula[:, :3] = out[:, :3] + trans * ground
+        mu_top = math.sin(math.radians(self.horizon_top_deg))
+        mu_floor = math.sin(math.radians(-self.horizon_floor_deg))
 
-        below_deg = np.degrees(np.arcsin(np.clip(mu_h, -1.0, 1.0)) - np.arcsin(np.clip(mu0, -1.0, 1.0)))
-        band = np.clip(below_deg / self.ground_band_deg, 0.0, 1.0)
-        band = (band * band * (3.0 - 2.0 * band))[:, None]
-        result = out.copy()
-        result[hits] = as_if_sky[hits] * (1.0 - band[hits]) + ground_formula[hits] * band[hits]
-        return result
+        raw = self.march_to(o, d, sun_dir, self.distance_to_top(r0, np.maximum(mu0, mu_top)), steps)
+        below = mu0 < mu_top
+        if not np.any(below):
+            return raw
+
+        up = o / r0[:, None]
+        tangential = d - up * mu0[:, None]
+        tan_len = np.linalg.norm(tangential, axis=-1)
+        horizontal = np.where((tan_len > 1e-5)[:, None], tangential / np.maximum(tan_len, 1e-12)[:, None],
+                              np.array([1.0, 0.0, 0.0]))
+        dir_top = up * mu_top + horizontal * math.sqrt(max(0.0, 1.0 - mu_top * mu_top))
+        dir_floor = up * mu_floor + horizontal * math.sqrt(max(0.0, 1.0 - mu_floor * mu_floor))
+        top = self.march_to(o, dir_top, sun_dir, self.distance_to_top(r0, np.full_like(r0, mu_top)), steps)
+        floor_sample = self.march_to(o, dir_floor, sun_dir,
+                                     self.distance_to_top(r0, np.full_like(r0, mu_floor)), steps)
+        w = 1.0 - smoothstep(mu_floor, mu_top, mu0)
+        blended = top + (floor_sample - top) * w[:, None]
+        return np.where(below[:, None], blended, raw)
 
     def march_to(self, origins, dirs, sun_dir, end, steps, with_transmittance=False):
         """plagueAtmoMarchTo: the same march bounded at (N,) distances in metres."""

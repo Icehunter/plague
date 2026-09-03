@@ -42,19 +42,14 @@ const float PLAGUE_ATMO_SEA_LEVEL_FALLBACK = 63.0;
 // Aerosol asymmetry, Bruneton & Neyret 2008 (their default g for the Cornette-Shanks lobe).
 const float PLAGUE_ATMO_MIE_G = 0.76;
 
-// The pack's existing ground bounce (the same 0.15 the palette's ambient uses).
+// Ground bounce, same 0.15 as the palette's ambient. Read by the multiple-scattering bake
+// (atmo_multiscatter.comp). plagueAtmoMarch itself has no ground branch (see its own comment).
 const float PLAGUE_ATMO_GROUND_ALBEDO = 0.15;
-
-// How far below the horizon plagueAtmoMarch eases from the sky branch's own value into the ground
-// term, so the two agree exactly at the boundary instead of stepping between "full sky" and
-// "0.15 times sky" in one texel. Matches the depth sky.glsl's own doGround arm uses (-VdotU / 0.25,
-// about 14 degrees), since it is the same kind of fade for the same reason.
-const float PLAGUE_ATMO_GROUND_BAND_DEG = 14.0;
 
 // Not physics. One gain on both lights, solved by tools/derive_atmo_lut.py so the noon dome's
 // cosine-weighted average matches TARGET_NOON_DOME in derive_sky.py, the brightness the pack's fixed
 // exposure was approved against. A stand-in for exposure metering.
-const float PLAGUE_ATMO_SKY_GAIN = 20.3773;
+const float PLAGUE_ATMO_SKY_GAIN = 20.3794;
 
 // Also not physics: the hold-down derive_sky.py applies to its night keys, so the moonlit dome
 // lands where the palette's does and the additive star and nebula layers stay readable.
@@ -228,7 +223,13 @@ float plagueAtmoDistanceToGround(float r, float mu) {
     return -1.0;
 }
 
-/** cos(zenith) of the horizon seen from r: every direction below it ends on the ground. */
+/**
+ * cos(zenith) of the horizon at r. Below it, a ray toward the planet centre is in the planet's
+ * own shadow. Bruneton & Neyret's formula: -sqrt(1-(R/r)^2). Used by
+ * plagueAtmoTransmittanceToLight at every altitude along the scattering march, to test whether
+ * sunlight still reaches that point in the air. This is physics, not a stand-in for Minecraft's
+ * flat ground; plagueAtmoMarch has no ground branch (see its own comment).
+ */
 float plagueAtmoHorizonMu(float r) {
     float ratio = PLAGUE_PLANET_RADIUS / max(r, PLAGUE_PLANET_RADIUS);
     return -sqrt(max(1.0 - ratio * ratio, 0.0));
@@ -638,61 +639,41 @@ vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec
 }
 
 /**
- * The whole ray. Above the horizon it runs to the top of the atmosphere. Below it, it runs to the
- * model's ground and shows that ground through the remaining air: a Lambertian surface at the
- * pack's albedo lit by the sun and moon through the air at ground level, with the horizon sky in
- * the same azimuth as its ambient. That is what the undrawn world past the render distance reads
- * as from altitude: grazing rays haze into the horizon, steep ones see dim ground under haze.
+ * The whole ray, above level or below it. This world is flat, so every ray marches straight to
+ * the top of the atmosphere.
  *
- * The two branches are blended across PLAGUE_ATMO_GROUND_BAND_DEG rather than switched at the
- * horizon: right at the boundary a grazing ray's ground intercept is metres away and contributes
- * almost nothing of its own, so the ground formula alone was close to PLAGUE_ATMO_GROUND_ALBEDO
- * (0.15) times the sky branch's own value in the same texel that value stepped down from full
- * brightness: a five- to sevenfold cliff, worst exactly where the sky-view table's warp
- * concentrates its texels. Blending toward the "ray kept going" sky value at the boundary makes
- * the two sides equal there by construction, and the sqrt warp still gives that boundary the most
- * texels, so the transition itself gets sampled rather than jumped over.
+ * Near level, the march itself steps luminance fast: up to 25% per tenth of a degree, measured
+ * in tools/plague_atmo_lut.py at tick 12800. Real grazing-incidence optical depth, but too sharp
+ * a step for Minecraft's render scale, so it reads as a hard edge. sky.glsl's doGround smooths
+ * its own horizon the same way, over 14 degrees; this uses a wider band, +3/-28 degrees
+ * (PLAGUE_ATMO_HORIZON_TOP_DEG / _FLOOR_DEG). Outside the band the march runs as normal; inside
+ * it, blend between one march at the top edge and one at the floor edge.
  */
+const float PLAGUE_ATMO_HORIZON_TOP_DEG   = 3.0;
+const float PLAGUE_ATMO_HORIZON_FLOOR_DEG = 28.0;
+
 vec4 plagueAtmoMarch(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec3 moonRadiance,
                      PlagueAtmoAir air, int steps) {
     float r0 = length(origin);
     float mu0 = dot(origin, dir) / r0;
-    float muHorizon = plagueAtmoHorizonMu(r0);
-    if (mu0 > muHorizon) {
+    float muTop = sin(radians(PLAGUE_ATMO_HORIZON_TOP_DEG));
+    if (mu0 >= muTop) {
         return plagueAtmoMarchTo(origin, dir, sunDir, sunRadiance, moonRadiance, air,
                                  plagueAtmoDistanceToTop(r0, mu0), steps);
     }
 
-    // What this same ray would be if the ground were not there: continuous with the branch above
-    // by construction, since it is the identical expression at the identical mu0.
-    vec4 asIfSky = plagueAtmoMarchTo(origin, dir, sunDir, sunRadiance, moonRadiance, air,
-                                     plagueAtmoDistanceToTop(r0, mu0), steps);
-
-    float toGround = plagueAtmoDistanceToGround(r0, mu0);
-    vec3 transmittance;
-    vec4 toGroundRadiance = plagueAtmoMarchTo(origin, dir, sunDir, sunRadiance, moonRadiance, air,
-                                              toGround, steps, transmittance);
-    // The same azimuth, tilted up to graze the horizon: the direction the ground is standing in
-    // for.
     vec3 up = origin / r0;
-    vec3 level = dir - up * mu0;
-    float levelLength = length(level);
-    level = levelLength > 1e-5 ? level / levelLength : vec3(1.0, 0.0, 0.0);
-    vec3 horizonDir = normalize(level * sqrt(max(1.0 - muHorizon * muHorizon, 0.0)) + up * muHorizon);
-    vec4 horizonSky = plagueAtmoMarchTo(origin, horizonDir, sunDir, sunRadiance, moonRadiance, air,
-                                        plagueAtmoDistanceToTop(r0, muHorizon), steps);
-    vec3 groundPoint = origin + dir * toGround;
-    vec3 groundUp = groundPoint / length(groundPoint);
-    float cosSun = dot(groundUp, sunDir);
-    float groundR = PLAGUE_PLANET_RADIUS + 1.0;
-    vec3 directOnGround = plagueAtmoTransmittanceToLight(groundR, cosSun) * sunRadiance * max(cosSun, 0.0)
-                        + plagueAtmoTransmittanceToLight(groundR, -cosSun) * moonRadiance * max(-cosSun, 0.0);
-    vec3 ground = PLAGUE_ATMO_GROUND_ALBEDO * (directOnGround / PLAGUE_ATMO_PI + horizonSky.rgb);
-    vec4 groundFormula = vec4(toGroundRadiance.rgb + transmittance * ground, toGroundRadiance.a);
-
-    float belowDeg = degrees(asin(clamp(muHorizon, -1.0, 1.0)) - asin(clamp(mu0, -1.0, 1.0)));
-    float band = smoothstep(0.0, PLAGUE_ATMO_GROUND_BAND_DEG, belowDeg);
-    return mix(asIfSky, groundFormula, band);
+    vec3 tangential = dir - up * mu0;
+    vec3 horizontal = length(tangential) > 1e-5 ? normalize(tangential) : vec3(1.0, 0.0, 0.0);
+    float muFloor = sin(radians(-PLAGUE_ATMO_HORIZON_FLOOR_DEG));
+    vec3 dirTop = up * muTop + horizontal * sqrt(max(0.0, 1.0 - muTop * muTop));
+    vec3 dirFloor = up * muFloor + horizontal * sqrt(max(0.0, 1.0 - muFloor * muFloor));
+    vec4 top = plagueAtmoMarchTo(origin, dirTop, sunDir, sunRadiance, moonRadiance, air,
+                                 plagueAtmoDistanceToTop(r0, muTop), steps);
+    vec4 floorSample = plagueAtmoMarchTo(origin, dirFloor, sunDir, sunRadiance, moonRadiance, air,
+                                         plagueAtmoDistanceToTop(r0, muFloor), steps);
+    float w = 1.0 - smoothstep(muFloor, muTop, mu0);
+    return mix(top, floorSample, w);
 }
 #endif
 

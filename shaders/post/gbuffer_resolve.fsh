@@ -1923,7 +1923,9 @@ int debugView = int(u_Param3 + 0.5);
         // contributes nothing below ~160 blocks — so capping it left the above-water leg with no
         // veil term of its own, and "no sky visible while under water" needs the full-ray answer.
         lit = mix(lit, fogTerms.atmColor, clamp(fogTerms.atm, 0.0, 1.0));
-        lit = mix(lit, fogTerms.borderColor, clamp(fogTerms.border, 0.0, 1.0));
+        // plagueBorderColorWeight (fog.glsl): squared so a bright sun-side sky reading doesn't
+        // glow in ahead of the render cutoff. See its own comment for why.
+        lit = mix(lit, fogTerms.borderColor, plagueBorderColorWeight(fogTerms.border));
         lit = mix(lit, fogTerms.waterColor, clamp(fogTerms.water, 0.0, 1.0));
 
         lit = max(lit, vec3(0.0));

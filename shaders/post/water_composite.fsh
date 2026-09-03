@@ -777,7 +777,9 @@ void main() {
                                                  vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
                                                       plagueChunksToBlocks(u_WaterDarknessDepth)), lighting, atmColorMult);
         surface = mix(surface, fogTerms.atmColor, clamp(fogTerms.atm, 0.0, 1.0));
-        surface = mix(surface, fogTerms.borderColor, clamp(fogTerms.border, 0.0, 1.0));
+        // plagueBorderColorWeight (fog.glsl): squared so a bright sun-side sky reading doesn't
+        // glow in ahead of the render cutoff. See its own comment for why.
+        surface = mix(surface, fogTerms.borderColor, plagueBorderColorWeight(fogTerms.border));
         surface = mix(surface, fogTerms.waterColor, clamp(fogTerms.water, 0.0, 1.0));
         surface *= fogTerms.uwTint;
 #else

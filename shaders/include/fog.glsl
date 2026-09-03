@@ -154,9 +154,10 @@ PlagueFogTerms plagueFogTerms(vec3 worldPos, float skyLight, float cameraSkyLigh
     terms.atmColor = plagueAtmFogColor(skyColours, VdotS, heightWeight, lighting) * atmColorMult
                     * pathLight;
 
-    // Measures the CUBE render distance actually describes (max of horizontal radius, vertical
-    // offset), so the dissolve lands on the cutoff surface, not a sphere inscribed in it.
-    float borderDist = max(length(worldPos.xz), abs(worldPos.y));
+    // Horizontal radius only. Minecraft culls chunks by XZ distance, never by Y, so render
+    // distance is a cylinder, not a cube. max(xz, |y|) would pull the cutoff up toward the camera
+    // on any steep look from altitude, ahead of the true horizontal distance.
+    float borderDist = length(worldPos.xz);
     float borderFraction = clamp(borderDist / max(renderDistance, PLAGUE_FOG_MIN_RENDER_DISTANCE),
                                  0.0, 1.0);
 
@@ -218,11 +219,23 @@ PlagueFogTerms plagueFogTerms(vec3 worldPos, float skyLight, float cameraSkyLigh
                           vec3(1.0, 1.0, 999.0), vec3(1.0));
 }
 
+// Must fully replace at the edge, or the sky pixel just past the last fragment leaves a hard
+// seam at the cutoff instead of a wash.
+//
+// Squared, not cubed: cubing crushes the whole transition into the last few pixels before the
+// cutoff, reading as a hard line. Squaring still fades smoothly while keeping distant objects
+// (a village or hillside a few hundred blocks out) mostly visible.
+float plagueBorderColorWeight(float border) {
+    float w = clamp(border, 0.0, 1.0);
+    return w * w;
+}
+
 // plagueApplyFog is exactly affine in `color` (every op is a mix() whose factor comes from
 // geometry/sky state alone); these are its two halves, derived from the live terms so a fourth
 // struct term flows through with no edit.
 vec3 plaguePremultipliedFog(PlagueFogTerms t) {
-    vec3 p = mix(t.atmColor * clamp(t.atm, 0.0, 1.0), t.borderColor, clamp(t.border, 0.0, 1.0));
+    float borderW = plagueBorderColorWeight(t.border);
+    vec3 p = mix(t.atmColor * clamp(t.atm, 0.0, 1.0), t.borderColor, borderW);
     // Water term outermost, then the underwater tint over the lot, the order plagueApplyFog
     // composes. Above water this is exact identities.
     return mix(p, t.waterColor, clamp(t.water, 0.0, 1.0)) * t.uwTint;
@@ -231,7 +244,7 @@ vec3 plaguePremultipliedFog(PlagueFogTerms t) {
 // What survives of the incoming colour, PER-CHANNEL since the underwater tint dies per channel
 // (red first with depth) — a scalar would average that away.
 vec3 plagueFogOpacity(PlagueFogTerms t) {
-    vec3 transmittance = vec3((1.0 - clamp(t.atm, 0.0, 1.0)) * (1.0 - clamp(t.border, 0.0, 1.0))
+    vec3 transmittance = vec3((1.0 - clamp(t.atm, 0.0, 1.0)) * (1.0 - plagueBorderColorWeight(t.border))
                               * (1.0 - clamp(t.water, 0.0, 1.0))) * t.uwTint;
     return clamp(vec3(1.0) - transmittance, 0.0, 1.0);
 }
@@ -250,7 +263,7 @@ vec3 plagueApplyFog(vec3 color, vec3 worldPos, float skyLight, float cameraSkyLi
                                           uwDistanceFogBlocks, uwDepthFogBlocks, uwTintBase,
                                           uwDarkness, atmColorMult);
     color = mix(color, terms.atmColor, clamp(terms.atm, 0.0, 1.0));
-    color = mix(color, terms.borderColor, clamp(terms.border, 0.0, 1.0));
+    color = mix(color, terms.borderColor, plagueBorderColorWeight(terms.border));
     color = mix(color, terms.waterColor, clamp(terms.water, 0.0, 1.0));
     return color * terms.uwTint;
 }

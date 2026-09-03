@@ -51,7 +51,9 @@ PlagueFogTerms plagueFogTermsAerial(vec3 worldPos, float skyLight, float cameraS
     terms.atm = opacity * accessHandover * u_FogEnableDistance;
     terms.atmColor = aerial.rgb / max(opacity, vec3(1e-4)) * atmColorMult * pathLight;
 
-    float borderDist = max(length(worldPos.xz), abs(worldPos.y));
+    // Horizontal radius alone, matching fog.glsl's own border metric and the reasoning there:
+    // Minecraft's render distance is a cylinder (XZ-only chunk culling), not a cube.
+    float borderDist = length(worldPos.xz);
     float borderFraction = clamp(borderDist / max(renderDistance, PLAGUE_FOG_MIN_RENDER_DISTANCE),
                                  0.0, 1.0);
     float borderGate = mix(pathLight, 1.0,
