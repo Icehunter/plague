@@ -152,7 +152,9 @@ void main() {
 #if PLAGUE_SKY_MODEL == 1
     vec3 ambientDome = plagueAtmoSkyHemisphere(sunDirTrue, plagueAtmoCameraRadius());
     vec3 skyAlong = plagueAtmoSkyView(viewDir, sunDirTrue, plagueAtmoCameraRadius()).rgb;
-    skyAlong = plagueWarmSkyBand(skyAlong, viewDir.y, dot(viewDir, sunDirTrue), sunDirTrue.y) * atmColorMult;
+    skyAlong = plagueWarmSkyBand(skyAlong, viewDir.y, dot(viewDir, sunDirTrue), sunDirTrue.y);
+    skyAlong = plagueStormDarkenSky(skyAlong, viewDir.y, dot(viewDir, sunDirTrue), sunDirTrue.y,
+                                    localRain, localThunder) * atmColorMult;
 #else
     vec3 ambientDome = plagueSkyHemisphere(skyColours, skyColours.lightUp);
     vec3 skyAlong = plagueGetSky(skyColours, viewDir.y, dot(viewDir, sunDirTrue), dither, true, false)

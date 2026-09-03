@@ -482,6 +482,15 @@ outputs = ["cloudShadowMask"]
 
 # --- Resolve --------------------------------------------------------------------------------------
 
+# Packs three RGBA8 G-buffer reads into one array texture so the resolve spends one sampler slot
+# instead of three (docs/PACK-FORMAT.md, "consolidate exists for the sampler budget"). Layer order
+# is this list's order: 0 = gAlbedo, 1 = gMaterial, 2 = gAo, matching gbuffer_resolve.fsh's u_Input1.
+[[pass]]
+name = "gbuf_consolidate"
+type = "consolidate"
+inputs = ["builtin.gAlbedo", "builtin.gMaterial", "builtin.gAo"]
+outputs = ["consolidatedGbuf"]
+
 [[pass]]
 name = "resolve"
 type = "fullscreen"
@@ -490,7 +499,9 @@ shader = "shaders/post/gbuffer_resolve.fsh"
 # sunShadowMapRaw aliases the same texture under a different target name so the comparison-sampler
 # branch (keyed by exact target string) doesn't wrongly attach to this plain-sampler debug read. A
 # shader uniform and its graph.toml binding are one atomic contract — never remove one side alone.
-inputs = ["builtin.gNormal", "builtin.gAlbedo", "builtin.gMaterial", "builtin.gAo", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "cloudShadowMask", "atmoSkyView", "atmoAerial"]
+# consolidatedGbuf (u_Input1) is gbuf_consolidate's output, not a [targets.*] entry. See that
+# pass's own comment.
+inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "cloudShadowMask", "atmoSkyView", "atmoAerial"]
 outputs = ["sceneHdr"]
 
 # Tileable grayscale focusing pattern, sampled by two rotated flowing layers with mirror-repeat UVs.

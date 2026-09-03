@@ -136,7 +136,16 @@ PlagueFogDrive plagueFogDrive(float rainRaw, float wetness, float precipType,
     float morningW = smoothstep(-0.06, -0.015, m) * (1.0 - smoothstep(0.02, 0.14, m));
     // Daily variation scales only the morning term, so away from dawn the defaults reproduce the
     // fitted model exactly regardless of world clock.
-    float dayFactor = 1.0 + optDayVar * (2.0 * plagueFogDayHash(dayIndex) - 1.0);
+    //
+    // Blended across the day boundary (floor/fract value noise) instead of keyed on dayIndex
+    // directly: dayIndex steps at midnight, exactly where morningW peaks, so a bare index would
+    // swap to an unrelated random draw at the one tick the window is most visible.
+    float dayPos = dayIndex + dayFrac;
+    float dayI = floor(dayPos);
+    float dayS = fract(dayPos);
+    dayS = dayS * dayS * (3.0 - 2.0 * dayS);
+    float dailyHash = mix(plagueFogDayHash(dayI), plagueFogDayHash(dayI + 1.0), dayS);
+    float dayFactor = 1.0 + optDayVar * (2.0 * dailyHash - 1.0);
     float morningMist = enableMNWC.x * optMorning * morningW * max(dayFactor, 0.0);
 
     // Wetness lags rain in both directions (engine-accumulated; the shader has no frame memory),

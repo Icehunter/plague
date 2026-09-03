@@ -128,7 +128,7 @@ vec3 plagueShadeSunDisc(vec2 discUv, vec3 sunRadiance, float rainFactor) {
  * from the unit constraint. It is negated because the visible hemisphere faces the viewer, against
  * moonDir.
  */
-bool plagueMoonSurface(vec3 viewRay, vec3 moonDir, float radius, float dayIndex,
+bool plagueMoonSurface(vec3 viewRay, vec3 moonDir, float radius, float dayPos,
                        out vec3 normal, out float rim, out vec2 uv, out vec3 poleAxis) {
     vec3 tangentX;
     plagueCelestialBasis(moonDir, tangentX, poleAxis);
@@ -148,9 +148,10 @@ bool plagueMoonSurface(vec3 viewRay, vec3 moonDir, float radius, float dayIndex,
     float longitude = atan(offset.x, toward);
 
     // Two periods that do not divide each other, so the pair does not repeat every cycle and
-    // consecutive nights differ by 2 to 7 degrees of face rotation.
+    // consecutive nights differ by 2 to 7 degrees of face rotation. Uses continuous dayPos, not the
+    // floored day index, so the angle doesn't jump TAU/8 at midnight while the moon is still up.
     float libration = radians(max(u_MoonLibration, 0.0));
-    float day = PLAGUE_CELESTIAL_TAU * dayIndex / 8.0;
+    float day = PLAGUE_CELESTIAL_TAU * dayPos / 8.0;
     longitude += libration * sin(day);
     latitude += libration * sin(day * 0.53 + 1.1);
 
@@ -204,9 +205,11 @@ vec3 plagueShadeMoonSphere(vec3 normal, float rim, vec2 uv, vec3 poleAxis, vec3 
 /**
  * @param sunDirTrue the TRUE sun direction; the moon is its negation, vanilla's own convention
  * @param moonPhaseIndex u_SkyCelestial.w, 0 full through 4 new; sets where the terminator sits
+ * @param dayPos     u_WorldClock.x + u_WorldClock.y, continuous day position for
+ *                   plagueMoonSurface's libration angle
  * @param moonGlow   night ramp for the moon, so it is not painted onto a bright afternoon sky
  */
-vec3 plagueCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, float moonPhaseIndex, float dayIndex,
+vec3 plagueCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, float moonPhaseIndex, float dayPos,
                           sampler2D moonAlbedoMap, sampler2D moonNormalMap,
                           float invRainFactor, float moonGlow,
                           vec3 sunRadiance, vec3 moonRadiance) {
@@ -225,7 +228,7 @@ vec3 plagueCelestialDiscs(vec3 viewRay, vec3 sunDirTrue, float moonPhaseIndex, f
         vec3 normal, poleAxis;
         float rim;
         vec2 uv;
-        if (plagueMoonSurface(viewRay, moonDir, max(u_MoonDiscSize, 0.001), dayIndex,
+        if (plagueMoonSurface(viewRay, moonDir, max(u_MoonDiscSize, 0.001), dayPos,
                               normal, rim, uv, poleAxis)) {
             vec3 lightDir = plagueMoonLightDir(moonDir, moonPhaseIndex);
             result += plagueShadeMoonSphere(normal, rim, uv, poleAxis, lightDir,

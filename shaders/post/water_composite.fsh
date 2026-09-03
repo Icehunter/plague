@@ -652,8 +652,8 @@ void main() {
             float uwMoonDiscGlow = smoothstep(-0.03, 0.08, -trueSunDir.y)
                                   * (1.0 - lighting.sunVisibility);
             uwDirectionalSky += plagueUnderwaterCelestialDiscs(uwExitDir, trueSunDir,
-                    u_SkyCelestial.w, u_WorldClock.x, u_Input12, u_Input13, uwDiscSoftness,
-                    1.0 - rainFactor, uwMoonDiscGlow);
+                    u_SkyCelestial.w, u_WorldClock.x + u_WorldClock.y, u_Input12, u_Input13,
+                    uwDiscSoftness, 1.0 - rainFactor, uwMoonDiscGlow);
         }
         vec3 uwSkyFill = mix(plagueWaterFogColor(lighting), uwDirectionalSky, 0.68);
         vec3 uwInside = uwSkyFill * uwEyeFilter * mix(0.90, 1.08, skyVis);
@@ -765,6 +765,8 @@ void main() {
         // Same warmth the resolve's border term gets (fog_aerial.glsl / sky.glsl), so the water's
         // own horizon does not disagree with the shoreline beside it.
         fogSkyAlong = plagueWarmSkyBand(fogSkyAlong, fogDir.y, dot(fogDir, fogSunDir), fogSunDir.y);
+        fogSkyAlong = plagueStormDarkenSky(fogSkyAlong, fogDir.y, dot(fogDir, fogSunDir), fogSunDir.y,
+                                           rainFactor, clamp(u_FrameState.z, 0.0, 1.0));
         PlagueFogDrive fogDrive = PLAGUE_FOG_DRIVE(lighting);
         PlagueFogTerms fogTerms = plagueFogTermsAerial(worldPos, skyLight, u_CameraSkyLight.x,
                                  renderDistance, fogAerial, fogNearT, fogSkyAlong,

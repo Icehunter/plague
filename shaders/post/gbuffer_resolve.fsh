@@ -25,43 +25,45 @@
 #moj_import <fornax_runtime:ocean_caustics.glsl>
 
 uniform sampler2D u_Input0; // builtin.gNormal
-uniform sampler2D u_Input1; // builtin.gAlbedo   (rgb albedo, a = sky light)
-uniform sampler2D u_Input2; // builtin.gMaterial (r = smoothness, g = F0, b = porosity/SSS, a = block light)
-uniform sampler2D u_Input3; // builtin.gAo       (r = per-texel AO, g = emission,
-                            //                    b = parallax self-shadow, a = surface class)
-uniform sampler2D u_Input4; // builtin.depth
-uniform sampler2D u_Input5; // builtin.lightmap, vanilla's own light-colour LUT
+// Consolidated by a "consolidate" pass (graph.toml): one sampler slot instead of three, one
+// array layer per builtin. See docs/PACK-FORMAT.md's "consolidate exists for the sampler budget".
+uniform sampler2DArray u_Input1; // layer 0 = gAlbedo   (rgb albedo, a = sky light)
+                                  // layer 1 = gMaterial (r = smoothness, g = F0, b = porosity/SSS, a = block light)
+                                  // layer 2 = gAo       (r = per-texel AO, g = emission,
+                                  //                      b = parallax self-shadow, a = surface class)
+uniform sampler2D u_Input2; // builtin.depth
+uniform sampler2D u_Input3; // builtin.lightmap, vanilla's own light-colour LUT
 // Bound by the engine as a hardware COMPARISON sampler, so this must be sampler2DShadow: texture()
 // returns the depth-test result, not the stored depth.
-uniform sampler2DShadow u_Input6; // sunShadowMap
-uniform sampler2D u_Input7; // ssao. 1.0 unoccluded, 0.0 fully occluded
+uniform sampler2DShadow u_Input4; // sunShadowMap
+uniform sampler2D u_Input5; // ssao. 1.0 unoccluded, 0.0 fully occluded
 
-uniform sampler2D u_Input8; // builtin.gMotion, debug views only
-uniform sampler2D u_Input9; // builtin.celestials, vanilla's sun + 8 moon-phase sprite atlas
-uniform sampler2D u_Input10; // builtin.noise, engine's 512x512 tileable RGBA noise (R smooth, B fbm)
+uniform sampler2D u_Input6; // builtin.gMotion, debug views only
+uniform sampler2D u_Input7; // builtin.celestials, vanilla's sun + 8 moon-phase sprite atlas
+uniform sampler2D u_Input8; // builtin.noise, engine's 512x512 tileable RGBA noise (R smooth, B fbm)
 // Level 0 is a texel-exact copy of `ssr`; higher mips are the environment convolved to roughness,
 // see plagueReflectionLod.
-uniform sampler2D u_Input11; // ssrPrefilter. rgb = reflected colour, a = hit confidence, mipped.
+uniform sampler2D u_Input9; // ssrPrefilter. rgb = reflected colour, a = hit confidence, mipped.
 // Appended, not inserted: u_InputN is positional, so inserting one shifts every later binding.
-uniform sampler2D u_Input12; // builtin.waterDepth. Reversed-Z, 0.0 = no water surface here.
-uniform sampler2D u_Input13; // causticsTexture
+uniform sampler2D u_Input10; // builtin.waterDepth. Reversed-Z, 0.0 = no water surface here.
+uniform sampler2D u_Input11; // causticsTexture
 // Aliases sunShadowMap to a plain sampler2D via a different target string (graph.toml):
 // FullscreenPassRunner keys the comparison-sampler branch on the exact string, so this reads raw
-// stored depth where u_Input6's sampler2DShadow can only return a pass/fail compare.
-uniform sampler2D u_Input14; // sunShadowMapRaw (raw, non-comparison. Debug only, see DBG_SHADOW_QUERY_3)
-uniform sampler2D u_Input15; // moonAlbedo, equirectangular, near side centred
-uniform sampler2D u_Input16; // moonNormal, tangent-space relief for the same projection
+// stored depth where u_Input4's sampler2DShadow can only return a pass/fail compare.
+uniform sampler2D u_Input12; // sunShadowMapRaw (raw, non-comparison. Debug only, see DBG_SHADOW_QUERY_3)
+uniform sampler2D u_Input13; // moonAlbedo, equirectangular, near side centred
+uniform sampler2D u_Input14; // moonNormal, tangent-space relief for the same projection
 // cloudShadowMask, quarter scale. Ground cloud-shadow TRANSMITTANCE: 1.0 full sun, lower is shaded.
-uniform sampler2D u_Input17;
-uniform sampler2D u_Input18; // atmoSkyView, the marched dome (atmo_lut.glsl); zero under Palette
+uniform sampler2D u_Input15;
+uniform sampler2D u_Input16; // atmoSkyView, the marched dome (atmo_lut.glsl); zero under Palette
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
-    return texture(u_Input18, uv);
+    return texture(u_Input16, uv);
 }
-uniform sampler2D u_Input19; // atmoAerial, in-scatter and transmittance per screen froxel; zero under Palette
+uniform sampler2D u_Input17; // atmoAerial, in-scatter and transmittance per screen froxel; zero under Palette
 
 vec4 plagueAtmoFetchAerial(vec2 uv) {
-    return texture(u_Input19, uv);
+    return texture(u_Input17, uv);
 }
 
 // Metal allows 16 samplers per fragment function, counting only the ones the code reads, and this
@@ -73,11 +75,11 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 // displace a remaining read.
 //#define PLAGUE_DEBUG_VIEWS //[] compile "Motion and Shadow-Map Debug Views"
 
-// Must come after u_Input10's declaration: PLAGUE_CLOUD_NOISE expands inline wherever clouds.glsl
-// calls it, so an earlier import would reference u_Input10 before it exists. Also declares
+// Must come after u_Input8's declaration: PLAGUE_CLOUD_NOISE expands inline wherever clouds.glsl
+// calls it, so an earlier import would reference u_Input8 before it exists. Also declares
 // CLOUDS_VOLUMETRIC/u_CloudAltitude/u_CloudAmount/u_CloudSpeed/CLOUD_RESOLUTION, byte-identical to
 // clouds_march.fsh's own copy (the option scanner merges same-name declarations).
-#define PLAGUE_CLOUD_NOISE(uv) texture(u_Input10, uv)
+#define PLAGUE_CLOUD_NOISE(uv) texture(u_Input8, uv)
 // This pass's cloud-shadow query (plagueCloudDensityCoarse, below) cannot bind a real sampler3D:
 // Vulkan's fullscreen-pipeline shader-reflection step refuses any non-2D/Cube sampler outright, so
 // only the compute-based direct-view march samples the real 3D volumes. This uses the same ALU
@@ -251,7 +253,7 @@ out vec4 fragColor;
 // Point-symmetric golden-angle (Vogel) disk PCF, radius ~ (i/N)^p with p and per-count disk radius
 // fitted against a committed behaviour fixture (tools/verify_shadow_filter.py re-checks on every
 // run). Vogel 1979. Each sample taken as a symmetric +/-offset pair, halving shot noise for the
-// same tap budget. Reads u_Input6 as a global rather than a parameter, for the same reason this
+// same tap budget. Reads u_Input4 as a global rather than a parameter, for the same reason this
 // function is kept inline above.
 
 // radius_i = diskRadius * (i / SHADOW_SAMPLES)^p. Fitted jointly across all four sample counts.
@@ -300,8 +302,8 @@ float plagueSunVisibilityFiltered(vec2 shadowUv, float refDepth, float texelScal
 
         vec2 offset = vec2(cos(angle), sin(angle)) * radius * texelScale;
 
-        visSum += texture(u_Input6, vec3(shadowUv + offset, refDepth));
-        visSum += texture(u_Input6, vec3(shadowUv - offset, refDepth));
+        visSum += texture(u_Input4, vec3(shadowUv + offset, refDepth));
+        visSum += texture(u_Input4, vec3(shadowUv - offset, refDepth));
     }
 
     return visSum / float(2 * SHADOW_SAMPLES);
@@ -372,7 +374,7 @@ float plagueWaterSunVisibility(vec3 worldPos, vec3 sunDir) {
             || lightNdc.z <= 0.0 || lightNdc.z >= 1.0) {
         return 0.0; // volumetrics outside the covered shadow volume must not invent sunlight
     }
-    return texture(u_Input6, vec3(shadowUv, lightNdc.z));
+    return texture(u_Input4, vec3(shadowUv, lightNdc.z));
 }
 #endif
 #endif
@@ -412,21 +414,21 @@ vec3 plagueUnderwaterSunTint(float pattern) {
 void main() {
     // Reversed-Z: the buffer clears to 0.0 = far, so depth zero means nothing was drawn here. Let
     // vanilla's own sky show through rather than painting over it when this pack does not own the sky.
-    float depth = texture(u_Input4, texCoord).r;
+    float depth = texture(u_Input2, texCoord).r;
 
     vec4 normalSample = texture(u_Input0, texCoord);
-    vec4 albedoSample = texture(u_Input1, texCoord);
+    vec4 albedoSample = texture(u_Input1, vec3(texCoord, 0.0));
 
 int debugView = int(u_Param3 + 0.5);
     if (debugView != 0) {
         if (debugView == DBG_NORMALS)  { fragColor = vec4(normalSample.xyz * 0.5 + 0.5, 1.0); return; }
         if (debugView == DBG_ALBEDO)   { fragColor = vec4(albedoSample.rgb, 1.0); return; }
-        if (debugView == DBG_MATERIAL) { fragColor = vec4(texture(u_Input2, texCoord).rgb, 1.0); return; }
+        if (debugView == DBG_MATERIAL) { fragColor = vec4(texture(u_Input1, vec3(texCoord, 1.0)).rgb, 1.0); return; }
 #ifdef PLAGUE_DEBUG_VIEWS
-        if (debugView == DBG_MOTION)   { fragColor = vec4(abs(texture(u_Input8, texCoord).rg) * 40.0, 0.0, 1.0); return; }
+        if (debugView == DBG_MOTION)   { fragColor = vec4(abs(texture(u_Input6, texCoord).rg) * 40.0, 0.0, 1.0); return; }
 #endif
-        if (debugView == DBG_SSAO)     { fragColor = vec4(vec3(texture(u_Input7, texCoord).r), 1.0); return; }
-        if (debugView == DBG_AO)       { fragColor = vec4(vec3(texture(u_Input3, texCoord).r), 1.0); return; }
+        if (debugView == DBG_SSAO)     { fragColor = vec4(vec3(texture(u_Input5, texCoord).r), 1.0); return; }
+        if (debugView == DBG_AO)       { fragColor = vec4(vec3(texture(u_Input1, vec3(texCoord, 2.0)).r), 1.0); return; }
         if (debugView == DBG_RT_SHADOW) {
             // Sun visibility alone: white lit, black shadowed. Isolates the shadow map from the
             // lightmap/ambient, which can mask a missing caster in the lit image.
@@ -460,8 +462,8 @@ int debugView = int(u_Param3 + 0.5);
             const float SHADOW_MAP_VIEW_OCCUPIED = 0.2;
             const vec3 SHADOW_MAP_VIEW_CLEAR_COLOR = vec3(1.0, 0.0, 0.7);
 #ifdef PLAGUE_DEBUG_VIEWS
-            ivec2 dbgShadowMapTexel = ivec2(texCoord * vec2(textureSize(u_Input14, 0)));
-            float dbgShadowMapDepth = texelFetch(u_Input14, dbgShadowMapTexel, 0).r;
+            ivec2 dbgShadowMapTexel = ivec2(texCoord * vec2(textureSize(u_Input12, 0)));
+            float dbgShadowMapDepth = texelFetch(u_Input12, dbgShadowMapTexel, 0).r;
 #else
             // Without the raw shadow-map read compiled in, the view shows its clear sentinel.
             float dbgShadowMapDepth = 1.0;
@@ -478,7 +480,7 @@ int debugView = int(u_Param3 + 0.5);
             return;
         }
         if (debugView == DBG_BLOCK_LIGHT) {
-            fragColor = vec4(vec3(texture(u_Input2, texCoord).a), 1.0);
+            fragColor = vec4(vec3(texture(u_Input1, vec3(texCoord, 1.0)).a), 1.0);
             return;
         }
     }
@@ -607,6 +609,8 @@ int debugView = int(u_Param3 + 0.5);
             // dome the way the palette's authored band was.
             vec3 skyPhysical = plagueAtmoSkyView(viewRay, sunDirTrue, plagueAtmoCameraRadius()).rgb;
             skyPhysical = plagueWarmSkyBand(skyPhysical, VdotU, VdotS, sunDirTrue.y);
+            skyPhysical = plagueStormDarkenSky(skyPhysical, VdotU, VdotS, sunDirTrue.y,
+                                               rainFactor, clamp(u_FrameState.z, 0.0, 1.0));
             skyOut = skyPhysical * atmColorMult;
             nightGate = plagueAtmoNightGate(sunDirTrue.y);
             skyOut = max(skyOut + (skyDither - 0.5) / 128.0, vec3(0.0));
@@ -654,8 +658,9 @@ int debugView = int(u_Param3 + 0.5);
             // the last sliver above a level horizon is where the real sun visually disappears.
             vec3 discEyePos = plagueAirEyePos(u_CameraAbs.y);
             float sunSetGate = smoothstep(-0.014535, 0.0, sunDirTrue.y);
-            skyOut += plagueCelestialDiscs(viewRay, sunDirTrue, u_SkyCelestial.w, u_WorldClock.x,
-                                           u_Input15, u_Input16,
+            skyOut += plagueCelestialDiscs(viewRay, sunDirTrue, u_SkyCelestial.w,
+                                           u_WorldClock.x + u_WorldClock.y,
+                                           u_Input13, u_Input14,
                                            1.0 - rainFactor, plagueMoonDiscGlow,
                                            plagueSunColor(discEyePos, sunDirTrue) * sunSetGate,
                                            plagueMoonColor(discEyePos, -sunDirTrue));
@@ -664,7 +669,7 @@ int debugView = int(u_Param3 + 0.5);
             // gated to zero for daylight, rain, and anything but a full moon by default.
             auroraTerm = plagueGetAurora(viewRay, VdotU, skyDither, u_CameraAbs.xz, syncedTime,
                                          plagueSunVisibility, rainFactor, u_SkyCelestial.w,
-                                         u_Input10) * nightGate;
+                                         u_Input8) * nightGate;
             skyOut += auroraTerm;
         }
 
@@ -702,12 +707,12 @@ int debugView = int(u_Param3 + 0.5);
 
     // gMaterial.a packs block light and intrinsic emission as two 4-bit nibbles, matching
     // Minecraft's own light-level precision.
-    float blockLight = texture(u_Input2, texCoord).a;
+    float blockLight = texture(u_Input1, vec3(texCoord, 1.0)).a;
 
     // Normalised 0..1 emitter luminance: gAo is RGBA8_UNORM, so the scale (PLAGUE_EMISSION_MAGNITUDE)
     // is applied downstream in plagueEmittedRadiance instead, where the nonlinear saturation ramp
     // needs the normalised value rather than an already-scaled one.
-    float emitterLum = texture(u_Input3, texCoord).g;   // gAo.g
+    float emitterLum = texture(u_Input1, vec3(texCoord, 2.0)).g;   // gAo.g
 
     // NOTE: vanilla's lightmap is no longer sampled for lighting; block light uses this pack's own
     // fitted curve and colour (main_lighting.glsl). sampleLightmap() is kept for the engine's binding
@@ -715,15 +720,15 @@ int debugView = int(u_Param3 + 0.5);
 
     // Per-texel AO (labPBR _n blue) darkens indirect light only: applying it to direct sun would
     // double-darken surfaces the sun can plainly see.
-    float ao = texture(u_Input3, texCoord).r;
+    float ao = texture(u_Input1, vec3(texCoord, 2.0)).r;
     // Parallax self-shadow occludes direct sun, so it multiplies the shadow term rather than AO: it
     // must survive full daylight, where crevice shadow reads strongest.
-    float pomShadow = texture(u_Input3, texCoord).b;   // gAo.b
+    float pomShadow = texture(u_Input1, vec3(texCoord, 2.0)).b;   // gAo.b
 
 #ifdef SSAO_ENABLED
     // Multiplies the per-texel labPBR AO rather than replacing it: different scales (surface detail
     // vs scene geometry), both real.
-    ao *= texture(u_Input7, texCoord).r;
+    ao *= texture(u_Input5, texCoord).r;
 #endif
 
     // Outside the shadow block: the specular term below needs worldPos regardless of whether
@@ -738,7 +743,7 @@ int debugView = int(u_Param3 + 0.5);
     float uwSurfDist = 1e9;
     float uwSurfWorldY = -1e9;
     {
-        float uwSurfDepth = texelFetch(u_Input12, ivec2(gl_FragCoord.xy), 0).r;
+        float uwSurfDepth = texelFetch(u_Input10, ivec2(gl_FragCoord.xy), 0).r;
         if (uwSurfDepth > 0.0) {
             vec4 uwSurfH = u_InvProjModelView * vec4(texCoord * 2.0 - 1.0, uwSurfDepth, 1.0);
             vec3 uwSurfPos = uwSurfH.xyz / uwSurfH.w;
@@ -830,12 +835,12 @@ int debugView = int(u_Param3 + 0.5);
             fragColor = vec4(dbgShadowUv, dbgInRange ? 1.0 : 0.0, visibility);
             return;
         }
-        // DBG_SHADOW_QUERY_3: the actual stored depth at dbgShadowUv, read through u_Input14 as a
-        // plain sampler2D — u_Input6's sampler2DShadow can only return a pass/fail compare, never
+        // DBG_SHADOW_QUERY_3: the actual stored depth at dbgShadowUv, read through u_Input12 as a
+        // plain sampler2D — u_Input4's sampler2DShadow can only return a pass/fail compare, never
         // the raw texel. Clamped UV means this is only meaningful when QUERY_2's inRange was 1.0.
 #ifdef PLAGUE_DEBUG_VIEWS
-        ivec2 dbgShadowTexel = ivec2(clamp(dbgShadowUv, 0.0, 1.0) * vec2(textureSize(u_Input14, 0)));
-        float dbgStoredDepth = texelFetch(u_Input14, dbgShadowTexel, 0).r;
+        ivec2 dbgShadowTexel = ivec2(clamp(dbgShadowUv, 0.0, 1.0) * vec2(textureSize(u_Input12, 0)));
+        float dbgStoredDepth = texelFetch(u_Input12, dbgShadowTexel, 0).r;
 #else
         float dbgStoredDepth = 0.0;
 #endif
@@ -885,7 +890,7 @@ int debugView = int(u_Param3 + 0.5);
     // finer than a cloud cell but cost hundreds of hash evaluations per lit fragment inline.
     float cloudShadow = 1.0;
 #if CLOUD_SHADOWS && CLOUDS_VOLUMETRIC
-    cloudShadow = clamp(texture(u_Input17, texCoord).r, 0.0, 1.0);
+    cloudShadow = clamp(texture(u_Input15, texCoord).r, 0.0, 1.0);
 #endif
     shadow *= cloudShadow;
 
@@ -970,7 +975,7 @@ int debugView = int(u_Param3 + 0.5);
                 float causticRate = (u_CausticSpeed * 0.01)
                                   * (u_CausticSyncWaves > 0.5 ? u_WaveSpeed : 1.0);
                 float causticSize = u_CausticScale * 0.01;
-                float causticP01 = plagueCausticsProjected(u_Input13, causticWorldPos,
+                float causticP01 = plagueCausticsProjected(u_Input11, causticWorldPos,
                                                            (u_SkyState.w / 20.0) * causticRate,
                                                            causticSize);
 
@@ -1031,7 +1036,7 @@ int debugView = int(u_Param3 + 0.5);
                 // attached via screen derivatives so the halo stays compact instead of becoming a
                 // world-space smear. Fragment stage only (dFdx/dFdy), verified that the two files
                 // importing ocean_caustics.glsl are both .fsh.
-                uwWebBloom = plagueCausticsBloomProjected(u_Input13, causticWorldPos,
+                uwWebBloom = plagueCausticsBloomProjected(u_Input11, causticWorldPos,
                                                           (u_SkyState.w / 20.0) * causticRate,
                                                           causticSize)
                            * causticDepthDim * causticRangeFade;
@@ -1239,7 +1244,7 @@ int debugView = int(u_Param3 + 0.5);
     // angles any more. A cap survives, at pi^4 rather than 3.0, because a near-delta lobe against a
     // directional light really is that bright and has nowhere to go without bloom. Both live in
     // brdf.glsl next to the reasoning.
-    vec3 material = texture(u_Input2, texCoord).rgb;
+    vec3 material = texture(u_Input1, vec3(texCoord, 1.0)).rgb;
     PlagueMaterial mat = plagueDecodeMaterial(material.r, material.g, material.b);
 
     // Wetness, applied before the BRDF because it changes the inputs the BRDF reads: albedo,
@@ -1495,8 +1500,8 @@ int debugView = int(u_Param3 + 0.5);
     vec4 ssrSample = vec4(0.0);
     vec4 ssrWideSample = vec4(0.0);
 #if SSR_QUALITY != 0
-    ssrSample = textureLod(u_Input11, texCoord, 0.0);
-    ssrWideSample = textureLod(u_Input11, texCoord, plagueReflectionLod(1.0 - reflSmoothness));
+    ssrSample = textureLod(u_Input9, texCoord, 0.0);
+    ssrWideSample = textureLod(u_Input9, texCoord, plagueReflectionLod(1.0 - reflSmoothness));
 #endif
 
     // Energy is `specularAlbedo` (decided once above), and authored roughness is spent entirely on
@@ -1895,6 +1900,8 @@ int debugView = int(u_Param3 + 0.5);
         // own ray rather than the eye's: without it, geometry dissolving into the border veil fades
         // to a sky that is warm above eye level and flatly white just below it.
         fogSky = plagueWarmSkyBand(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y);
+        fogSky = plagueStormDarkenSky(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y,
+                                      rainFactor, clamp(u_FrameState.z, 0.0, 1.0));
         PlagueFogDrive fogDrive = PLAGUE_FOG_DRIVE(lighting);
         PlagueFogTerms fogTerms = plagueFogTermsAerial(worldPos, skyLight, u_CameraSkyLight.x,
                                                  renderDistance, fogAerial, fogNearT, fogSky,

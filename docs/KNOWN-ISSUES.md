@@ -20,11 +20,13 @@ working notes; what is here is what a reader needs to know the limitation exists
 
 - **The climate signal snaps at biome borders**, so fog character can change abruptly across a line.
 - **Thunder is not its own fog driver.** Heavy weather reads as ordinary rain.
-- **The resolve is at Metal's ceiling of 16 live samplers per fragment function.** The motion and
-  raw-shadow-map debug views are compiled out for it (`PLAGUE_DEBUG_VIEWS`, usable only with the
-  Palette sky), and no further input can be added to `shaders/post/gbuffer_resolve.fsh` without
-  displacing one. Raising the ceiling means Metal argument buffers, which is an engine matter.
-  `tools/check_metal_pipelines.py` measures the count.
+- **The resolve sits close to Metal's ceiling of 16 live samplers per fragment function**, at 14
+  under the scattering sky and 12 under Palette (`tools/check_metal_pipelines.py` measures the
+  count). The `gbuf_consolidate` pass (`graph.toml`, see `docs/PACK-FORMAT.md`) already buys back
+  three slots; the motion and raw-shadow-map debug views (`PLAGUE_DEBUG_VIEWS`) stay compiled out
+  regardless, and the ceiling itself is not raisable from this engine's integration surface:
+  Blaze3D's bind-group API has no path to the separate-sampler descriptors Metal argument buffers
+  would need.
 - **Under the scattering sky, a cloud's DIRECT sun/moon light still comes from the palette**
   (`lighting.light` / `plagueMoonColor` in `shaders/include/clouds.glsl`), so a cloud's lit side can
   disagree with the air under it at dusk. A table-lit direct term was tried and rejected by eye:

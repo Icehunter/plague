@@ -368,6 +368,33 @@ vec3 plagueWarmSkyBand(vec3 sky, float VdotU, float VdotS, float sunUp) {
 }
 
 /**
+ * Applies the palette's PLAGUE_SKY_OVERCAST_* flatten to a sky sample from any dome, the way
+ * plagueWarmSkyBand gives sunset warmth to one. A clear-air march only adds scattered light on top
+ * of the clear result (full rain measures 1.2x the clear zenith and warmer, not greyer, at the
+ * horizon: tools/plague_atmo_lut.py) since it has no cloud deck to block the sun, so overcast needs
+ * this authored target instead of a physical parameter.
+ *
+ * @param VdotU direction the sample came from; not necessarily the camera's own ray, since
+ *              border fog samples along the fragment's ray instead.
+ */
+vec3 plagueStormDarkenSky(vec3 sky, float VdotU, float VdotS, float sunUp, float rain, float thunder) {
+    float flatten = clamp(rain, 0.0, 1.0) * PLAGUE_SKY_RAIN_FLATTEN;
+    if (flatten <= 0.0) {
+        return sky;
+    }
+    float dayWeight = clamp(plagueSkyPhase(sunUp) - 1.0, 0.0, 1.0);
+    float overcastLevel = mix(PLAGUE_SKY_OVERCAST_RAIN_LEVEL, PLAGUE_SKY_OVERCAST_STORM_LEVEL, clamp(thunder, 0.0, 1.0));
+    vec3 overcastZenith = PLAGUE_SKY_OVERCAST * overcastLevel * max(dayWeight, 0.04);
+    vec3 overcastHorizon = overcastZenith * PLAGUE_SKY_OVERCAST_HORIZON_RATIO;
+    vec3 overcastSunward = overcastZenith * PLAGUE_SKY_OVERCAST_SUNWARD_LIFT;
+    float up = clamp(abs(VdotU), 0.0, 1.0);
+    vec3 overcast = mix(overcastHorizon, overcastZenith, up);
+    float sunwardWeight = pow(max(VdotS, 0.0), 4.0) * (1.0 - up);
+    overcast = mix(overcast, overcastSunward, clamp(sunwardWeight, 0.0, 1.0));
+    return mix(sky, overcast, flatten);
+}
+
+/**
  * The whole visible dome, cosine-weighted: what a flat upward-facing surface is actually lit by.
  * This is what ambient wants — sampling the zenith alone lit a sunset with its bluest, least
  * representative direction and lost the warm bounce off water and open ground.

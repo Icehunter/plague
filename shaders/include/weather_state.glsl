@@ -86,7 +86,13 @@ PlagueWeatherState plagueWeatherState(float rainRaw, float thunderRaw, float wet
     w.morningWindow = smoothstep(-0.06, -0.015, m) * (1.0 - smoothstep(0.02, 0.14, m));
 
     float days = dayIndex + clamp(dayFraction, 0.0, 1.0);
-    w.dayVariance = plagueWeatherDayHash(dayIndex);
+    // Blended across the day boundary the same way fog_model.glsl's own dayFactor is (byte-
+    // identical; see that file's comment for why a bare dayIndex snaps at every dawn).
+    float dayPos = dayIndex + w.dayFrac;
+    float dayI = floor(dayPos);
+    float dayS = fract(dayPos);
+    dayS = dayS * dayS * (3.0 - 2.0 * dayS);
+    w.dayVariance = mix(plagueWeatherDayHash(dayI), plagueWeatherDayHash(dayI + 1.0), dayS);
     w.humidSpell = plagueWeatherSpell(days, PLAGUE_WEATHER_HUMID_LANE);
     w.unstableSpell = plagueWeatherSpell(days, PLAGUE_WEATHER_UNSTABLE_LANE);
 
