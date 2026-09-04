@@ -620,18 +620,28 @@ int debugView = int(u_Param3 + 0.5);
             // rather than for the palette's night factor.
             float nightGate = 1.0;
 #if PLAGUE_SKY_MODEL == 1
-            // One table read, dithered as plagueGetSky is: a smooth gradient is where banding
-            // shows first. Warmed by the pack's own sunset band (sky.glsl) before atmColorMult:
-            // a clear physical sky is white well before it is dark, since the reddened sunlight
-            // that colours it is confined to a shrinking band near the sun, not spread across the
-            // dome the way the palette's authored band was.
-            vec3 skyPhysical = plagueAtmoSkyView(viewRay, sunDirTrue, plagueAtmoCameraRadius()).rgb;
-            skyPhysical = plagueWarmSkyBand(skyPhysical, VdotU, VdotS, sunDirTrue.y);
-            skyPhysical = plagueStormDarkenSky(skyPhysical, VdotU, VdotS, sunDirTrue.y,
-                                               rainFactor, clamp(u_FrameState.z, 0.0, 1.0));
-            skyOut = skyPhysical * atmColorMult;
-            nightGate = plagueAtmoNightGate(sunDirTrue.y);
-            skyOut = max(skyOut + (skyDither - 0.5) / 128.0, vec3(0.0));
+            // The tables assume an overhead sun and a Rayleigh atmosphere, neither of which the
+            // Nether has, so an ungated sample paints Overworld daylight through every gap in its
+            // own ceiling. u_FogColor is vanilla's own per-dimension fog tint, already correct for
+            // wherever the camera is, and stands in until the atmosphere carries a real per-
+            // dimension aerosol profile. No stars either: nightGate drops to 0.
+            if (u_WorldBounds.w == 2.0) {
+                skyOut = u_FogColor.rgb * atmColorMult;
+                nightGate = 0.0;
+            } else {
+                // One table read, dithered as plagueGetSky is: a smooth gradient is where banding
+                // shows first. Warmed by the pack's own sunset band (sky.glsl) before atmColorMult:
+                // a clear physical sky is white well before it is dark, since the reddened sunlight
+                // that colours it is confined to a shrinking band near the sun, not spread across
+                // the dome the way the palette's authored band was.
+                vec3 skyPhysical = plagueAtmoSkyView(viewRay, sunDirTrue, plagueAtmoCameraRadius()).rgb;
+                skyPhysical = plagueWarmSkyBand(skyPhysical, VdotU, VdotS, sunDirTrue.y);
+                skyPhysical = plagueStormDarkenSky(skyPhysical, VdotU, VdotS, sunDirTrue.y,
+                                                   rainFactor, clamp(u_FrameState.z, 0.0, 1.0));
+                skyOut = skyPhysical * atmColorMult;
+                nightGate = plagueAtmoNightGate(sunDirTrue.y);
+                skyOut = max(skyOut + (skyDither - 0.5) / 128.0, vec3(0.0));
+            }
 #else
             skyOut = plagueGetSky(skyColours, VdotU, VdotS, skyDither, true, false) * atmColorMult;
 #endif
@@ -1532,7 +1542,10 @@ int debugView = int(u_Param3 + 0.5);
     // Graded so a reflection miss agrees with the dome it is reflecting.
     vec3 reflDir = reflect(-viewDir, normal);
 #if PLAGUE_SKY_MODEL == 1
-    vec3 skyMiss = plagueAtmoSkyView(reflDir, sunDirTrue, plagueAtmoCameraRadius()).rgb * atmColorMult;
+    // Nether reflections read vanilla's own fog tint rather than an Overworld daylight table; see
+    // the sky branch's own comment on why the table cannot speak for a dimension with no sun.
+    vec3 skyMiss = u_WorldBounds.w == 2.0 ? u_FogColor.rgb * atmColorMult
+            : plagueAtmoSkyView(reflDir, sunDirTrue, plagueAtmoCameraRadius()).rgb * atmColorMult;
 #else
     vec3 skyMiss = plagueGetSky(skyColours, reflDir.y, dot(reflDir, sunDirTrue), 0.5,
                                 false, true) * atmColorMult;
