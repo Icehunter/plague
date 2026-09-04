@@ -176,6 +176,8 @@ layout(std140) uniform u_PbrSettings {
     float u_FogWetMist;
     float u_FogColdMist;
     float u_FogDryClear;
+    float u_NetherFogDensity;
+    float u_NetherFogDistance;
     float u_FogClimbRise;
     float u_FogCaveGuardLo;
     float u_FogCaveGuardHi;

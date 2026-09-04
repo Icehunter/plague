@@ -908,12 +908,25 @@ scale = 1.0
 format = "rgba16f"
 scale = 1.0
 
+# Post-TAA, same reason underwater_refraction sits here: a warp before accumulation displaces
+# pixels TAA then reprojects against unwarped motion vectors. UNGATED: read unconditionally next.
+[targets.sceneHdrShimmer]
+format = "rgba16f"
+scale = 1.0
+
+[[pass]]
+name = "heat_shimmer"
+type = "fullscreen"
+shader = "shaders/post/heat_shimmer.fsh"
+inputs = ["sceneHdrTemporal", "builtin.depth", "builtin.gNormal", "builtin.gAo", "builtin.noise"]
+outputs = ["sceneHdrShimmer"]
+
 [[pass]]
 name = "underwater_refraction"
 type = "fullscreen"
 shader = "shaders/post/underwater_refraction.fsh"
 enabled_if = "PLAGUE_UNDERWATER == 0 || WATER_SCATTERING_QUALITY == 0"
-inputs = ["sceneHdrTemporal", "builtin.depth", "builtin.noise", "builtin.waterDepth"]
+inputs = ["sceneHdrShimmer", "builtin.depth", "builtin.noise", "builtin.waterDepth"]
 outputs = ["sceneHdrRefracted"]
 
 [[pass]]
@@ -921,7 +934,7 @@ name = "underwater_refraction_shafts"
 type = "fullscreen"
 shader = "shaders/post/underwater_refraction.fsh"
 enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
-inputs = ["sceneHdrTemporal", "builtin.depth", "builtin.noise", "builtin.waterDepth"]
+inputs = ["sceneHdrShimmer", "builtin.depth", "builtin.noise", "builtin.waterDepth"]
 outputs = ["sceneHdrRefracted"]
 
 [[pass]]
@@ -957,6 +970,32 @@ type = "fullscreen"
 shader = "shaders/post/underwater_blur_v.fsh"
 inputs = ["underwaterBlurH", "builtin.depth", "builtin.waterDepth"]
 outputs = ["underwaterBlurred"]
+
+# Same shape as the underwater pair above: reads the finished refraction, reconstructed against
+# full-resolution depth in tonemap.fsh.
+[targets.heatBlurH]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+
+[targets.heatBlurred]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+
+[[pass]]
+name = "heat_blur_h"
+type = "fullscreen"
+shader = "shaders/post/heat_blur_h.fsh"
+inputs = ["sceneHdrRefracted"]
+outputs = ["heatBlurH"]
+
+[[pass]]
+name = "heat_blur_v"
+type = "fullscreen"
+shader = "shaders/post/heat_blur_v.fsh"
+inputs = ["heatBlurH"]
+outputs = ["heatBlurred"]
 
 # Four ordered solver stages: prepare derives the moving-window shift, the middle stages advance
 # pressure/velocity and generate gradients, commit preserves the fractional shift remainder.
@@ -1132,7 +1171,8 @@ shader = "shaders/post/tonemap.fsh"
 # Reads the finished two-pass blur (underwaterBlurred) rather than computing a disc kernel inline.
 # Inputs are positional — append only, never insert.
 inputs = ["sceneHdrRefracted", "builtin.depth", "bloomFinal", "builtin.waterDepth", "exposure",
-          "underwaterBlurred", "builtin.noise", "waterVolumeShaftsResolved", "builtin.gAo"]
+          "underwaterBlurred", "builtin.noise", "waterVolumeShaftsResolved", "builtin.gAo",
+          "heatBlurred"]
 outputs = ["builtin.output"]
 
 # NO SNOW ACCUMULATION / COMPUTE PASS, deliberately: a deferred blend can only paint colour, not

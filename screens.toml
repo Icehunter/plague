@@ -74,6 +74,11 @@ sliders = [
     "u_SsrStrength",
     "u_SsrMaxDistance",
     "u_SsrTraceQuality",
+    "u_HeatShimmer",
+    "u_NetherHeatAmbient",
+    "u_NetherHeatDistance",
+    "u_NetherHeatBlurStrength",
+    "u_NetherHeatBlurStart",
     "u_WaterClarity",
     "u_WaterShaftDistance",
     "u_WaterShaftStrength",
@@ -108,6 +113,8 @@ sliders = [
     "u_FogMistReach",
     "u_FogColdMist",
     "u_FogDryClear",
+    "u_NetherFogDensity",
+    "u_NetherFogDistance",
     "u_FogClimbRise",
     "u_FogCaveGuardLo",
     "u_FogCaveGuardHi",
@@ -367,6 +374,9 @@ elements = [
     "<group:Climate>",
     "u_FogColdMist|requires:u_FogEnableCold",
     "u_FogDryClear|requires:u_FogEnableDry",
+    "<group:Nether>",
+    "u_NetherFogDensity",
+    "u_NetherFogDistance",
     "<group:Advanced - Morning|requires:u_FogAdvanced>",
     "u_FogMorningDensity", "u_FogMorningDistance", "u_FogMorningSharpness",
     "<group:Advanced - Night|requires:u_FogAdvanced>",
@@ -452,6 +462,20 @@ elements = [
     "u_SsrStrength",
     "u_SsrMaxDistance",
     "u_SsrTraceQuality",
+]
+
+[screens.heat_shimmer]
+title = "Heat Shimmer"
+elements = [
+    "u_HeatShimmer",
+    "<group:Lava & Fire>",
+    "u_HeatShimmerEmissive",
+    "<group:Nether|requires:u_HeatShimmerNether>",
+    "u_HeatShimmerNether",
+    "u_NetherHeatAmbient|requires:u_HeatShimmerNether",
+    "u_NetherHeatDistance|requires:u_HeatShimmerNether",
+    "u_NetherHeatBlurStrength|requires:u_HeatShimmerNether",
+    "u_NetherHeatBlurStart|requires:u_HeatShimmerNether",
 ]
 
 # Grouped by WHAT EACH CONTROL DOES, so a switch sits with the sliders it governs and you can see
@@ -662,7 +686,7 @@ elements = [
 ]
 
 [yacl]
-pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "occlusion", "reflections", "water", "materials", "snow", "parallax", "bloom", "tonemap", "outline", "debug"]
+pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "occlusion", "reflections", "heat_shimmer", "water", "materials", "snow", "parallax", "bloom", "tonemap", "outline", "debug"]
 
 # Prose shown in each option's tooltip, above the mechanical Default/Range/Applies lines.
 [descriptions]
@@ -1079,6 +1103,16 @@ u_FogDryClear = """
 How much clearer the air is where rain never falls.
 
 Deserts, mesas and savannas get thinner haze and a longer view. The world's edge stays hidden."""
+
+u_NetherFogDensity = """
+How thick the Nether's own edge fog is, on top of the world's edge fog setting.
+
+Only affects the Nether."""
+
+u_NetherFogDistance = """
+How close the Nether's edge fog sits. Lower brings it right up around you.
+
+Only affects the Nether."""
 
 u_FogMorningDensity = """
 Fog Amount used during morning mist, instead of the main setting.
@@ -1787,6 +1821,33 @@ Quality of the reflections.
 
 Too low, and distant reflections cut off early. The cost is only paid on surfaces smooth or wet \
 enough to reflect at all."""
+
+u_HeatShimmer = """
+How much the air wobbles and ripples wherever heat is present.
+
+Shared by both sources below. Zero turns it off."""
+
+u_HeatShimmerEmissive = """
+Wobble over lava, fire, campfires and anything else that glows.
+
+Finds them by their own glow, so nothing needs listing by name."""
+
+u_HeatShimmerNether = """
+A baseline heat haze that plays everywhere in the Nether, not just over glowing surfaces."""
+
+u_NetherHeatAmbient = """
+How strong the Nether's baseline heat haze is, on its own dial from the wobble above."""
+
+u_NetherHeatDistance = """
+How close the Nether's baseline haze reaches. Lower brings it nearer to the camera."""
+
+u_NetherHeatBlurStrength = """
+Softens distant air in the Nether into haze, the way scattering blur does underwater.
+
+Zero turns it off."""
+
+u_NetherHeatBlurStart = """
+How far out the Nether's heat blur begins. Lower brings the soft haze closer."""
 
 SSAO_ENABLED = """
 Soft shading in corners, creases and where things meet the ground.

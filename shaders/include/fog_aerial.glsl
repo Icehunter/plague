@@ -52,15 +52,20 @@ PlagueFogTerms plagueFogTermsAerial(vec3 worldPos, float skyLight, float cameraS
     terms.atmColor = aerial.rgb / max(opacity, vec3(1e-4)) * atmColorMult * pathLight;
 
     // Horizontal radius alone, matching fog.glsl's own border metric and the reasoning there:
-    // Minecraft's render distance is a cylinder (XZ-only chunk culling), not a cube.
+    // Minecraft's render distance is a cylinder (XZ-only chunk culling), not a cube. Nether
+    // sliders scale this same curve rather than branching it, so the terminal-1.0-at-cutoff
+    // property survives.
+    float netherFog = u_WorldBounds.w == 2.0 ? 1.0 : 0.0;
+    float borderRenderDistance = renderDistance * mix(1.0, u_NetherFogDistance, netherFog);
+    float borderDensityScaled = borderDensity * mix(1.0, u_NetherFogDensity, netherFog);
     float borderDist = length(worldPos.xz);
-    float borderFraction = clamp(borderDist / max(renderDistance, PLAGUE_FOG_MIN_RENDER_DISTANCE),
+    float borderFraction = clamp(borderDist / max(borderRenderDistance, PLAGUE_FOG_MIN_RENDER_DISTANCE),
                                  0.0, 1.0);
     float borderGate = mix(pathLight, 1.0,
                            smoothstep(mix(0.55, u_FogBorderGateNear, drive.advanced),
                                       mix(0.80, u_FogBorderGateFar, drive.advanced),
                                       borderFraction));
-    float rawBorder = plagueBorderFog(borderDist, renderDistance, borderDensity) * borderGate
+    float rawBorder = plagueBorderFog(borderDist, borderRenderDistance, borderDensityScaled) * borderGate
                     * u_FogEnableEdge;
     float atmLuma = dot(terms.atm, vec3(0.2126, 0.7152, 0.0722));
     terms.border = max(0.0, (rawBorder - atmLuma) / max(1.0 - atmLuma, 1e-4));

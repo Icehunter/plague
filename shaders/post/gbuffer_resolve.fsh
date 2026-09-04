@@ -1929,13 +1929,25 @@ int debugView = int(u_Param3 + 0.5);
         vec4 fogAerial = plagueAtmoAerial(texCoord, fogDist, fogFar);
         float fogNearT = plagueAtmoAerial(texCoord, max(fogDist - PLAGUE_FOG_SKY_LIGHT_REACH, 0.0), fogFar).a;
         vec3 fogDir = worldPos / max(fogDist, 1e-4);
-        vec3 fogSky = plagueAtmoSkyView(fogDir, sunDirTrue, plagueAtmoCameraRadius()).rgb;
-        // Same warmth the open dome above the horizon gets (sky.glsl), sampled along the border's
-        // own ray rather than the eye's: without it, geometry dissolving into the border veil fades
-        // to a sky that is warm above eye level and flatly white just below it.
-        fogSky = plagueWarmSkyBand(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y);
-        fogSky = plagueStormDarkenSky(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y,
-                                      rainFactor, clamp(u_FrameState.z, 0.0, 1.0));
+        // Same Nether gate as the sky branch: the table assumes an Overworld sun, so this would
+        // fade toward daylight otherwise.
+        vec3 fogSky;
+        if (u_WorldBounds.w == 2.0) {
+            // Varied by noise on the wind clock so it drifts, not a flat swatch. Placeholder
+            // until phase 5's aerosol profile.
+            float syncedTime = u_SkyState.w * 0.05;
+            vec2 driftUv = fogDir.xz * 0.8 + vec2(syncedTime * 0.012, -syncedTime * 0.008);
+            float drift = texture(NOISE_TEX, driftUv).r;
+            fogSky = u_FogColor.rgb * mix(0.55, 1.15, drift);
+        } else {
+            fogSky = plagueAtmoSkyView(fogDir, sunDirTrue, plagueAtmoCameraRadius()).rgb;
+            // Same warmth the open dome above the horizon gets (sky.glsl), sampled along the
+            // border's own ray rather than the eye's: without it, geometry dissolving into the
+            // border veil fades to a sky that is warm above eye level and flatly white just below.
+            fogSky = plagueWarmSkyBand(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y);
+            fogSky = plagueStormDarkenSky(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y,
+                                          rainFactor, clamp(u_FrameState.z, 0.0, 1.0));
+        }
         PlagueFogDrive fogDrive = PLAGUE_FOG_DRIVE(lighting);
         PlagueFogTerms fogTerms = plagueFogTermsAerial(worldPos, skyLight, u_CameraSkyLight.x,
                                                  renderDistance, fogAerial, fogNearT, fogSky,

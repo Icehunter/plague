@@ -88,6 +88,16 @@
 #define u_FogDryClear 0.5 //[0.00..1.00 step 0.05] runtime "Desert Clearness"
 
 // -------------------------------------------------------------------------------------------------
+// Nether. Scales the same edge-fog curve every other dimension uses, active only where
+// u_WorldBounds.w == 2.0: the Overworld's fitted curve reads as either invisible haze or a flat
+// wall in the Nether's short, cramped caves.
+// -------------------------------------------------------------------------------------------------
+
+#define u_NetherFogDensity 1.5 //[0.25..3.00 step 0.05] runtime "Nether Fog Density"
+
+#define u_NetherFogDistance 0.50 //[0.15..1.00 step 0.05] runtime "Nether Fog Closeness"
+
+// -------------------------------------------------------------------------------------------------
 // Advanced overrides. Each fog type gets its own Amount/Distance/Sharpness, starting at the main
 // settings' defaults and ignored entirely (values kept, no effect) while Advanced Overrides is off.
 // -------------------------------------------------------------------------------------------------

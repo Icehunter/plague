@@ -16,6 +16,8 @@
 // forward geometry slot, which has no depth sampler and no u_PackOptions block. Imported after
 // globals.glsl, the source of u_ProjectionMatrix, and after underwater.glsl for plagueChunksToBlocks.
 #moj_import <fornax_runtime:outline.glsl>
+// For the heat-haze blur below: same shared options heat_shimmer.fsh and heat_blur_h/v.fsh read.
+#moj_import <fornax_runtime:heat_options.glsl>
 
 uniform sampler2D u_Input0; // sceneHdrRefracted: linear, unbounded, finished composite (water, clouds, veil)
 uniform sampler2D u_Input1; // builtin.depth: reversed-Z, so 0.0 is the far plane
@@ -26,6 +28,7 @@ uniform sampler2D u_Input5; // underwaterBlurred: half-resolution scene Gaussian
 uniform sampler2D u_Input6; // builtin.noise, the camera water transition mask
 uniform sampler2D u_Input7; // waterVolumeShaftsResolved: full-resolution linear shaft radiance
 uniform sampler2D u_Input8; // builtin.gAo: only .a is read here, the surface class (terrain.fsh:686)
+uniform sampler2D u_Input9; // heatBlurred: half-resolution scene Gaussian, Nether heat haze
 
 // Only u_Param3 is read here; the trailing sun/celestial fields other passes append are left
 // undeclared, since the engine binds the full u_PassParams buffer regardless of block coverage.
@@ -145,6 +148,41 @@ vec3 plagueUwBilateralUpsample(sampler2D source, vec2 uv) {
     }
     // All 4 taps across a depth/topology discontinuity collapses weight toward 0, so fall back to a
     // plain bilinear fetch rather than manufacture black from dividing by a near-zero sum.
+    if (weightSum < 0.05) {
+        return texture(source, uv).rgb;
+    }
+    return sum / weightSum;
+}
+
+// Same shape as plagueUwBilateralUpsample above, without the water-front term: heat haze has no
+// analogous surface to cross, so plain opaque depth rejects a tap from another silhouette.
+vec3 plagueHeatBilateralUpsample(sampler2D source, vec2 uv) {
+    vec2 sourceSize = vec2(textureSize(source, 0));
+    vec2 sourcePos = uv * sourceSize - 0.5;
+    vec2 base = floor(sourcePos);
+    vec2 fraction = fract(sourcePos);
+    float centerDepth = texture(u_Input1, uv).r;
+    float centerDistance = plagueTonemapDistance(uv, centerDepth);
+    vec3 sum = vec3(0.0);
+    float weightSum = 0.0;
+    for (int y = 0; y < 2; ++y) {
+        for (int x = 0; x < 2; ++x) {
+            vec2 corner = vec2(float(x), float(y));
+            vec2 tapUv = clamp((base + corner + 0.5) / sourceSize, vec2(0.0), vec2(1.0));
+            float tapDepth = texture(u_Input1, tapUv).r;
+            float tapDistance = plagueTonemapDistance(tapUv, tapDepth);
+            vec2 axisWeight = mix(vec2(1.0) - fraction, fraction, corner);
+            float spatialWeight = axisWeight.x * axisWeight.y;
+            float depthScale = max(1.0, min(centerDistance, tapDistance) * 0.06);
+            float depthWeight = exp(-abs(tapDistance - centerDistance) / depthScale);
+            float weight = spatialWeight * depthWeight;
+            vec3 tap = texture(source, tapUv).rgb;
+            if (!any(isnan(tap)) && !any(isinf(tap))) {
+                sum += max(tap, vec3(0.0)) * weight;
+                weightSum += weight;
+            }
+        }
+    }
     if (weightSum < 0.05) {
         return texture(source, uv).rgb;
     }
@@ -363,6 +401,20 @@ void main() {
         hdr = mix(hdr, uwBlurred, uwBlurBlend);
     }
 #endif
+
+    // Heat-haze blur, Nether only. Same shape as the underwater blur just above: the Gaussian
+    // kernel lives in heat_blur_h.fsh/heat_blur_v.fsh, this only decides the blend amount.
+    if (u_WorldBounds.w == 2.0 && u_HeatShimmerNether > 0.5 && u_NetherHeatBlurStrength > 0.0) {
+        float heatDepth = texture(u_Input1, frameUv).r;
+        float heatDist = plagueTonemapDistance(frameUv, heatDepth);
+        float heatBlurStartBlocks = u_NetherHeatBlurStart * 16.0;
+        // Ramped over one chunk past the start, so it doesn't show as a hard ring.
+        float heatDistRamp = smoothstep(heatBlurStartBlocks, heatBlurStartBlocks + 16.0, heatDist);
+        vec3 heatBlurred = plagueHeatBilateralUpsample(u_Input9, frameUv);
+        // Same 0.92 ceiling as the underwater blend above, for the same reason.
+        float heatBlurBlend = clamp(u_NetherHeatBlurStrength, 0.0, 0.92) * heatDistRamp;
+        hdr = mix(hdr, heatBlurred, heatBlurBlend);
+    }
 
     // Guard before anything else: a NaN or negative from an earlier pass propagates through every
     // operator below and is miserable to trace back to its source once it reaches the screen.
