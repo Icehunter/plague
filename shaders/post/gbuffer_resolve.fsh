@@ -29,10 +29,10 @@ uniform sampler2D u_Input0; // builtin.gNormal
 // Consolidated by a "consolidate" pass (graph.toml): one sampler slot instead of three, one
 // array layer per builtin. See docs/PACK-FORMAT.md's "consolidate exists for the sampler budget".
 uniform sampler2DArray u_Input1; // layer 0 = gAlbedo   (rgb albedo, a = sky light)
-#define G_BUF u_Input1
                                   // layer 1 = gMaterial (r = smoothness, g = F0, b = porosity/SSS, a = block light)
                                   // layer 2 = gAo       (r = per-texel AO, g = emission,
                                   //                      b = parallax self-shadow, a = surface class)
+#define G_BUF u_Input1
 uniform sampler2D u_Input2; // builtin.depth
 #define G_DEPTH u_Input2
 uniform sampler2D u_Input3; // builtin.lightmap, vanilla's own light-colour LUT

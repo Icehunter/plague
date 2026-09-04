@@ -14,8 +14,7 @@
 // both at distance 100, giving atan(30/100)=0.2915 rad and atan(20/100)=0.1974 rad. ~60x the real
 // sun/moon's ~0.5-degree size (0.00465 rad, the figure brdf.glsl uses for solar solid angle) —
 // deliberate, matching vanilla, since a physically-sized sun is a handful of pixels.
-const float PLAGUE_MOON_DISC_RADIUS = 0.1974;
-
+//
 // The sun's angular radius, radians. 0.00465 is the real sun, eight pixels across at 1080p and a
 // 70-degree vertical FOV; 0.2915 is vanilla's quad. Above about 0.12 the disc is wider than its own
 // aureole (u_SunGlowStrength's falloff) and covers it.
@@ -80,12 +79,9 @@ bool plagueFacingCelestial(vec3 viewRay, vec3 dir) {
 // matching the Sun's real appearance around 550nm.
 const float PLAGUE_SUN_LIMB_DARKENING = 0.6;
 
+/** @param rainFactor widens the edge, because a disc seen through weather has a soft one */
 // Smoothstep, not a power curve: a power curve is violently sensitive to input (measured 7x
 // overreaction to a 15% input change at ^6), which broke the underwater caller's prefiltered taps.
-const float PLAGUE_DISC_EDGE = 0.28;
-const float PLAGUE_DISC_FEATHER = 0.17;
-
-/** @param rainFactor widens the edge, because a disc seen through weather has a soft one */
 // Edge feather, in disc radii, so it tracks the disc rather than a fixed angle. At the default
 // 0.090 rad the disc is about 80 pixels of radius on a 1080-line display at a 70-degree vertical
 // FOV, making this a two-pixel edge: enough to anti-alias, short of a visible blur.
