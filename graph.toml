@@ -641,7 +641,7 @@ dispatch = [1, 1, 1]
 # dispatch above is an unused placeholder: local_size makes the engine derive real group counts
 # from cloudsVolumeCompute's own resolved pixel size every dispatch (ComputePassRunner), which is
 # what lets this pass track window resize the same way its own 0.5 scale factor already does.
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance"]
 outputs = ["cloudsVolumeCompute", "cloudsVolumeDistance"]
 
 [[pass]]
@@ -677,7 +677,7 @@ shader = "shaders/compute/clouds_march_volume.comp"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance"]
 outputs = ["cloudsVolumeComputeQuarter", "cloudsVolumeDistanceQuarter"]
 
 [[pass]]
@@ -713,7 +713,7 @@ shader = "shaders/compute/clouds_march_volume.comp"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance"]
 outputs = ["cloudsVolumeComputeFull", "cloudsVolumeDistanceFull"]
 
 [[pass]]

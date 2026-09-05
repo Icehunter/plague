@@ -633,9 +633,37 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // night, where the authored table reads clouds darker than the sky behind them. Day and dusk
     // keep the authored table unchanged. The flip sits at the same sunVisibility2==0 boundary as
     // above, so it doesn't introduce a second discontinuity.
+#ifdef PLAGUE_ATMO_READS_TRANSMITTANCE
+    // How much sunlight reaches a cloud depends on the air above the CLOUD, not the air above the
+    // player. lighting.light measures that air from the camera, so a high cloud comes out too dark
+    // and too red, as if it sat on the ground.
+    //
+    // This scales lighting.light rather than replacing it. That value also holds the rain colour,
+    // the hand-picked colour table and the night colours, and the table below holds none of them.
+    // Do not use plagueAtmoSunRadiance here either: it carries PLAGUE_ATMO_SKY_GAIN, which is only
+    // there to set how bright the sky looks, and it makes direct sun 22 times too strong at noon.
+    //
+    // Switched off below 8 degrees of sun height. Left on, it makes the light 10 times stronger at
+    // 2 degrees for a cloud 4 km up, because at that angle almost no light reaches the player while
+    // plenty still reaches the cloud. Both angles come from the offline model (plague_atmo_lut) and
+    // keep the change under 1.3 times at every sun height and cloud height.
+    const float PLAGUE_CLOUD_SUN_ALT_LO = 0.13917;   // sin(8 degrees)
+    const float PLAGUE_CLOUD_SUN_ALT_HI = 0.5;       // sin(30 degrees)
+    float deckRadius = PLAGUE_PLANET_RADIUS
+            + plagueAtmoAltitude(deck.base + deck.depth * 0.5, plagueAtmoSeaLevel());
+    vec3 deckColumn = plagueAtmoTransmittanceToLight(deckRadius, sunDirTrue.y);
+    vec3 eyeColumn = plagueAtmoTransmittanceToLight(plagueAtmoCameraRadius(), sunDirTrue.y);
+    vec3 altitudeCorrection = mix(vec3(1.0), deckColumn / max(eyeColumn, vec3(1e-4)),
+                                  smoothstep(PLAGUE_CLOUD_SUN_ALT_LO, PLAGUE_CLOUD_SUN_ALT_HI,
+                                             sunDirTrue.y));
+    vec3 directRadiance = lightSign > 0.0
+            ? lighting.light * altitudeCorrection
+            : plagueMoonColor(plagueAirEyePos(cameraPosAbs.y), lightDir);
+#else
     vec3 directRadiance = lightSign > 0.0
             ? lighting.light
             : plagueMoonColor(plagueAirEyePos(cameraPosAbs.y), lightDir);
+#endif
 
     // Hoisted since these depend only on the ray/light angle, constant along the ray. What's
     // left inside the march is just the transmittance power. Octave 0 carries the single-

@@ -23,10 +23,10 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 // Binding order mirrors graph.toml's declared inputs-then-outputs for this pass exactly:
 // 0 globals (above), 1 packOptions (auto-injected by the engine, no declaration needed here),
-// 2 cloudBaseShape, 3 cloudDetailShape, 4 precipCoarseClipmap, 5 atmoSkyView, 6 colour, 7
-// cloud-front distance. Terrain visibility is resolved against the destination pixel in
-// clouds_composite, so this compute pass intentionally has no unused 2D depth descriptor mixed
-// into its 3D-volume descriptor set.
+// 2 cloudBaseShape, 3 cloudDetailShape, 4 precipCoarseClipmap, 5 atmoSkyView, 6 atmoTransmittance,
+// 7 colour, 8 cloud-front distance. Adding an input moves every output number after it.
+// Terrain visibility is resolved against the destination pixel in clouds_composite, so this compute
+// pass intentionally has no unused 2D depth descriptor mixed into its 3D-volume descriptor set.
 layout(set = 0, binding = 2) uniform sampler3D u_CloudBaseShapeVolume;
 layout(set = 0, binding = 3) uniform sampler3D u_CloudDetailShapeVolume;
 layout(std430, set = 0, binding = 4) readonly buffer PrecipCoarseClipmap {
@@ -36,13 +36,17 @@ layout(std430, set = 0, binding = 4) readonly buffer PrecipCoarseClipmap {
 // this stays the zero-initialised table the three atmo_* passes never ran to fill, and the branch
 // in clouds.glsl that would read it is compiled away, so it is never sampled.
 layout(rgba16f, set = 0, binding = 5) uniform readonly image2D u_SkyView;
-layout(rgba16f, set = 0, binding = 6) uniform writeonly image2D u_OutClouds;
-layout(r32f, set = 0, binding = 7) uniform writeonly image2D u_OutCloudDistance;
+// Always bound, same as u_SkyView above: graph.toml never turns it off, it stays full of zeros
+// under Palette, and the code in clouds.glsl that reads it is left out of the build there.
+layout(rgba16f, set = 0, binding = 6) uniform readonly image2D u_Transmittance;
+layout(rgba16f, set = 0, binding = 7) uniform writeonly image2D u_OutClouds;
+layout(r32f, set = 0, binding = 8) uniform writeonly image2D u_OutCloudDistance;
 
 #define PLAGUE_CLOUD_NOISE_3D(uvw) texture(u_CloudBaseShapeVolume, uvw)
 #define PLAGUE_CLOUD_DETAIL_3D(uvw) texture(u_CloudDetailShapeVolume, uvw)
 #define PLAGUE_PRECIP_CLIPMAP(slot) precipCoarseClipmap.words[slot]
 #define PLAGUE_ATMO_READS_SKYVIEW
+#define PLAGUE_ATMO_READS_TRANSMITTANCE
 #moj_import <fornax_runtime:clouds.glsl>
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
@@ -52,6 +56,17 @@ vec4 plagueAtmoFetchSkyView(vec2 uv) {
     plagueAtmoBilinearSetup(uv, imageSize(u_SkyView), i0, i1, f);
     return plagueAtmoBilinearMix(imageLoad(u_SkyView, i0), imageLoad(u_SkyView, ivec2(i1.x, i0.y)),
                                  imageLoad(u_SkyView, ivec2(i0.x, i1.y)), imageLoad(u_SkyView, i1), f);
+}
+
+vec4 plagueAtmoFetchTransmittance(vec2 uv) {
+    ivec2 i0;
+    ivec2 i1;
+    vec2 f;
+    plagueAtmoBilinearSetup(uv, imageSize(u_Transmittance), i0, i1, f);
+    return plagueAtmoBilinearMix(imageLoad(u_Transmittance, i0),
+                                 imageLoad(u_Transmittance, ivec2(i1.x, i0.y)),
+                                 imageLoad(u_Transmittance, ivec2(i0.x, i1.y)),
+                                 imageLoad(u_Transmittance, i1), f);
 }
 
 void main() {
