@@ -90,7 +90,7 @@ void main() {
     PlagueLighting lighting = plagueOverworldLighting(max(u_SkyColor.rgb, vec3(0.0)), sunDir.y,
                                                       u_SkyState.y, rain, u_ScreenBrightness);
     PlagueFogDrive drive = PLAGUE_FOG_DRIVE(lighting);
-    PlagueAtmoAir air = plagueAtmoAirWithMist(plagueAtmoAir(rain, thunder), drive.tauScale - 1.0,
+    PlagueAtmoAir air = plagueAtmoAirWithMist(plagueAtmoAir(rain, thunder), 1.6 * drive.mist,
                                               u_FogDensity, drive.H * (1.0 + drive.rainDepth * drive.rain));
 
     if (slice == PLAGUE_ATMO_AERIAL_CHROMA_SLICE) {

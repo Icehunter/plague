@@ -75,6 +75,11 @@ const vec2 PLAGUE_ATMO_TWILIGHT_FALL = vec2(-18.0, -8.0);  // degrees: none at .
 // and read as a wall.
 const float PLAGUE_ATMO_MIST_SIGMA = 0.00133;
 
+// The most mist the fit above covers. It saw one mist at a time, at 0.72 and 0.96. Two mists stack
+// to 3.1 on a wet sunrise, and the note above says what that looks like: a wall. The mist sliders
+// still set the amount; this only stops them stacking past what was measured.
+const float PLAGUE_ATMO_MIST_MAX_DRIVE = 0.96;
+
 // Aerial table: 32 x 32 screen froxels per slice, 32 depth slices, then one slice holding the sky
 // along each froxel's ray and one holding the per-channel transmittance exponent (see
 // plagueAtmoTransmittanceChroma), side by side in one texture.
@@ -135,7 +140,8 @@ PlagueAtmoAir plagueAtmoAir(float rain, float thunder) {
  */
 PlagueAtmoAir plagueAtmoAirWithMist(PlagueAtmoAir air, float mistAmount, float fogAmount,
                                     float mistHeightBlocks) {
-    air.mistDensity = PLAGUE_ATMO_MIST_SIGMA * max(mistAmount, 0.0) * max(fogAmount, 0.0);
+    air.mistDensity = PLAGUE_ATMO_MIST_SIGMA
+            * clamp(mistAmount, 0.0, PLAGUE_ATMO_MIST_MAX_DRIVE) * max(fogAmount, 0.0);
     air.mistHeight = max(mistHeightBlocks, 1.0) * PLAGUE_ATMO_METRES_PER_BLOCK;
     return air;
 }

@@ -37,6 +37,17 @@ program = "shaders/blocks/block_entities"
 inputs = []
 outputs = []
 
+# Fornax maps vanilla's END_PORTAL and END_GATEWAY pipelines here. Both are drawn during the solid
+# phase and write depth, so both defer; unclaimed they draw into vanilla's target and this graph's
+# own tonemap paints over them, which in game reads as a portal you can see straight through.
+[[pass]]
+name = "end_portal"
+type = "geometry"
+slot = "end_portal"
+program = "shaders/blocks/end_portal"
+inputs = []
+outputs = []
+
 # Solid arm only — see particles_translucent for the translucent arm (cannot be deferred). Declaring
 # this pass is required for Fornax's hook to defer particles at all.
 [[pass]]

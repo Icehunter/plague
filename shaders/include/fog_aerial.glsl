@@ -60,6 +60,17 @@ PlagueFogTerms plagueFogTermsAerial(vec3 worldPos, float skyLight, float cameraS
     terms.atm = opacity * accessHandover * u_FogEnableDistance;
     terms.atmColor = aerial.rgb / max(opacity, vec3(1e-4)) * atmColorMult * pathLight;
 
+    // Fog may never be brighter than the sky it fades into: rule (a) at the top of fog.glsl. The
+    // table gathers its light along the ray with the dust lobe aimed at the sun, so with the sun up
+    // it comes back brighter than the sky that ray ends at, and every pixel carrying fog is lifted.
+    //
+    // Capped by brightness, not per colour, so the fog keeps its own hue. Fog already darker than
+    // the sky is left alone.
+    vec3 fogCeiling = skyAlongRay * atmColorMult * pathLight;
+    float fogLuma = dot(terms.atmColor, vec3(0.2126, 0.7152, 0.0722));
+    float skyLuma = dot(fogCeiling, vec3(0.2126, 0.7152, 0.0722));
+    terms.atmColor *= min(1.0, skyLuma / max(fogLuma, 1e-5));
+
     // Horizontal radius alone, matching fog.glsl's own border metric and the reasoning there:
     // Minecraft's render distance is a cylinder (XZ-only chunk culling), not a cube. Nether
     // sliders scale this same curve rather than branching it, so the terminal-1.0-at-cutoff

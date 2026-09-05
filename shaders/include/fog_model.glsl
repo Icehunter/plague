@@ -79,6 +79,7 @@ const float PLAGUE_FOG_COL_DAY_NOON   = 0.425;   // fit: tools/derive_fog.py
 struct PlagueFogDrive {
     float rain;        // effective rain 0..1, the raw level through the Rain Fog slider
     float tauScale;    // optical-depth multiplier: mist x night x climate; 1.0 at neutral
+    float mist;        // ground mist alone, 0..2, without tauScale's night and climate terms
     float lambdaScale; // Weibull scale-length multiplier (Fog Distance); 1.0 at neutral
     float kScale;      // Weibull steepness multiplier (Fog Sharpness); 1.0 at neutral
     float dampBoost;   // lifts the measured opacity cap toward 1.0 under mist; 0.0 at neutral
@@ -188,6 +189,10 @@ PlagueFogDrive plagueFogDrive(float rainRaw, float wetness, float precipType,
     // Mist is denser air (tauScale), a shallower layer (H), and permission to exceed the
     // measured clear-air opacity cap (dampBoost) — a real fog bank does reach full extinction.
     d.tauScale = (1.0 + 1.6 * mist) * nightMult * aridMult * typeDensity;
+    // The tables want the mist alone. tauScale cannot answer that: it carries night and climate
+    // too, so read as mist it lets a desert thin the mist by a third. Kept beside tauScale, which
+    // the older fog curve still wants whole.
+    d.mist = mist;
     d.dampBoost = min(0.55 * mist, 0.85);
     d.H = optHeight / (1.0 + 0.45 * min(mist, 1.5));
 

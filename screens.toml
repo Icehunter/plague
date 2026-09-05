@@ -738,6 +738,9 @@ elements = [
     "<group:Parallax>",
     "u_PomDebug",
     "u_AlbedoIdentityDebug",
+
+    "<group:Fog>",
+    "u_FogOpacityView",
 ]
 
 [yacl]
@@ -1044,6 +1047,11 @@ The master switch for all fog.
 
 Off removes every fog effect at once and shows the bare edge of your loaded world. The tick boxes \
 below switch individual fog types instead."""
+
+u_FogOpacityView = """
+Draws the fog's own strength instead of the world, to find where a haze comes from.
+
+Red is edge fog, green is distance fog, blue is how far away the pixel is."""
 
 u_FogEnableDistance = """
 The haze that builds over distance, so far hills look softer and further away.

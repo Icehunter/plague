@@ -25,6 +25,11 @@
 #moj_import <fornax_runtime:ocean_caustics.glsl>
 #moj_import <fornax_runtime:end_sky.glsl>
 
+// Draws the fog's own strength instead of the world, to check it against
+// tools/plague_atmo_lut.py. Declared here, not in fog_options.glsl, which terrain.fsh imports and
+// which is built without an options block.
+#define u_FogOpacityView 0 //[0 1] runtime "Fog Opacity View" {0="Off" 1="On"}
+
 uniform sampler2D u_Input0; // builtin.gNormal
 #define G_NORMAL u_Input0
 // Consolidated by a "consolidate" pass (graph.toml): one sampler slot instead of three, one
@@ -2038,6 +2043,12 @@ int debugView = int(u_Param3 + 0.5);
             fogSky = plagueWarmSkyBand(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y);
             fogSky = plagueStormDarkenSky(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y,
                                           rainFactor, clamp(u_FrameState.z, 0.0, 1.0));
+            // The same darkening on the air, not only on the sky it fades into. The table marches
+            // plain air and knows nothing about a storm, so the near air keeps tracking the real
+            // sun while the far sky sits on the storm swatch, up to 16 times apart.
+            fogAerial.rgb = plagueStormDarkenSky(fogAerial.rgb, fogDir.y, dot(fogDir, sunDirTrue),
+                                                 sunDirTrue.y, rainFactor,
+                                                 clamp(u_FrameState.z, 0.0, 1.0));
         }
         PlagueFogDrive fogDrive = PLAGUE_FOG_DRIVE(lighting);
         PlagueFogTerms fogTerms = plagueFogTermsAerial(worldPos, skyLight, u_CameraSkyLight.x,
@@ -2066,6 +2077,14 @@ int debugView = int(u_Param3 + 0.5);
         // the only thing that seals the horizon underwater — the border curve (d/renderDistance)^16
         // contributes nothing below ~160 blocks — so capping it left the above-water leg with no
         // veil term of its own, and "no sky visible while under water" needs the full-ray answer.
+        if (u_FogOpacityView > 0.5) {
+            // Red edge fog, green distance fog, blue how far the pixel is as a share of the
+            // render distance. Blue is there so strength and distance can be read off one still.
+            fragColor = vec4(clamp(fogTerms.border, 0.0, 1.0),
+                             clamp(dot(fogTerms.atm, vec3(0.3333)), 0.0, 1.0),
+                             clamp(length(worldPos) / max(renderDistance, 1.0), 0.0, 1.0), 1.0);
+            return;
+        }
         lit = mix(lit, fogTerms.atmColor, clamp(fogTerms.atm, 0.0, 1.0));
         // plagueBorderColorWeight (fog.glsl): squared so a bright sun-side sky reading doesn't
         // glow in ahead of the render cutoff. See its own comment for why.

@@ -7,6 +7,12 @@
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
+// The aerial table imports these too. Both tables march the same air.
+#moj_import <fornax_runtime:light_and_ambient_colors.glsl>
+#moj_import <fornax_runtime:light_options.glsl>
+#moj_import <fornax_runtime:fog_options.glsl>
+#moj_import <fornax_runtime:sky.glsl>
+#moj_import <fornax_runtime:fog_model.glsl>
 #define PLAGUE_ATMO_READS_TRANSMITTANCE
 #define PLAGUE_ATMO_READS_MULTISCATTER
 #moj_import <fornax_runtime:atmo_lut.glsl>
@@ -62,7 +68,15 @@ void main() {
         return;
     }
 
-    PlagueAtmoAir air = plagueAtmoAir(clamp(u_SkyState.x, 0.0, 1.0), clamp(u_FrameState.z, 0.0, 1.0));
+    // The same air the aerial table marches, mist included. Fog has to end up the same colour as
+    // the sky it fades into (rule (a) in fog.glsl), and two different airs can never agree.
+    float skyRain = clamp(u_SkyState.x, 0.0, 1.0);
+    PlagueLighting lighting = plagueOverworldLighting(max(u_SkyColor.rgb, vec3(0.0)), sunDir.y,
+                                                      u_SkyState.y, skyRain, u_ScreenBrightness);
+    PlagueFogDrive drive = PLAGUE_FOG_DRIVE(lighting);
+    PlagueAtmoAir air = plagueAtmoAirWithMist(
+            plagueAtmoAir(skyRain, clamp(u_FrameState.z, 0.0, 1.0)), 1.6 * drive.mist,
+            u_FogDensity, drive.H * (1.0 + drive.rainDepth * drive.rain));
 
     vec4 sky = plagueAtmoMarch(vec3(0.0, r, 0.0), dir, sunDir,
                                plagueAtmoSunRadiance(sunDir), plagueAtmoMoonRadiance(), air,
