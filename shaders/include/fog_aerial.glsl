@@ -37,11 +37,20 @@ PlagueFogTerms plagueFogTermsAerial(vec3 worldPos, float skyLight, float cameraS
     float camLight = clamp(cameraSkyLight, 0.0, 1.0);
     float pathLight = max(access, camLight * camLight);
 
-    // Per-channel transmittance from the table's luminance one. The gate hands over to the ray's
-    // own extinction past what a lightmap can vouch for: the more air is between the fragment and
-    // the last fifteen blocks, the less the fragment's sky light says about the path.
+    // Per-channel transmittance from the table's luminance one.
     vec3 transmittance = pow(vec3(clamp(aerial.a, 0.0, 1.0)), chroma);
-    float pathAir = 1.0 - clamp(transmittanceNear, 0.0, 1.0);
+
+    // How much air sits between the fragment and the last fifteen blocks, which is as far as a
+    // lightmap can speak for. The more there is, the less the fragment's own sky light says about
+    // the path, so the cave gate hands over to full fog.
+    //
+    // Whichever of the two says there is more air. The fog curve does the work: clear air lets so
+    // much light through that the table on its own gives a far cave almost no fog at all (0.03 at
+    // the render edge, against the curve's 1.00), so the cave mouth stays clear while the ground
+    // around it hazes. The table still counts where the air is thick enough to beat the curve.
+    float pathAir = max(plagueFogAirOpacity(rayLength - PLAGUE_FOG_SKY_LIGHT_REACH, drive,
+                                            renderDistance),
+                        1.0 - clamp(transmittanceNear, 0.0, 1.0));
     float accessHandover = mix(access, 1.0, pathAir);
 
     // atm = 1 - T and atmColor = L / (1 - T), so the site's mix(lit, atmColor, atm) lands on
