@@ -86,10 +86,16 @@ outputs = []
 
 # Entity shadow casting. The engine replays the already-prepared entity draws a second time with the
 # shadow map bound, and this program reprojects them through the light's matrix.
+#
+# Not in the End. Nothing shines there: the clock never moves, so the sun sits at one angle for ever
+# and every pillar would throw a hard edge from a direction that means nothing. gbuffer_resolve.fsh
+# zeroes the sun there, so the map is drawn and thrown away. Gating this pass off is how the pack
+# declines shadows, and the engine skips the whole phase.
 [[pass]]
 name = "shadow_entities"
 type = "geometry"
 slot = "shadow_entities"
+runtime_enabled_if = "dimension != 3"
 program = "shaders/blocks/shadow_entities"
 inputs = []
 outputs = []
@@ -998,10 +1004,14 @@ format = "rgba16f"
 scale = 0.5
 filter = "linear"
 
+# Nether only. Both shaders return a straight copy anywhere else, so elsewhere this is a full-screen
+# read and write twice a frame for a picture nothing samples: tonemap.fsh reads heatBlurred only
+# under u_WorldBounds.w == 2.0. The targets keep what they last held, so stale is safe.
 [[pass]]
 name = "heat_blur_h"
 type = "fullscreen"
 shader = "shaders/post/heat_blur_h.fsh"
+runtime_enabled_if = "dimension == 2"
 inputs = ["sceneHdrRefracted"]
 outputs = ["heatBlurH"]
 
@@ -1009,6 +1019,7 @@ outputs = ["heatBlurH"]
 name = "heat_blur_v"
 type = "fullscreen"
 shader = "shaders/post/heat_blur_v.fsh"
+runtime_enabled_if = "dimension == 2"
 inputs = ["heatBlurH"]
 outputs = ["heatBlurred"]
 
