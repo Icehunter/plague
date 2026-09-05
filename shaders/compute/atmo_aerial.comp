@@ -19,6 +19,7 @@
 #define PLAGUE_ATMO_READS_MULTISCATTER
 #define PLAGUE_ATMO_READS_SKYVIEW
 #moj_import <fornax_runtime:atmo_lut.glsl>
+#moj_import <fornax_runtime:end_sky.glsl>
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
@@ -93,12 +94,29 @@ void main() {
                                               u_FogDensity, drive.H * (1.0 + drive.rainDepth * drive.rain));
 
     if (slice == PLAGUE_ATMO_AERIAL_CHROMA_SLICE) {
-        imageStore(u_OutAerial, texel,
-                   vec4(plagueAtmoTransmittanceChroma(r - PLAGUE_PLANET_RADIUS, air), 1.0));
+        // Flat in the End: distance there changes how much you see, never what colour it is, so
+        // there is no per-colour reddening for this slice to carry.
+        vec3 chroma = u_WorldBounds.w == 3.0
+                ? vec3(1.0)
+                : plagueAtmoTransmittanceChroma(r - PLAGUE_PLANET_RADIUS, air);
+        imageStore(u_OutAerial, texel, vec4(chroma, 1.0));
         return;
     }
 
-    float end = plagueAtmoAerialSliceDepth(slice, plagueAtmoAerialFar()) * PLAGUE_ATMO_METRES_PER_BLOCK;
+    float sliceBlocks = plagueAtmoAerialSliceDepth(slice, plagueAtmoAerialFar());
+    float end = sliceBlocks * PLAGUE_ATMO_METRES_PER_BLOCK;
+
+    // The End's medium gives off its own light instead of scattering someone else's, so what a ray
+    // picks up over a distance is just the sky's own colour times how much of the ray that medium
+    // fills. Closed form, no march. Without this branch the End is handed a whole planet's air and
+    // every distant thing washes out.
+    if (u_WorldBounds.w == 3.0) {
+        float through = plagueEndTransmittance(sliceBlocks);
+        vec3 gained = plagueEndSky(dir, u_EndSkyBrightness) * (1.0 - through);
+        imageStore(u_OutAerial, texel, vec4(gained, through));
+        return;
+    }
+
     vec4 aerial = plagueAtmoMarchTo(vec3(0.0, r, 0.0), dir, sunDir, plagueAtmoSunRadiance(sunDir),
                                     plagueAtmoMoonRadiance(), air, end, PLAGUE_ATMO_AERIAL_STEPS);
     imageStore(u_OutAerial, texel, aerial);

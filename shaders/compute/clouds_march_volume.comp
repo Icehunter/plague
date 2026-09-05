@@ -204,6 +204,15 @@ void main() {
     // on the same planes and correlate independent fields.
     float cumulusOn = (u_CloudTierCumulus > 0.5 ? 1.0 : 0.0);
     float rainOn = (u_CloudTierNimbostratus > 0.5 ? 1.0 : 0.0);
+
+    // The End drops the two weather decks and keeps the sheets. A cumulus needs warm ground to rise
+    // off and a nimbostratus needs rain to drop, and a fair-weather heap over the void reads as a
+    // piece of the Overworld that followed you through the portal. Sheets carry no such claim: they
+    // pass as torn layers of the same medium the sky is made of, and without them the End has no
+    // cloud at all, since the high decks are thin and often not overhead.
+    float weatherDecks = u_WorldBounds.w == 3.0 ? 0.0 : 1.0;
+    cumulusOn *= weatherDecks;
+    rainOn *= weatherDecks;
     if (cumulusOn > 0.0 && stratiform < 1.0) {
         // Faded by how far the sky has turned stratiform, so the convective deck hands over to the
         // sheet by going away rather than by shrinking. Premultiplied, so scaling is a clean

@@ -64,6 +64,29 @@ float plagueAuroraVisibility(float VdotU, float sunVisibility, float rainFactor,
     return visibility;
 }
 
+// What a curtain is made of and how it is shaped, so a second sky can march the same sheets with
+// its own lines and its own dials.
+struct PlagueCurtainTuning {
+    vec3 lowLine;      // the fringe along the bottom edge
+    vec3 bodyLine;     // the main body
+    vec3 highLine;     // the top
+    float size;
+    float intensity;
+    float lowExtent;   // how far up the fringe reaches
+    float highOnset;   // where the top colour takes over
+    float highWidth;   // how gradually it does
+    float surge;       // how hard the sheets swell and fade as they pass
+};
+
+PlagueCurtainTuning plagueCurtainTuningSky() {
+    return PlagueCurtainTuning(PLAGUE_AURORA_N2_VIOLET, PLAGUE_AURORA_O_GREEN, PLAGUE_AURORA_O_RED,
+                               u_AuroraSize, u_AuroraIntensity, u_AuroraVioletExtent,
+                               u_AuroraRedOnset, u_AuroraRedWidth, 0.0);
+}
+
+vec3 plagueMarchCurtains(vec3 viewRay, float visibility, float dither, vec2 cameraXZ,
+                         float syncedTime, sampler2D noiseTex, PlagueCurtainTuning tune);
+
 /** @param dither breaks the banding 25 quadratically-spaced samples would otherwise show as rings */
 vec3 plagueGetAurora(vec3 viewRay, float VdotU, float dither, vec2 cameraXZ, float syncedTime,
                      float sunVisibility, float rainFactor, float moonPhase, sampler2D noiseTex) {
@@ -74,6 +97,16 @@ vec3 plagueGetAurora(vec3 viewRay, float VdotU, float dither, vec2 cameraXZ, flo
     if (visibility <= 0.0) {
         return vec3(0.0);
     }
+    return plagueMarchCurtains(viewRay, visibility, dither, cameraXZ, syncedTime, noiseTex,
+                               plagueCurtainTuningSky());
+#endif
+}
+
+vec3 plagueMarchCurtains(vec3 viewRay, float visibility, float dither, vec2 cameraXZ,
+                         float syncedTime, sampler2D noiseTex, PlagueCurtainTuning tune) {
+#ifndef PLAGUE_AURORA_ENABLED
+    return vec3(0.0);
+#else
 
     // Flatten onto the horizontal plane. Below the horizon this diverges, but visibility has already
     // returned <= 0 there, so the march never runs with a negative y.
@@ -102,7 +135,7 @@ vec3 plagueGetAurora(vec3 viewRay, float VdotU, float dither, vec2 cameraXZ, flo
         float t = (float(i) + ditherM) / float(sampleCountP);
         float current = t * t;
 
-        vec2 planePos = wpos.xz * (u_AuroraSize * 0.8 + current) * 11.0 + cameraPositionM;
+        vec2 planePos = wpos.xz * (tune.size * 0.8 + current) * 11.0 + cameraPositionM;
 
 #if PLAGUE_AURORA_STYLE == 1
         // Blocky arm: floor() before the UV scale snaps the plane into hard cells (offered for
@@ -133,13 +166,14 @@ vec3 plagueGetAurora(vec3 viewRay, float VdotU, float dither, vec2 cameraXZ, flo
 #endif
 
         // `current` stands in for altitude; see the palette block above for the emission physics.
-        float fringe = 1.0 - smoothstep(0.0, max(u_AuroraVioletExtent, 1e-3), current);
-        float high = smoothstep(u_AuroraRedOnset, u_AuroraRedOnset + u_AuroraRedWidth, current);
-        vec3 emission = mix(PLAGUE_AURORA_O_GREEN, PLAGUE_AURORA_O_RED, high);
-        emission = mix(emission, PLAGUE_AURORA_N2_VIOLET, fringe * 0.75);
+        float fringe = 1.0 - smoothstep(0.0, max(tune.lowExtent, 1e-3), current);
+        float high = smoothstep(tune.highOnset, tune.highOnset + tune.highWidth, current);
+        vec3 emission = mix(tune.bodyLine, tune.highLine, high);
+        emission = mix(emission, tune.lowLine, fringe * 0.75);
 
         float currentM = 1.0 - current;
         aurora += ridge * currentM * emission;
+
     }
 
 #if PLAGUE_AURORA_STYLE == 1
@@ -147,7 +181,18 @@ vec3 plagueGetAurora(vec3 viewRay, float VdotU, float dither, vec2 cameraXZ, flo
 #else
     aurora *= 1.8;
 #endif
-    return max(aurora * visibility / float(sampleCount) * u_AuroraIntensity, vec3(0.0));
+    // The storm. Sheets do not hold one strength: a front sweeps through, swells, and passes. One
+    // slow reading of the same noise the march already samples, taken once per pixel rather than
+    // per step, world-anchored so a front is somewhere rather than everywhere. Zero for the
+    // Overworld's aurora, which has no such behaviour.
+    float surge = 1.0;
+    if (tune.surge > 0.0) {
+        float front = plagueNoise(noiseTex, cameraXZ * 0.0004
+                                          + vec2(mod(syncedTime * 0.0021, 512.0), 0.0));
+        surge = 1.0 + tune.surge * (front * 2.0 - 1.0);
+    }
+    return max(aurora * tune.intensity * visibility / float(sampleCount) * max(surge, 0.0),
+               vec3(0.0));
 #endif
 }
 

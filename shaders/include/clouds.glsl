@@ -659,6 +659,12 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     vec3 directRadiance = lightSign > 0.0
             ? lighting.light * altitudeCorrection
             : plagueMoonColor(plagueAirEyePos(cameraPosAbs.y), lightDir);
+    if (u_WorldBounds.w == 3.0) {
+        // Nothing shines on a cloud in the End. It is lit by the sky it hangs in, so it takes that
+        // colour and never picks up a bright side, which is what stops it reading as an Overworld
+        // cloud that wandered in.
+        directRadiance = ambientDome;
+    }
 #else
     vec3 directRadiance = lightSign > 0.0
             ? lighting.light

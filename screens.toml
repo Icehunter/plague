@@ -74,6 +74,19 @@ sliders = [
     "u_SsrStrength",
     "u_SsrMaxDistance",
     "u_SsrTraceQuality",
+    "u_EndSkyBrightness",
+    "u_EndAirReach",
+    "u_EndNebulaIntensity",
+    "u_EndNebulaAmount",
+    "u_EndNebulaZoom",
+    "u_EndNebulaDrift",
+    "u_EndNebulaCoreOnset",
+    "u_EndNebulaCoreWidth",
+    "u_EndNebulaStarGlow",
+    "u_EndStormIntensity",
+    "u_EndStormSize",
+    "u_EndStormSurge",
+    "u_EndStormReach",
     "u_HeatShimmer",
     "u_NetherHeatAmbient",
     "u_NetherHeatDistance",
@@ -464,6 +477,26 @@ elements = [
     "u_SsrTraceQuality",
 ]
 
+[screens.end]
+title = "The End"
+elements = [
+    "u_EndSkyBrightness",
+    "u_EndAirReach",
+    "<group:Nebula>",
+    "u_EndNebulaIntensity",
+    "u_EndNebulaAmount",
+    "u_EndNebulaZoom",
+    "u_EndNebulaDrift",
+    "u_EndNebulaCoreOnset",
+    "u_EndNebulaCoreWidth",
+    "u_EndNebulaStarGlow",
+    "<group:Ion Storm>",
+    "u_EndStormIntensity",
+    "u_EndStormSize",
+    "u_EndStormSurge",
+    "u_EndStormReach",
+]
+
 [screens.heat_shimmer]
 title = "Heat"
 elements = [
@@ -686,7 +719,7 @@ elements = [
 ]
 
 [yacl]
-pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "occlusion", "reflections", "heat_shimmer", "water", "materials", "snow", "parallax", "bloom", "tonemap", "outline", "debug"]
+pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "occlusion", "reflections", "heat_shimmer", "end", "water", "materials", "snow", "parallax", "bloom", "tonemap", "outline", "debug"]
 
 # Prose shown in each option's tooltip, above the mechanical Default/Range/Applies lines.
 [descriptions]
@@ -1821,6 +1854,59 @@ Quality of the reflections.
 
 Too low, and distant reflections cut off early. The cost is only paid on surfaces smooth or wet \
 enough to reflect at all."""
+
+u_EndSkyBrightness = """
+How much light the End gives off.
+
+The End has no sun. What you see is the air itself giving off light, so this sets how bright the \
+whole place is. Zero leaves it black."""
+
+u_EndAirReach = """
+How far you can see in the End before things fade into the sky, in chunks.
+
+Lower closes the place in around you; higher lets you pick out the far islands."""
+
+u_EndNebulaIntensity = """
+How strong the End's clouds of light are. Zero turns them off."""
+
+u_EndNebulaAmount = """
+How much of the End's sky the clouds cover.
+
+Higher grows them outward from their bright centres rather than adding new ones."""
+
+u_EndNebulaZoom = """
+How big the End's clouds are. Higher makes smaller, busier shapes."""
+
+u_EndNebulaDrift = """
+How fast the End's clouds move. Zero holds them still."""
+
+u_EndNebulaCoreOnset = """
+How thick a cloud has to get before its centre turns violet.
+
+Thin edges keep the red of hydrogen; the dense middles burn the violet lines instead."""
+
+u_EndNebulaCoreWidth = """
+How gradually a cloud changes from its red edge to its violet centre."""
+
+u_EndNebulaStarGlow = """
+How much the stars behind the End's clouds glow through them."""
+
+u_EndStormIntensity = """
+How strong the sheets of light tearing through the End are. Zero turns them off.
+
+They are shock fronts in the same gas the sky is made of, seen edge-on, which is why they read as \
+curtains rather than as clouds."""
+
+u_EndStormSize = """
+How big the sheets are. Lower makes fewer, wider ones."""
+
+u_EndStormSurge = """
+How hard the storm swells and dies as it passes over.
+
+Zero holds the sheets at one strength. Higher makes fronts roll through, bright then gone."""
+
+u_EndStormReach = """
+How far up the sky the sheets climb. Lower keeps them near eye level."""
 
 u_HeatShimmer = """
 How much the air wobbles and ripples wherever heat is present.

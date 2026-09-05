@@ -12,6 +12,9 @@
 // The display transform's encode half lives in color.glsl (paired with its inverse, used by
 // gbuffer_resolve.fsh to decode gAlbedo) so the two halves cannot drift apart.
 #moj_import <fornax_runtime:color.glsl>
+// Named here rather than left to the consumer: this file reads u_WorldBounds, and tonemap.fsh
+// imports this before it imports globals. The guard in globals.glsl makes the repeat free.
+#moj_import <fornax:globals.glsl>
 
 // --- Options ---------------------------------------------------------------------------------------
 // Declared HERE rather than in tonemap.fsh: the include that USES an option also DECLARES it, so a
@@ -46,6 +49,16 @@
 #define u_TmContrast 1.05 //[0.50..2.00 step 0.05] runtime "Tonemap Contrast"
 #define u_TmWhitePath 1.00 //[0.10..1.90 step 0.05] runtime "Highlight Fade"
 #define u_TmDarkDesaturation 0.25 //[0.00..1.00 step 0.05] runtime "Dark Desaturation"
+
+// How much of that draining the End is spared. The rule above is right for a night in the
+// Overworld: the eye loses colour as the light goes, since rods carry none, so a dark scene really
+// does grey out. The End is dark AND strongly coloured at once, and the light it is lit by IS the
+// colour, so draining it takes the place apart.
+//
+// A constant rather than an option: terrain.fsh compiles this same code and has no options block,
+// so a runtime name here would have to be carried in u_PbrSettings and kept in step with the
+// engine. AUTHORED at 0.85, which leaves a little of the effect so deep shadow still settles.
+const float PLAGUE_TM_END_KEEP_COLOUR = 0.85;
 #define u_Saturation 1.25 //[0.00..2.00 step 0.05] runtime "Saturation"
 #define u_Contrast 1.05 //[0.50..2.00 step 0.05] runtime "Contrast"
 
@@ -138,6 +151,9 @@ vec3 tonemapFilmic(vec3 colour) {
     // Dark desaturation.
     float desatRamp = 1.0 - smoothstep(0.0, PLAGUE_TM_DARK_DESAT_EDGE, initialLuminance);
     float desatWeight = clamp(u_TmDarkDesaturation * desatRamp, 0.0, 1.0);
+    if (u_WorldBounds.w == 3.0) {
+        desatWeight *= 1.0 - PLAGUE_TM_END_KEEP_COLOUR;
+    }
     mapped = mix(mapped, vec3(luminance(mapped)), desatWeight);
 
     return clamp(mapped, 0.0, 1.0);

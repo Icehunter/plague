@@ -23,6 +23,7 @@
 #moj_import <fornax_runtime:fog.glsl>
 #moj_import <fornax_runtime:fog_aerial.glsl>
 #moj_import <fornax_runtime:ocean_caustics.glsl>
+#moj_import <fornax_runtime:end_sky.glsl>
 
 uniform sampler2D u_Input0; // builtin.gNormal
 #define G_NORMAL u_Input0
@@ -628,6 +629,13 @@ int debugView = int(u_Param3 + 0.5);
             if (u_WorldBounds.w == 2.0) {
                 skyOut = u_FogColor.rgb * atmColorMult;
                 nightGate = 0.0;
+            } else if (u_WorldBounds.w == 3.0) {
+                // The End lights itself; see end_sky.glsl. No stars from the Overworld's own
+                // night term either: its clock is frozen here, so nightGate would hold one value
+                // for ever.
+                skyOut = plagueEndSky(viewRay, u_EndSkyBrightness) * atmColorMult;
+                nightGate = 0.0;
+                skyOut = max(skyOut + (skyDither - 0.5) / 128.0, vec3(0.0));
             } else {
                 // One table read, dithered as plagueGetSky is: a smooth gradient is where banding
                 // shows first. Warmed by the pack's own sunset band (sky.glsl) before atmColorMult:
@@ -643,7 +651,16 @@ int debugView = int(u_Param3 + 0.5);
                 skyOut = max(skyOut + (skyDither - 0.5) / 128.0, vec3(0.0));
             }
 #else
-            skyOut = plagueGetSky(skyColours, VdotU, VdotS, skyDither, true, false) * atmColorMult;
+            // Same two dimensions the scattering arm gates, for the same reason: the palette is an
+            // Overworld sky and neither of these has one.
+            if (u_WorldBounds.w == 2.0) {
+                skyOut = u_FogColor.rgb * atmColorMult;
+            } else if (u_WorldBounds.w == 3.0) {
+                skyOut = plagueEndSky(viewRay, u_EndSkyBrightness) * atmColorMult;
+            } else {
+                skyOut = plagueGetSky(skyColours, VdotU, VdotS, skyDither, true, false)
+                       * atmColorMult;
+            }
 #endif
 
             // Additive, not blended: stars are emitters seen through the atmosphere, so a bright
@@ -657,8 +674,28 @@ int debugView = int(u_Param3 + 0.5);
 
             // Own coords (sphereness 0.75, not the star field's 0.5); additive order vs. stars
             // doesn't matter.
-            skyOut += plagueGetNightNebula(viewRay, VdotU, VdotS, syncedTime,
-                                           plagueNightFactor, 1.0 - rainFactor, u_SunriseColor.w) * nightGate;
+            if (u_WorldBounds.w == 3.0) {
+                // The End's own cloud. Everything the Overworld one gates on is dead here: night
+                // never comes, it never rains, and the clock does not move. What it rides instead
+                // is the same path length the sky itself does, so the cloud is thickest where the
+                // medium is thickest and the two read as one thing rather than as a picture hung
+                // in front of a backdrop.
+                //
+                // Its cores burn the violet pair rather than oxygen's green; see nebula.glsl.
+                float endDepth = plagueEndPathLength(clamp(viewRay.y, -1.0, 1.0));
+                float endFullDepth = PLAGUE_END_REACH / PLAGUE_END_SLAB_HALF;
+                float endVisible = clamp(endDepth / endFullDepth, 0.0, 1.0);
+                PlagueNebulaTuning endTune = PlagueNebulaTuning(
+                        u_EndNebulaIntensity, u_EndNebulaZoom, u_EndNebulaAmount,
+                        u_EndNebulaCoreOnset, u_EndNebulaCoreWidth, u_EndNebulaDrift,
+                        u_EndNebulaStarGlow);
+                skyOut += plagueGetNebulaField(viewRay, endVisible, VdotS, syncedTime,
+                                               PLAGUE_NEBULA_H_GAMMA, u_EndSkyBrightness, endTune);
+            } else {
+                skyOut += plagueGetNightNebula(viewRay, VdotU, VdotS, syncedTime,
+                                               plagueNightFactor, 1.0 - rainFactor,
+                                               u_SunriseColor.w) * nightGate;
+            }
 
             // Reuses starCoord so meteors travel the same projected plane as the stars. moon phase
             // index (u_SkyCelestial.w): a new moon lets more of them through. u_WorldClock.x/.y
@@ -688,19 +725,37 @@ int debugView = int(u_Param3 + 0.5);
             // arcmin horizontal refraction plus the sun's own 16 arcmin radius) that define sunset:
             // the last sliver above a level horizon is where the real sun visually disappears.
             vec3 discEyePos = plagueAirEyePos(u_CameraAbs.y);
-            float sunSetGate = smoothstep(-0.014535, 0.0, sunDirTrue.y);
+            // Nothing in the sky in the End. Its clock is frozen, so the sun sits at one fixed
+            // angle for ever and the gate below would hold it permanently open on a disc vanilla
+            // does not draw there.
+            float dimensionDiscGate = u_WorldBounds.w == 3.0 ? 0.0 : 1.0;
+            float sunSetGate = smoothstep(-0.014535, 0.0, sunDirTrue.y) * dimensionDiscGate;
             skyOut += plagueCelestialDiscs(viewRay, sunDirTrue, u_SkyCelestial.w,
                                            u_WorldClock.x, u_WorldClock.y,
                                            MOON_ALBEDO, MOON_NORMAL,
                                            1.0 - rainFactor, plagueMoonDiscGlow,
                                            plagueSunColor(discEyePos, sunDirTrue) * sunSetGate,
-                                           plagueMoonColor(discEyePos, -sunDirTrue));
+                                           plagueMoonColor(discEyePos, -sunDirTrue)
+                                                   * dimensionDiscGate);
 
             // Marches the flattened view ray, so it's the only sky element with a real cost curve;
             // gated to zero for daylight, rain, and anything but a full moon by default.
-            auroraTerm = plagueGetAurora(viewRay, VdotU, skyDither, u_CameraAbs.xz, syncedTime,
-                                         plagueSunVisibility, rainFactor, u_SkyCelestial.w,
-                                         NOISE_TEX) * nightGate;
+            if (u_WorldBounds.w == 3.0) {
+                // Curtains reach higher here than an aurora does. An aurora sits in a shell above
+                // you and thins toward the zenith; these fronts are in the same medium you are
+                // standing in, so they run most of the way up the sky.
+                float stormVisible = clamp(VdotU / max(u_EndStormReach, 0.05), 0.0, 1.0);
+                PlagueCurtainTuning endStorm = PlagueCurtainTuning(
+                        PLAGUE_END_STORM_LOW, PLAGUE_END_STORM_BODY, PLAGUE_END_STORM_HIGH,
+                        u_EndStormSize, u_EndStormIntensity * u_EndSkyBrightness,
+                        0.18, 0.62, 0.30, u_EndStormSurge);
+                auroraTerm = plagueMarchCurtains(viewRay, stormVisible, skyDither, u_CameraAbs.xz,
+                                                 syncedTime, NOISE_TEX, endStorm);
+            } else {
+                auroraTerm = plagueGetAurora(viewRay, VdotU, skyDither, u_CameraAbs.xz, syncedTime,
+                                             plagueSunVisibility, rainFactor, u_SkyCelestial.w,
+                                             NOISE_TEX) * nightGate;
+            }
             skyOut += auroraTerm;
         }
 
@@ -1151,6 +1206,14 @@ int debugView = int(u_Param3 + 0.5);
     // warm bounce and neutral key light or the reverse.
     sunColour = plagueWarmLowSun(sunColour, sunDirTrue.y);
 
+    // Nothing shines on the End. Its clock never moves, so the sun sits at one angle for ever and
+    // lights every surface from it: end stone comes out flat and pale under a key light that is
+    // not there, and the pillars take a hard edge from a direction that means nothing. Everything
+    // there is lit by the sky instead, which is the only thing giving off light.
+    if (u_WorldBounds.w == 3.0) {
+        sunColour = vec3(0.0);
+    }
+
 #ifdef SKY_AMBIENT
     // Ambient sampled from the sky this pack now renders. One way to get there is sampling the
     // rendered sky texture at the straight-up direction and scaling by pi; that needs a LUT when a
@@ -1506,6 +1569,15 @@ int debugView = int(u_Param3 + 0.5);
              // moonlight but loses the glint first.
              * moonPhaseInf * moonPhaseInf;
 
+    // Vanilla sets ambient_light 0.25 in the End (the_end.json), so nothing there is ever fully
+    // dark. This pack works out its own lighting and never reads vanilla's lightmap, so it loses
+    // that floor: with no sun in the End either, a surface facing away from everything lands on
+    // zero and reads as a hole rather than a dark shape. Floored against the sky's own colour,
+    // since the sky is the only thing giving off light there.
+    if (u_WorldBounds.w == 3.0) {
+        lit = max(lit, albedo * ambientColour * PLAGUE_END_AMBIENT_FLOOR);
+    }
+
     // --- Reflections ------------------------------------------------------------------------------
     //
     // An energy-conserving mix, never an addition: the reflected term replaces a Fresnel-weighted
@@ -1545,6 +1617,7 @@ int debugView = int(u_Param3 + 0.5);
     // Nether reflections read vanilla's own fog tint rather than an Overworld daylight table; see
     // the sky branch's own comment on why the table cannot speak for a dimension with no sun.
     vec3 skyMiss = u_WorldBounds.w == 2.0 ? u_FogColor.rgb * atmColorMult
+            : u_WorldBounds.w == 3.0 ? plagueEndSky(reflDir, u_EndSkyBrightness) * atmColorMult
             : plagueAtmoSkyView(reflDir, sunDirTrue, plagueAtmoCameraRadius()).rgb * atmColorMult;
 #else
     vec3 skyMiss = plagueGetSky(skyColours, reflDir.y, dot(reflDir, sunDirTrue), 0.5,
@@ -1939,6 +2012,10 @@ int debugView = int(u_Param3 + 0.5);
             vec2 driftUv = fogDir.xz * 0.8 + vec2(syncedTime * 0.012, -syncedTime * 0.008);
             float drift = texture(NOISE_TEX, driftUv).r;
             fogSky = u_FogColor.rgb * mix(0.55, 1.15, drift);
+        } else if (u_WorldBounds.w == 3.0) {
+            // Terrain fades into the same sky it sits under, so the far islands and the medium
+            // behind them meet instead of showing an edge.
+            fogSky = plagueEndSky(fogDir, u_EndSkyBrightness);
         } else {
             fogSky = plagueAtmoSkyView(fogDir, sunDirTrue, plagueAtmoCameraRadius()).rgb;
             // Same warmth the open dome above the horizon gets (sky.glsl), sampled along the

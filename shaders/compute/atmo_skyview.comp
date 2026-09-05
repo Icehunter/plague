@@ -10,6 +10,7 @@
 #define PLAGUE_ATMO_READS_TRANSMITTANCE
 #define PLAGUE_ATMO_READS_MULTISCATTER
 #moj_import <fornax_runtime:atmo_lut.glsl>
+#moj_import <fornax_runtime:end_sky.glsl>
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
@@ -49,6 +50,18 @@ void main() {
             ? normalize(u_SkyCelestial.xyz) : vec3(0.0, 1.0, 0.0);
     float r = plagueAtmoCameraRadius();
     vec3 dir = plagueAtmoSkyViewDir(plagueAtmoTexelUnit(texel, size), sunDir, r);
+    // The End has no sun and no air to scatter it, so the march has nothing to integrate. Its
+    // light comes from the medium itself and is a closed form (end_sky.glsl). Writing it into this
+    // table rather than only into the resolve is what makes the ambient light, the reflections and
+    // the render-edge fade all agree with the sky, since they already read this table.
+    //
+    // The table keeps half the sky and mirrors the other half around the sun. Harmless here: the
+    // End's sky depends on how far up you look and nothing else.
+    if (u_WorldBounds.w == 3.0) {
+        imageStore(u_OutSkyView, texel, vec4(plagueEndSky(dir, u_EndSkyBrightness), 1.0));
+        return;
+    }
+
     PlagueAtmoAir air = plagueAtmoAir(clamp(u_SkyState.x, 0.0, 1.0), clamp(u_FrameState.z, 0.0, 1.0));
 
     vec4 sky = plagueAtmoMarch(vec3(0.0, r, 0.0), dir, sunDir,
