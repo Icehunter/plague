@@ -58,7 +58,7 @@ void main() {
     // The table keeps half the sky and mirrors the other half around the sun. Harmless here: the
     // End's sky depends on how far up you look and nothing else.
     if (u_WorldBounds.w == 3.0) {
-        imageStore(u_OutSkyView, texel, vec4(plagueEndSky(dir, u_EndSkyBrightness), 1.0));
+        imageStore(u_OutSkyView, texel, vec4(plagueEndSky(dir, plagueEndSkyLevel()), 1.0));
         return;
     }
 

@@ -9,7 +9,7 @@
 #moj_import <fornax_runtime:water_waves.glsl>
 #moj_import <fornax_runtime:water_interaction.glsl>
 
-#define PLAGUE_WATER_INTERACTION 1 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Quality" 2="Performance"}
+#define PLAGUE_WATER_INTERACTION 2 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Quality" 2="Performance"}
 #define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Mesh Displacement" {0="Off" 1="Standard"}
 
 out vec4 v_Color;

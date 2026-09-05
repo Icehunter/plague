@@ -633,7 +633,7 @@ int debugView = int(u_Param3 + 0.5);
                 // The End lights itself; see end_sky.glsl. No stars from the Overworld's own
                 // night term either: its clock is frozen here, so nightGate would hold one value
                 // for ever.
-                skyOut = plagueEndSky(viewRay, u_EndSkyBrightness) * atmColorMult;
+                skyOut = plagueEndSky(viewRay, plagueEndSkyLevel()) * atmColorMult;
                 nightGate = 0.0;
                 skyOut = max(skyOut + (skyDither - 0.5) / 128.0, vec3(0.0));
             } else {
@@ -656,7 +656,7 @@ int debugView = int(u_Param3 + 0.5);
             if (u_WorldBounds.w == 2.0) {
                 skyOut = u_FogColor.rgb * atmColorMult;
             } else if (u_WorldBounds.w == 3.0) {
-                skyOut = plagueEndSky(viewRay, u_EndSkyBrightness) * atmColorMult;
+                skyOut = plagueEndSky(viewRay, plagueEndSkyLevel()) * atmColorMult;
             } else {
                 skyOut = plagueGetSky(skyColours, VdotU, VdotS, skyDither, true, false)
                        * atmColorMult;
@@ -689,8 +689,9 @@ int debugView = int(u_Param3 + 0.5);
                         u_EndNebulaIntensity, u_EndNebulaZoom, u_EndNebulaAmount,
                         u_EndNebulaCoreOnset, u_EndNebulaCoreWidth, u_EndNebulaDrift,
                         u_EndNebulaStarGlow);
-                skyOut += plagueGetNebulaField(viewRay, endVisible, VdotS, syncedTime,
-                                               PLAGUE_NEBULA_H_GAMMA, u_EndSkyBrightness, endTune);
+                skyOut += plagueGetNebulaField(plagueEndTurn(viewRay), endVisible, VdotS,
+                                               syncedTime, PLAGUE_NEBULA_H_GAMMA,
+                                               plagueEndSkyLevel(), endTune);
             } else {
                 skyOut += plagueGetNightNebula(viewRay, VdotU, VdotS, syncedTime,
                                                plagueNightFactor, 1.0 - rainFactor,
@@ -745,12 +746,17 @@ int debugView = int(u_Param3 + 0.5);
                 // you and thins toward the zenith; these fronts are in the same medium you are
                 // standing in, so they run most of the way up the sky.
                 float stormVisible = clamp(VdotU / max(u_EndStormReach, 0.05), 0.0, 1.0);
+                // The storm sits over the middle island. Fly out and it falls behind, on top of
+                // the dimming the whole sky already gets out there.
+                float endStormPlace = mix(1.0, 1.0 - clamp(u_EndOuterStormFade, 0.0, 1.0),
+                                          plagueEndOuterFactor());
                 PlagueCurtainTuning endStorm = PlagueCurtainTuning(
                         PLAGUE_END_STORM_LOW, PLAGUE_END_STORM_BODY, PLAGUE_END_STORM_HIGH,
-                        u_EndStormSize, u_EndStormIntensity * u_EndSkyBrightness,
+                        u_EndStormSize,
+                        u_EndStormIntensity * plagueEndSkyLevel() * endStormPlace,
                         0.18, 0.62, 0.30, u_EndStormSurge);
-                auroraTerm = plagueMarchCurtains(viewRay, stormVisible, skyDither, u_CameraAbs.xz,
-                                                 syncedTime, NOISE_TEX, endStorm);
+                auroraTerm = plagueMarchCurtains(plagueEndTurn(viewRay), stormVisible, skyDither,
+                                                 u_CameraAbs.xz, syncedTime, NOISE_TEX, endStorm);
             } else {
                 auroraTerm = plagueGetAurora(viewRay, VdotU, skyDither, u_CameraAbs.xz, syncedTime,
                                              plagueSunVisibility, rainFactor, u_SkyCelestial.w,
@@ -1270,6 +1276,14 @@ int debugView = int(u_Param3 + 0.5);
     float ambientScale = mix(tableLuma / max(zenithLuma, 1e-5),
                              PLAGUE_SKY_AMBIENT_DAY_SCALE, plagueSunFactor);
     vec3 ambientColour = zenithSky * ambientScale;
+    // Everything above this line is Overworld reasoning: a palette sky lit by a sun, then scaled to
+    // match a daylight table. The End has neither. Left to run there it fills end stone with blue
+    // off a sun that never moves, and the floor further down inherits the same wrong colour on
+    // exactly the surfaces it exists to rescue. The medium is the only thing giving off light in
+    // the End, so the fill comes from the medium.
+    if (u_WorldBounds.w == 3.0) {
+        ambientColour = plagueEndAmbient();
+    }
     // The two paths must not hold two opinions about how bright the sky is.
     //
     // Everything above resolves a disagreement between the sky model and the ambient table in the
@@ -1617,7 +1631,7 @@ int debugView = int(u_Param3 + 0.5);
     // Nether reflections read vanilla's own fog tint rather than an Overworld daylight table; see
     // the sky branch's own comment on why the table cannot speak for a dimension with no sun.
     vec3 skyMiss = u_WorldBounds.w == 2.0 ? u_FogColor.rgb * atmColorMult
-            : u_WorldBounds.w == 3.0 ? plagueEndSky(reflDir, u_EndSkyBrightness) * atmColorMult
+            : u_WorldBounds.w == 3.0 ? plagueEndSky(reflDir, plagueEndSkyLevel()) * atmColorMult
             : plagueAtmoSkyView(reflDir, sunDirTrue, plagueAtmoCameraRadius()).rgb * atmColorMult;
 #else
     vec3 skyMiss = plagueGetSky(skyColours, reflDir.y, dot(reflDir, sunDirTrue), 0.5,
@@ -2015,7 +2029,7 @@ int debugView = int(u_Param3 + 0.5);
         } else if (u_WorldBounds.w == 3.0) {
             // Terrain fades into the same sky it sits under, so the far islands and the medium
             // behind them meet instead of showing an edge.
-            fogSky = plagueEndSky(fogDir, u_EndSkyBrightness);
+            fogSky = plagueEndSky(fogDir, plagueEndSkyLevel());
         } else {
             fogSky = plagueAtmoSkyView(fogDir, sunDirTrue, plagueAtmoCameraRadius()).rgb;
             // Same warmth the open dome above the horizon gets (sky.glsl), sampled along the

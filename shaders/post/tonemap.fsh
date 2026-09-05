@@ -18,6 +18,7 @@
 #moj_import <fornax_runtime:outline.glsl>
 // For the heat-haze blur below: same shared options heat_shimmer.fsh and heat_blur_h/v.fsh read.
 #moj_import <fornax_runtime:heat_options.glsl>
+#moj_import <fornax_runtime:end_sky.glsl>
 
 uniform sampler2D u_Input0; // sceneHdrRefracted: linear, unbounded, finished composite (water, clouds, veil)
 uniform sampler2D u_Input1; // builtin.depth: reversed-Z, so 0.0 is the far plane
@@ -69,7 +70,7 @@ const float PLAGUE_UW_VIEW_PHASE_Y = 1.57079632679;
 
 // mix() toward the blurred image, not an add: an additive composite of unthresholded, whole-image
 // bloom lays a milky veil over everything at any strength worth seeing.
-#define u_BloomStrength 0.32 //[0.0..0.5 step 0.01] runtime "Bloom Strength"
+#define u_BloomStrength 0.45 //[0.0..0.5 step 0.01] runtime "Bloom Strength"
 
 // Measurement lives in exposure_measure.fsh; this arm turns its smoothed scene luminance into a
 // multiplier. Default on: Plague has no fixed absolute-luminance reference to protect, and a fixed
@@ -444,6 +445,32 @@ void main() {
     // After the shafts, so a mote is lit by the same beam the viewer sees it cross. Before
     // exposure, so particulate is graded with everything else rather than sitting on top.
     vec3 moteRadiance = plagueWaterMoteRadianceAt(frameUv, resolvedShafts, hdr);
+
+    // The End's own motes, on the same grid as the water's and held to the same smallest size.
+    // That size floor matters more here: this runs after the pass that blends frames together, so
+    // nothing later will catch a speck thinner than a pixel, and the floor is the only thing
+    // holding them still. Lit by whatever light is already at the pixel, so one drifting across a
+    // bright front flares and one over the void does not.
+    if (u_WorldBounds.w == 3.0 && u_EndMoteAmount > 0.0) {
+        vec3 endViewDir = plagueMoteViewDirectionAt(frameUv);
+        vec3 endNeighbour = plagueMoteViewDirectionAt(frameUv + vec2(u_PassTexelSize.x, 0.0));
+        if (dot(endViewDir, endViewDir) > 1e-8 && dot(endNeighbour, endNeighbour) > 1e-8) {
+            float endCoverage = plagueWaterMoteCoverage(
+                    endViewDir, u_CameraAbs,
+                    plagueWaterMoteAngularRadius(endViewDir, endNeighbour)
+                            * max(u_EndMoteSize, 1.0),
+                    0.0, plagueMoteSceneDistance(frameUv),
+                    u_SkyState.w / 20.0 * u_EndMoteDrift);
+            if (endCoverage > 0.0 && !isnan(endCoverage) && !isinf(endCoverage)) {
+                vec3 endMote = (max(hdr, vec3(0.0)) * PLAGUE_END_MOTE_PICKUP
+                                + PLAGUE_END_SKY_COLOUR * PLAGUE_END_MOTE_FLOOR)
+                             * endCoverage * u_EndMoteAmount;
+                if (!any(isnan(endMote)) && !any(isinf(endMote))) {
+                    moteRadiance += max(endMote, vec3(0.0));
+                }
+            }
+        }
+    }
     hdr += moteRadiance;
 #endif
 
@@ -474,8 +501,12 @@ void main() {
     //
     // The lines are not touched by the grading sliders, and they do not bloom: bloomFinal is mixed in
     // upstream.
+    // Held back in the End, where the line's own floor is brighter than the surface under it; see
+    // u_EndOutline.
+    float outlineScale = u_WorldBounds.w == 3.0 ? max(u_EndOutline, 0.0) : 1.0;
     display = plagueApplyOutline(display,
-            plagueOutlineAmount(u_Input1, u_Input8, u_Input3, frameUv, u_PassTexelSize));
+            plagueOutlineAmount(u_Input1, u_Input8, u_Input3, frameUv, u_PassTexelSize)
+                    * outlineScale);
 #endif
 
     // Display-space dither on the finished value, the last arithmetic before quantization, which is

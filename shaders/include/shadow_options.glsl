@@ -13,7 +13,7 @@
 // silently also enable this separately-costed feature.
 #define CLOUD_SHADOWS 1 //[0 1] compile "Cloud Shadows" {0="Off" 1="On"}
 
-#define SHADOW_RESOLUTION 2048 //[1024 2048 4096] compile "Shadow Resolution" {1024="1024" 2048="2048" 4096="4096"}
+#define SHADOW_RESOLUTION 1024 //[1024 2048 4096] compile "Shadow Resolution" {1024="1024" 2048="2048" 4096="4096"}
 
 // Vanilla's blob shadow reads as a smudge under a real cast shadow, so the engine suppresses it
 // when this is on. Absent counts as off (keeps vanilla's behaviour).
@@ -28,6 +28,6 @@
 // PLAGUE_AMBIENT_SHADOW_MAX so shadowed ground never reaches black.
 #define u_ShadowStrength 1.50 //[0.00..2.00 step 0.05] runtime "Shadow Strength"
 // The engine reads this exact name to size the shadow frustum, so it must stay in blocks.
-#define u_ShadowDistance 128.0 //[16.0..512.0 step 16.0] runtime "Shadow Distance"
+#define u_ShadowDistance 96.0 //[16.0..512.0 step 16.0] runtime "Shadow Distance"
 
 #endif // PLAGUE_SHADOW_OPTIONS

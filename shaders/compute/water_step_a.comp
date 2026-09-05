@@ -1,5 +1,5 @@
 #version 450
-#define PLAGUE_WATER_INTERACTION 1 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Quality" 2="Performance"}
+#define PLAGUE_WATER_INTERACTION 2 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Quality" 2="Performance"}
 #define SURFACE_FLUID_DETAIL 1 //[0 1 2] compile "Water Simulation Boundaries" {0="Off" 1="Standard" 2="Quality"}
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0

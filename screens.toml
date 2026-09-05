@@ -75,6 +75,8 @@ sliders = [
     "u_SsrMaxDistance",
     "u_SsrTraceQuality",
     "u_EndSkyBrightness",
+    "u_EndAmbient",
+    "u_EndOutline",
     "u_EndAirReach",
     "u_EndNebulaIntensity",
     "u_EndNebulaAmount",
@@ -87,6 +89,14 @@ sliders = [
     "u_EndStormSize",
     "u_EndStormSurge",
     "u_EndStormReach",
+    "u_EndMoteAmount",
+    "u_EndMoteDrift",
+    "u_EndMoteSize",
+    "u_EndOuterReach",
+    "u_EndOuterDim",
+    "u_EndOuterStormFade",
+    "u_EndTurn",
+    "u_EndBreath",
     "u_HeatShimmer",
     "u_NetherHeatAmbient",
     "u_NetherHeatDistance",
@@ -481,6 +491,8 @@ elements = [
 title = "The End"
 elements = [
     "u_EndSkyBrightness",
+    "u_EndAmbient",
+    "u_EndOutline",
     "u_EndAirReach",
     "<group:Nebula>",
     "u_EndNebulaIntensity",
@@ -495,6 +507,16 @@ elements = [
     "u_EndStormSize",
     "u_EndStormSurge",
     "u_EndStormReach",
+    "<group:Motes>",
+    "u_EndMoteAmount",
+    "u_EndMoteDrift",
+    "u_EndMoteSize",
+    "<group:The Two Ends>",
+    "u_EndOuterReach",
+    "u_EndOuterDim",
+    "u_EndOuterStormFade",
+    "u_EndTurn",
+    "u_EndBreath",
 ]
 
 [screens.heat_shimmer]
@@ -1855,6 +1877,20 @@ Quality of the reflections.
 Too low, and distant reflections cut off early. The cost is only paid on surfaces smooth or wet \
 enough to reflect at all."""
 
+u_EndOutline = """
+How much of the world outline is kept in the End.
+
+The line adds a set amount of light on top of whatever is under it, enough that an unlit surface \
+still shows its edges. Nothing in the End is brightly lit, so at full strength the lines take over \
+the whole frame. Zero turns them off there and leaves every other place alone."""
+
+u_EndAmbient = """
+How strong the fill light is in the End.
+
+The End has no sun, so this is the only thing lighting a surface that faces away from everything. \
+Its colour comes from the sky itself, averaged over every direction, including below you: there is \
+no ground in the End, so an island is lit from underneath as well."""
+
 u_EndSkyBrightness = """
 How much light the End gives off.
 
@@ -1862,9 +1898,11 @@ The End has no sun. What you see is the air itself giving off light, so this set
 whole place is. Zero leaves it black."""
 
 u_EndAirReach = """
-How far you can see in the End before things fade into the sky, in chunks.
+How far you can see in the End, as a share of how far the game is drawing.
 
-Lower closes the place in around you; higher lets you pick out the far islands."""
+A share and not a set number of chunks, so it holds up whatever your view distance is. Fog set \
+in blocks leaves islands sharp right up to the point the game stops drawing them, and they blink \
+out. Lower closes the place in around you; higher lets you pick out the far islands."""
 
 u_EndNebulaIntensity = """
 How strong the End's clouds of light are. Zero turns them off."""
@@ -1907,6 +1945,43 @@ Zero holds the sheets at one strength. Higher makes fronts roll through, bright 
 
 u_EndStormReach = """
 How far up the sky the sheets climb. Lower keeps them near eye level."""
+
+u_EndMoteAmount = """
+Specks of light drifting close to you in the End.
+
+They sit close to you rather than off in the sky, so they slide past the far view as you move. \
+A speck crossing something bright catches its light. Zero turns them off."""
+
+u_EndMoteDrift = """
+How fast the specks drift. Zero holds them still in the world."""
+
+u_EndMoteSize = """
+How big each speck is drawn.
+
+It only makes them bigger. They start at the smallest size that stays still: any smaller and a \
+speck would be thinner than a pixel and flicker as you turn."""
+
+u_EndOuterReach = """
+How far out the middle island ends and the outer ones begin, in chunks.
+
+64 is where the game itself splits them. Past this point the sky dims and the storm falls behind \
+you, so this is what makes flying out feel like going somewhere."""
+
+u_EndOuterDim = """
+How much darker the sky is out among the outer islands. Zero makes both halves look the same."""
+
+u_EndOuterStormFade = """
+How much more the storm fades out among the outer islands, on top of the dimming above.
+
+At 1.0 the storm belongs to the middle island alone."""
+
+u_EndTurn = """
+How fast the whole cloud creeps around you. 1.0 is one full circle in about eight minutes.
+
+The stars do not turn with it, so the two slowly pull apart. Zero holds it still."""
+
+u_EndBreath = """
+How much the whole place swells and falls, on about a forty second cycle. Zero holds it steady."""
 
 u_HeatShimmer = """
 How much the air wobbles and ripples wherever heat is present.

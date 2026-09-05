@@ -18,7 +18,7 @@
 // The sun's angular radius, radians. 0.00465 is the real sun, eight pixels across at 1080p and a
 // 70-degree vertical FOV; 0.2915 is vanilla's quad. Above about 0.12 the disc is wider than its own
 // aureole (u_SunGlowStrength's falloff) and covers it.
-#define u_SunDiscSize 0.090 //[0.010..0.300 step 0.005] runtime "Sun Size"
+#define u_SunDiscSize 0.070 //[0.010..0.300 step 0.005] runtime "Sun Size"
 
 // Multiples of each body's OWN radiance (not an absolute), so brightness stays meaningful as the
 // atmosphere's colour changes. The sun's default is >1 to survive the aureole drawn around it.
@@ -32,7 +32,7 @@
 // Multiplies the baked relief's tilt. moon_normal.png is baked at 3x true scale, a median surface
 // tilt of 6.8 degrees, so 1 is that and 4 reaches about 25. Only the tangential components scale,
 // and the result is renormalised, so no value leaves the unit sphere.
-#define u_MoonRelief 1.0 //[0.00..4.00 step 0.25] runtime "Moon Relief"
+#define u_MoonRelief 2.00 //[0.00..4.00 step 0.25] runtime "Moon Relief"
 
 // Libration amplitude, degrees. The moon keeps one face turned toward the world, but not exactly:
 // its orbital tilt and varying speed rock that face by about 8 degrees in each axis, so each limb

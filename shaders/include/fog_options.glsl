@@ -93,9 +93,9 @@
 // wall in the Nether's short, cramped caves.
 // -------------------------------------------------------------------------------------------------
 
-#define u_NetherFogDensity 1.5 //[0.25..3.00 step 0.05] runtime "Nether Fog Density"
+#define u_NetherFogDensity 1.20 //[0.25..3.00 step 0.05] runtime "Nether Fog Density"
 
-#define u_NetherFogDistance 0.50 //[0.15..1.00 step 0.05] runtime "Nether Fog Closeness"
+#define u_NetherFogDistance 0.75 //[0.15..1.00 step 0.05] runtime "Nether Fog Closeness"
 
 // -------------------------------------------------------------------------------------------------
 // Advanced overrides. Each fog type gets its own Amount/Distance/Sharpness, starting at the main

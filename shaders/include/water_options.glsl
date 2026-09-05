@@ -34,8 +34,8 @@
 
 // --- Light shafts through the water column -----------------------------------------------------------
 #define u_WaterShaftDistance 3 //[1..6 step 1] runtime "Light Shaft Distance (Chunks)"
-#define u_WaterShaftStrength 1.0 //[0.0..3.0 step 0.05] runtime "Light Shaft Strength"
-#define u_WaterShaftFocus 1.0 //[0.0..2.0 step 0.05] runtime "Light Shaft Focus"
+#define u_WaterShaftStrength 0.80 //[0.0..3.0 step 0.05] runtime "Light Shaft Strength"
+#define u_WaterShaftFocus 1.25 //[0.0..2.0 step 0.05] runtime "Light Shaft Focus"
 #define u_WaterShaftSpread 0.75 //[0.0..1.0 step 0.05] runtime "Light Shaft Spread"
 #define u_WaterShaftPersistence 0.70 //[0.0..0.9 step 0.05] runtime "Light Shaft Persistence"
 // Suspended particulate rising with depth (water_volume.glsl's plagueWaterTurbidityLoad). Raises

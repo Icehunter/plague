@@ -25,7 +25,7 @@
 
 // Candidate population. Stable owner ranks are compared with this response, so increasing Amount
 // reveals additional owner-local domes without moving or dilating an already-active cloud.
-#define u_CloudAmount 1.0 //[0.00..2.00 step 0.05] runtime "Cloud Amount"
+#define u_CloudAmount 1.45 //[0.00..2.00 step 0.05] runtime "Cloud Amount"
 
 // Relative physical size around the accepted reference; the one slider that departs from the
 // genus-table scale on purpose. The accepted 0.30 setting keeps the table's 400 m cumulus depth
@@ -41,7 +41,7 @@
 // slider. The slab's opacity is held at the row's own figure regardless of size.
 //
 // Floor of 0.20 is set by clouds.glsl's traversal step cap, not by cloud/erosion size ratio.
-#define u_CloudScale 0.30 //[0.20..2.00 step 0.05] runtime "Cloud Size"
+#define u_CloudScale 0.75 //[0.20..2.00 step 0.05] runtime "Cloud Size"
 
 // Strength of the rain -> congestus interpolation in plagueCloudLowDeck. 0 holds the deck at
 // cumulus regardless of weather, for bisecting the weather response against a static sky.
@@ -61,7 +61,7 @@
 // A tier sets slab steps, step cap and sun taps for THIS deck (plagueCloudTier* below). March
 // resolution stays global on CLOUD_RESOLUTION: all seven genera march into one target, sorted per
 // ray by first-hit distance, and per-deck targets lose that ordering.
-#define u_CloudTierCumulus 2 //[0 1 2 3] runtime "Cumulus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
+#define u_CloudTierCumulus 3 //[0 1 2 3] runtime "Cumulus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
 #define u_CloudTierStratus 2 //[0 1 2 3] runtime "Stratus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
 #define u_CloudTierNimbostratus 2 //[0 1 2 3] runtime "Nimbostratus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
 #define u_CloudTierAltocumulus 2 //[0 1 2 3] runtime "Altocumulus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
@@ -71,7 +71,7 @@
 // A deck 30 blocks overhead still runs kilometres sideways, which a vertical metric cannot see.
 // Measured at Ultra: 16 chunks costs 20% of near-field step resolution and 75% of far-field, 32
 // costs 10% and 33%. The top of the range is off, since any reach term rings the dome otherwise.
-#define u_CloudDetailFade 32.0 //[8.0..128.0 step 4.0] runtime "Cloud Detail Distance"
+#define u_CloudDetailFade 64.0 //[8.0..128.0 step 4.0] runtime "Cloud Detail Distance"
 
 // Diagnostic: pins the low etage's form to the two sliders below instead of the world's own.
 #define u_CloudFormHold 0.0 //[0.0 1.0] runtime "Hold Cloud Form" {0.0="Off" 1.0="On"}

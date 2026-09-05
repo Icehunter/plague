@@ -29,7 +29,7 @@ const float PLAGUE_BLOOM_SANITIZE_CEILING = 4096.0;
 // default could not be shown independent of the measurement fixture it was tuned against. At the
 // default the widest level contributes ~1/55th of a core level's weight. Must not be parity-fit or
 // reverse-derived at all — see tools/verify_emission.py's structural checks on this ratio.
-#define u_BloomFalloff 0.37 //[0.05..1.00 step 0.01] runtime "Bloom Falloff"
+#define u_BloomFalloff 0.55 //[0.05..1.00 step 0.01] runtime "Bloom Falloff"
 
 float plagueBloomWeight(int level) {
     return level <= 2 ? 1.0 : pow(u_BloomFalloff, float(level - 2));

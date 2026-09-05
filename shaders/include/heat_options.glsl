@@ -5,7 +5,7 @@
 // tonemap.fsh import this rather than each carrying its own copy, since the option scanner
 // requires every declaration of a name to be byte-identical across files.
 
-#define u_HeatShimmer 1.0 //[0.00..2.00 step 0.05] runtime "Shimmer Strength"
+#define u_HeatShimmer 1.50 //[0.00..2.00 step 0.05] runtime "Shimmer Strength"
 
 // Per-drive toggles. Biome (deserts, other hot-and-dry biomes) joins this list once the aerial
 // pass carries per-column heat; nothing to toggle for it yet.

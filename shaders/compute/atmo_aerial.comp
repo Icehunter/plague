@@ -112,7 +112,7 @@ void main() {
     // every distant thing washes out.
     if (u_WorldBounds.w == 3.0) {
         float through = plagueEndTransmittance(sliceBlocks);
-        vec3 gained = plagueEndSky(dir, u_EndSkyBrightness) * (1.0 - through);
+        vec3 gained = plagueEndSky(dir, plagueEndSkyLevel()) * (1.0 - through);
         imageStore(u_OutAerial, texel, vec4(gained, through));
         return;
     }

@@ -26,7 +26,7 @@
 #define u_OutlineConvex 0.50 //[-2.00..2.00 step 0.05] runtime "Outline Convex Strength"
 #define u_OutlineConcave 0.00 //[-2.00..2.00 step 0.05] runtime "Outline Concave Strength"
 #define u_OutlineThickness 1 //[1..4 step 1] runtime "Outline Thickness"
-#define u_OutlineDistance 3 //[1..16 step 1] runtime "Outline Distance (Chunks)"
+#define u_OutlineDistance 1 //[1..16 step 1] runtime "Outline Distance (Chunks)"
 
 #if OUTLINE_ENABLED
 
