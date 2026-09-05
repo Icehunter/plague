@@ -26,6 +26,7 @@ program = "shaders/blocks/entities"
 inputs = []
 outputs = []
 
+
 # Fornax maps vanilla's SOLID_BLOCK/CUTOUT_BLOCK pipelines to BLOCK_ENTITIES; claiming this slot is
 # what makes the pack program reachable instead of being overpainted by the deferred resolve.
 [[pass]]
@@ -878,7 +879,10 @@ shader = "shaders/post/water_composite.fsh"
 # exactly, or both draw water or neither does; verify_graph_resolves.py pins the pair.
 enabled_if = "SSR_WATER_MODE > 0"
 blend = "translucent"
-inputs = ["builtin.waterNormal", "builtin.waterDepth", "ssrWater", "builtin.depth", "builtin.noise", "causticsTexture", "glintOcclusion", "builtin.celestials", "foamTexture", "foamNormalTexture", "foamHeightTexture", "waterEnvironment", "moonAlbedo", "moonNormal", "cloudFront", "atmoSkyView", "atmoAerial"]
+# 15 samplers. Metal allows 16 per fragment function and refuses the pipeline above that, with
+# nothing in the log but a compile error and a water surface that renders as vanilla flat blue.
+# Inputs are positional: append only, and check this count before adding one.
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "ssrWater", "builtin.depth", "builtin.noise", "glintOcclusion", "foamTexture", "foamNormalTexture", "foamHeightTexture", "waterEnvironment", "moonAlbedo", "moonNormal", "cloudFront", "atmoSkyView", "atmoAerial"]
 outputs = ["sceneHdrComposited"]
 
 # Placed after the last scene writer, BEFORE bloom and underwater_refraction: accumulating a
