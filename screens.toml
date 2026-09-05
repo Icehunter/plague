@@ -465,7 +465,7 @@ elements = [
 ]
 
 [screens.heat_shimmer]
-title = "Heat Shimmer"
+title = "Heat"
 elements = [
     "u_HeatShimmer",
     "<group:Lava & Fire>",
