@@ -571,7 +571,12 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // Dithered, not truncated. deckQuality is continuous but the cap is an integer, so a plain
     // int() steps down at a fixed elevation, drawing one ring per integer crossed. The ray's dither
     // turns each boundary into per-pixel noise. slabSteps stays continuous and needs no such fix.
-    int stepCap = max(int(plagueCloudTierStepCap(deck.tier) * deckQuality + dither),
+    // stepScale scales the cap as well as the budget above, and the cap is the half that matters:
+    // by the note above a shallow ray reaches the cap whatever its step length, so a deck that needs
+    // less resolution has to be told so here or it pays full price on every ray to the horizon. The
+    // floor still keeps the lowest setting a coarser deck rather than a missing one.
+    int stepCap = max(int(plagueCloudTierStepCap(deck.tier) * deckQuality
+                              * clamp(deck.stepScale, 0.05, 1.0) + dither),
                       int(PLAGUE_CLOUD_MIN_SLAB_STEPS) * 2);
 
     int steps = max(int(ceil(span / stepLen)), 1);

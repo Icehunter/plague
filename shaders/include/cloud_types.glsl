@@ -524,6 +524,12 @@ float plagueCloudClearReferenceMidAltitude() {
  * world-coordinate divisor rephases the field around world origin. Stability slides it along the
  * St-Sc axis; cell and shear hold fixed across that slide for the same reason.
  */
+// How much of the march budget a low sheet gets. A sheet has an interior, so not as low as the thin
+// upper decks, but it is smooth all through. Measured: at Balanced the two low sheets cost more
+// than twice what cumulus cost at Ultra, because a low flat deck runs kilometres sideways while its
+// own depth sets a short step, so most rays to the horizon spend the whole step cap. AUTHORED.
+const float PLAGUE_CLOUD_SHEET_STEP_SCALE = 0.5;
+
 PlagueCloudDeck plagueCloudLowStratiformDeck(float moisture, float stability, float airMass,
                                              float snowWeight) {
     PlagueCloudDeck deck;
@@ -564,7 +570,7 @@ PlagueCloudDeck plagueCloudLowStratiformDeck(float moisture, float stability, fl
     deck.cut = PLAGUE_CLOUD_CANDIDATE_CUTOFF;
     deck.footprint = 1.0;
     deck.convectiveLift = 0.0;
-    deck.stepScale = 1.0;
+    deck.stepScale = PLAGUE_CLOUD_SHEET_STEP_SCALE;
     deck.fallShear = 0.0;   // only ice falling from a generating head trails
     deck.axisSwing = 0.0;   // only a fibrous deck wanders off the wind
     deck.tier = u_CloudTierStratus;
@@ -749,7 +755,7 @@ PlagueCloudDeck plagueCloudStratocumulusDeck(float amountMask, float snowWeight)
     deck.cut = PLAGUE_CLOUD_CANDIDATE_CUTOFF;
     deck.footprint = 1.0;
     deck.convectiveLift = 0.0;
-    deck.stepScale = 1.0;
+    deck.stepScale = PLAGUE_CLOUD_SHEET_STEP_SCALE;
     deck.fallShear = 0.0;   // only ice falling from a generating head trails
     deck.axisSwing = 0.0;   // only a fibrous deck wanders off the wind
     deck.tier = u_CloudTierStratus;

@@ -36,6 +36,11 @@ const float PLAGUE_ATMO_PI = 3.14159265358979;
 // cloud and the haze under it agree about how high the camera is.
 const float PLAGUE_ATMO_METRES_PER_BLOCK = 1000.0 / 192.0;
 
+// How far toward the sun a shadow lookup in the air is nudged, in blocks. AUTHORED. It has to clear
+// one shadow texel at the far edge of the map, and stay under the smallest thing that should cast,
+// a one-block post.
+const float PLAGUE_ATMO_SHADOW_BIAS_BLOCKS = 0.35;
+
 // Used when the engine reports no dimension (u_WorldBounds.w == 0): vanilla overworld sea level.
 const float PLAGUE_ATMO_SEA_LEVEL_FALLBACK = 63.0;
 
@@ -612,6 +617,16 @@ void plagueAtmoScatterAt(vec3 pos, vec3 sunDir, PlagueAtmoPhases phases, vec3 su
  *
  * @return rgb radiance, a the luminance transmittance to the end
  */
+#ifdef PLAGUE_ATMO_SHADOWED
+/**
+ * How much of the sun reaches a point in the air, 0 in shadow, 1 in the open. Supplied by the pass
+ * that turns this on, the same way the table fetchers are.
+ *
+ * @param posBlocks  camera-relative world position, in blocks
+ */
+float plagueAtmoSunShadow(vec3 posBlocks, vec3 sunDir);
+#endif
+
 vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec3 moonRadiance,
                        PlagueAtmoAir air, float end, int steps, out vec3 transmittance) {
     PlagueAtmoPhases phases = plagueAtmoPhases(dir, sunDir);
@@ -627,7 +642,15 @@ vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec
 
         vec3 scattered;
         vec3 extinction;
-        plagueAtmoScatterAt(origin + dir * t, sunDir, phases, sunRadiance, moonRadiance, air,
+#ifdef PLAGUE_ATMO_SHADOWED
+        // Terrain between the sun and this point in the air. Without it the ray is lit as if
+        // nothing stood in the way, and a hill with the sun behind it still glows.
+        vec3 stepSun = sunRadiance
+                * plagueAtmoSunShadow(dir * (t / PLAGUE_ATMO_METRES_PER_BLOCK), sunDir);
+#else
+        vec3 stepSun = sunRadiance;
+#endif
+        plagueAtmoScatterAt(origin + dir * t, sunDir, phases, stepSun, moonRadiance, air,
                             scattered, extinction);
         vec3 stepTransmittance = exp(-extinction * dt);
         vec3 integrated = (scattered - scattered * stepTransmittance) / max(extinction, vec3(1e-12));

@@ -264,7 +264,10 @@ shader = "shaders/compute/atmo_aerial.comp"
 enabled_if = "PLAGUE_SKY_MODEL == 1"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+# sunShadowMap last: inputs are positional, append only. It lets terrain stop the sun before it
+# lights the fog in front of a hill.
+inputs = ["globals", "packOptions", "atmoTransmittance", "atmoMultiScatter", "atmoSkyView",
+          "sunShadowMap"]
 outputs = ["atmoAerial"]
 
 [targets.ssaoRaw]
