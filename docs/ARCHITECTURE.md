@@ -249,7 +249,9 @@ which draws and reads nothing.
 
 A hit carries the shape crossing, face normal, local position and material entry. Mapped faces read
 colour, tint, normals and the labPBR maps; anything else uses the harvested average. Cutouts test
-alpha. Off underwater.
+alpha. The walk keeps each section summary and occupancy word until the address changes. An empty
+section skips ahead to its far edge, adding the same float steps as the walk so a tied crossing
+still lands the same way. A pending section still stops the ray. Off underwater.
 
 Both buffers are optional and allocated only when the option is on:
 
@@ -258,7 +260,8 @@ Both buffers are optional and allocated only when the option is on:
   the light outside the block; partial shapes and crossed planes read their own cell. Shape bits,
   not material flags, pick the side.
 - `voxelFaceTexture` (input 10): six baked face mappings per entry, atlas UVs plus layer-zero tint,
-  single-quad full cube faces only. 192 bytes per palette entry, about 86.4 MiB at eight chunks.
+  single-quad full cube faces only. Each face is seven words: one holds RGB and flags, the other six
+  hold the UV values as float32. 168 bytes per palette entry, about 75.6 MiB at eight chunks.
 
 `surface_lighting.glsl` supplies the frame light colours; `main_lighting.glsl` and the shared BRDF
 shade the bounce. Palette word15 is a block's own glow; block light landing on it is not glow. Four

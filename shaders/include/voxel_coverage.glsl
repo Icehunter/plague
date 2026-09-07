@@ -29,6 +29,31 @@ bool plagueCoverageInterval(vec3 o, vec3 d, vec3 lo, vec3 hi, out float a, out f
 
 int plagueCoverageMod(int a, int b) { return ((a % b) + b) % b; }
 
+float plagueVoxelSkipEmptySection(inout ivec3 cell, ivec3 stepDir, vec3 delta, inout vec3 next) {
+    ivec3 steps = ivec3(0);
+    vec3 boundary = vec3(1e30);
+    for (int k = 0; k < 3; k++) if (stepDir[k] != 0) {
+        // Sections are 16 cells wide. Add the step one cell at a time, as the walk does.
+        // A multiply rounds differently and can change which cell is picked as occupied first.
+        steps[k] = stepDir[k] > 0 ? 16 - (cell[k] & 15) : (cell[k] & 15) + 1;
+        boundary[k] = next[k];
+        for (int j = 1; j < steps[k]; j++) boundary[k] += delta[k];
+    }
+    float crossing = min(boundary.x, min(boundary.y, boundary.z));
+    for (int k = 0; k < 3; k++) if (stepDir[k] != 0) {
+        if (boundary[k] <= crossing) {
+            cell[k] += stepDir[k] * steps[k];
+            next[k] = boundary[k] + delta[k];
+        } else {
+            for (int j = 0; j < steps[k] && next[k] <= crossing; j++) {
+                cell[k] += stepDir[k];
+                next[k] += delta[k];
+            }
+        }
+    }
+    return crossing;
+}
+
 // Return the entering face, including when a partial shape begins inside the current cell.
 vec3 plagueVoxelHitNormal(vec3 point, vec3 lo, vec3 hi, vec3 dir) {
     // An axis the ray runs along cannot give the entering face, even sitting right on it.
@@ -166,20 +191,37 @@ float plagueVoxelTraceMaterial(vec3 originRel, vec3 dir, out vec3 hitPosition,
             next[k] = (float(cell[k] + max(stepDir[k], 0)) - o[k]) / dir[k];
         }
     }
+    ivec3 cachedSection = ivec3(-1);
+    int slot = 0;
+    uint summary = 0u;
+    int occupancyAddress = -1;
+    uint occupancyWord = 0u;
     // A straight line crosses at most one window extent on each axis.
     for (int i = 0; i < d * 16 * 3 + 3 && t < leave; i++) {
         if (any(lessThan(cell, ivec3(0))) || any(greaterThanEqual(cell, ivec3(d * 16)))) return 5.0;
-        ivec3 section = (cell >> 4) + first;
-        int slot = (plagueCoverageMod(section.y, d) * d + plagueCoverageMod(section.z, d)) * d
+        ivec3 localSection = cell >> 4;
+        if (any(notEqual(localSection, cachedSection))) {
+            cachedSection = localSection;
+            ivec3 section = localSection + first;
+            slot = (plagueCoverageMod(section.y, d) * d + plagueCoverageMod(section.z, d)) * d
                    + plagueCoverageMod(section.x, d);
-        uint summary = texelFetch(u_Input6, slot).r;
+            summary = texelFetch(u_Input6, slot).r;
+        }
         // Waiting beats occupancy: the payload may still belong to whatever held this slot.
         if ((summary & 0x80000000u) != 0u) return 4.0;
-        if ((summary & 1u) != 0u) {
+        if ((summary & 1u) == 0u) {
+            t = plagueVoxelSkipEmptySection(cell, stepDir, delta, next);
+            continue;
+        }
+        {
             ivec3 local = cell & 15;
             int idx = (local.y << 8) | (local.z << 4) | local.x;
-            uint occ = texelFetch(u_Input3, slot * 128 + (idx >> 5)).r;
-            if ((occ & (1u << uint(idx & 31))) != 0u) {
+            int address = slot * 128 + (idx >> 5);
+            if (address != occupancyAddress) {
+                occupancyAddress = address;
+                occupancyWord = texelFetch(u_Input3, address).r;
+            }
+            if ((occupancyWord & (1u << uint(idx & 31))) != 0u) {
                 uint payload = texelFetch(u_Input4, slot * 1024 + (idx >> 2)).r;
                 int entry = int((payload >> uint((idx & 3) * 8)) & 255u);
                 if (entry >= 96) return 6.0;

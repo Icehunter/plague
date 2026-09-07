@@ -8,21 +8,22 @@ bool plagueVoxelFaceMapping(int entry, vec3 local, vec3 normal, out vec2 atlasUV
     atlasUV = vec2(0.0); tintColour = vec3(1.0);
     tangent = vec3(0.0); bitangent = vec3(0.0);
     int d = u_VoxelWindow.w;
-    // Six faces, eight words each, 96 palette entries per section. Reject a missing or stale buffer.
-    if (d <= 0 || d > 33 || textureSize(u_Input10) != d * d * d * 96 * 48
+    // Six faces, seven words each: one word for RGB and flags, six for UV floats. 96 entries
+    // per section. The exact size check also fails when the pack and engine do not match.
+    if (d <= 0 || d > 33 || textureSize(u_Input10) != d * d * d * 96 * 42
             || entry < 0 || entry >= d * d * d * 96) return false;
     if (any(isnan(local)) || any(isinf(local)) || any(isnan(normal)) || any(isinf(normal))) return false;
     vec3 axes = abs(normal);
     if (dot(axes, vec3(1.0)) != 1.0 || max(axes.x, max(axes.y, axes.z)) != 1.0) return false;
     int face = normal.y != 0.0 ? (normal.y > 0.0 ? 1 : 0)
              : normal.z != 0.0 ? (normal.z > 0.0 ? 3 : 2) : (normal.x > 0.0 ? 5 : 4);
-    int base = entry * 48 + face * 8;
-    uint flags = texelFetch(u_Input10, base).r;
+    int base = entry * 42 + face * 7;
+    uint tint = texelFetch(u_Input10, base).r;
+    uint flags = tint >> 24; // Tint alpha is unused, so its byte holds flags instead. RGB bits are untouched.
     if ((flags & 1u) == 0u) return false;
-    uint tint = texelFetch(u_Input10, base + 1).r;
-    vec2 origin = uintBitsToFloat(uvec2(texelFetch(u_Input10, base + 2).r, texelFetch(u_Input10, base + 3).r));
-    vec2 ds = uintBitsToFloat(uvec2(texelFetch(u_Input10, base + 4).r, texelFetch(u_Input10, base + 5).r));
-    vec2 dt = uintBitsToFloat(uvec2(texelFetch(u_Input10, base + 6).r, texelFetch(u_Input10, base + 7).r));
+    vec2 origin = uintBitsToFloat(uvec2(texelFetch(u_Input10, base + 1).r, texelFetch(u_Input10, base + 2).r));
+    vec2 ds = uintBitsToFloat(uvec2(texelFetch(u_Input10, base + 3).r, texelFetch(u_Input10, base + 4).r));
+    vec2 dt = uintBitsToFloat(uvec2(texelFetch(u_Input10, base + 5).r, texelFetch(u_Input10, base + 6).r));
     if (any(isnan(origin)) || any(isinf(origin)) || any(isnan(ds)) || any(isinf(ds))
             || any(isnan(dt)) || any(isinf(dt))) return false;
     // The four corners bound the atlas region, turned sprites included.
