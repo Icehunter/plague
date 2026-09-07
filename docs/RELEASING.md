@@ -30,8 +30,8 @@ TOMLs and `shaders/`, so this cannot drift by someone forgetting to trim a direc
 
 ## Checking the zip
 
-Fornax loads a pack from a folder or a zip identically, so the check is to drop the zip in
-`shaderpacks/`, select it, and confirm the settings screens populate. A pack that fails to load says
+Fornax loads a pack from a folder or a zip the same way, so the check is to drop the zip in
+`shaderpacks/`, select it, and confirm the settings screens fill in. A pack that fails to load says
 why: a missing `#moj_import` names the file it could not resolve, and a malformed option annotation
 names the line.
 
@@ -39,7 +39,7 @@ names the line.
 
 Every binary in the release has a row in `ASSETS.md`, and every piece of third-party code has a row
 in `THIRD-PARTY-NOTICES.md` with its licence text. Both files are the gate: no row, no entry into
-the tree, and therefore no entry into a release.
+the tree, and so no entry into a release.
 
 Check the distribution rules of wherever the pack is being listed before publishing: storefronts
 differ on what they accept, and icons and banners are the usual sticking point.
