@@ -90,10 +90,11 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
     return texture(ATMO_AERIAL, uv);
 }
 
-// Metal allows 16 samplers per fragment function, counting only the ones read, and this pass sits
-// at that ceiling: 15 as shipped, 16 with these debug-only reads under Palette, 17 under
-// Scattering, where the pipeline then refuses to build with nothing in the log but a pipeline
-// error. Enable only with PLAGUE_SKY_MODEL at Palette. Any new input must displace a read.
+// Metal allows 16 samplers per fragment function, counting only the ones read.
+// tools/check_metal_pipelines.py counts 14 here under Scattering, 12 under Palette. The debug-only
+// reads below add 2, so Scattering with the views on sits right at the ceiling and any new input to
+// this pass has to displace a read. Past the ceiling the pipeline refuses to build, with nothing in
+// the log but a pipeline error.
 //#define PLAGUE_DEBUG_VIEWS //[] compile "Motion and Shadow-Map Debug Views"
 
 // Must follow NOISE_TEX: PLAGUE_CLOUD_NOISE expands inline where clouds.glsl calls it, so an

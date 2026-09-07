@@ -91,8 +91,14 @@ void main() {
             vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
 #endif
 #if PLAGUE_SKY_MODEL == 1
-    vec3 radiance = plagueAtmoSkyView(direction, trueSunDirection, plagueAtmoCameraRadius()).rgb
-            * atmColorMult;
+    vec3 radiance = plagueAtmoSkyView(direction, trueSunDirection, plagueAtmoCameraRadius()).rgb;
+    // The warmth and storm darkening the dome gets, applied before the mip chain blurs this
+    // probe; without it rough water reflects a raw sky while the scene's sunset and weather
+    // controls are on.
+    radiance = plagueWarmSkyBand(radiance, direction.y, VdotS, trueSunDirection.y);
+    radiance = plagueStormDarkenSky(radiance, direction.y, VdotS, trueSunDirection.y,
+                                  rainFactor, clamp(u_FrameState.z, 0.0, 1.0));
+    radiance *= atmColorMult;
 #else
     vec3 radiance = plagueGetSky(
             skyColours, direction.y, VdotS, 0.5, false, true) * atmColorMult;

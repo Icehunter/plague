@@ -367,6 +367,8 @@ void main() {
     vec3 glitterRadiance = u_SunDirection.w > 0.0
             ? plagueSunColor(glitterAirEyePos, glitterLightDir)
             : plagueMoonColor(glitterAirEyePos, glitterLightDir);
+    // The water's direct highlight shares the terrain's sunset warmth (surface_lighting.glsl).
+    glitterRadiance = plagueWarmLowSun(glitterRadiance, trueSunDir.y);
     // Local mirrors of lighting.sunVisibility/sunFactor, sourced from glitterLightDir.y instead of
     // the true-sun-only u_SunDirection.w, so glitter doesn't zero out under a risen moon. Kept local
     // since the globals are shared elsewhere (fog, shadows) and can't be redefined.
@@ -420,8 +422,9 @@ void main() {
             (waterRoughness - PLAGUE_WATER_MIN_ROUGHNESS)
             / (PLAGUE_WATER_MAX_ROUGHNESS - PLAGUE_WATER_MIN_ROUGHNESS),
             0.0, 1.0);
-    float ssrTrust = mix(1.0, 0.62, normalizedRoughness);
-    float resolvedConfidence = clamp(reflectionConfidence * ssrTrust, 0.0, 1.0);
+    // Roughness already sets the resolve's blur width. It must not swap a confirmed terrain hit
+    // for unrelated sky: waves widen a reflection, they do not hide what it hit.
+    float resolvedConfidence = clamp(reflectionConfidence, 0.0, 1.0);
     vec3 reflection = mix(environmentFallback * skyVis * fallbackAccess, reflSample.rgb,
                           resolvedConfidence);
 
