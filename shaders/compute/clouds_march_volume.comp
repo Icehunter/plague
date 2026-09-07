@@ -58,7 +58,111 @@ vec4 plagueAtmoFetchTransmittance(vec2 uv) {
                                  imageLoad(u_Transmittance, i1), f);
 }
 
+#if CLOUDS_VOLUMETRIC
+// Every value here comes from frame uniforms or the atmosphere tables, never the ray.
+// One invocation computes them for the whole workgroup; main's barrier shares the result.
+shared PlagueLighting lighting;
+shared PlagueCloudDeck convectiveDeck, stratiformDeck, sheetDeck, rollDeck;
+shared PlagueCloudDeck cirrusDeck, cirrocumulusDeck, altocumulusDeck;
+shared vec3 sunDirTrue, atmColorMult, ambientDome, upperMasks;
+shared float syncedTime, localRain, localThunder, stratiform, renderDistance;
+shared float lowSheet, lowRolls, cumulusOn, rainOn;
+
+void plaguePrepareCloudWorkgroup() {
+    PlagueCustomPalette palette = PlagueCustomPalette(
+            u_AtmPaletteNoonExponent, u_AtmPaletteNoonBrightness,
+            vec3(u_AtmPaletteSunsetTintR, u_AtmPaletteSunsetTintG, u_AtmPaletteSunsetTintB),
+            vec3(u_AtmPaletteNightR, u_AtmPaletteNightG, u_AtmPaletteNightB),
+            vec3(u_AtmPaletteRainDayR, u_AtmPaletteRainDayG, u_AtmPaletteRainDayB),
+            vec3(u_AtmPaletteRainNightR, u_AtmPaletteRainNightG, u_AtmPaletteRainNightB),
+            vec3(u_LightPaletteNoonR, u_LightPaletteNoonG, u_LightPaletteNoonB),
+            vec3(u_LightPaletteSunsetR, u_LightPaletteSunsetG, u_LightPaletteSunsetB),
+            u_LightPaletteSunsetWarmth,
+            vec3(u_LightPaletteNightR, u_LightPaletteNightG, u_LightPaletteNightB),
+            vec3(u_LightPaletteRainDayR, u_LightPaletteRainDayG, u_LightPaletteRainDayB),
+            vec3(u_LightPaletteRainNightR, u_LightPaletteRainNightG, u_LightPaletteRainNightB),
+            u_LightPaletteRainMagnitude);
+
+    // Compute passes never receive the fullscreen PassParams push constant's derived sun-elevation
+    // sine: that push constant's base 32 bytes carry texelSize/param2/param3/sunDir.xyz only, per
+    // ComputePassRunner, and .w is never written for a compute dispatch. Re-derived here from the
+    // true sun direction below: the Y component
+    // of a unit direction vector is the sine of its elevation by definition, so this is the exact
+    // same value under a different name, not an approximation.
+    sunDirTrue = dot(u_SkyCelestial.xyz, u_SkyCelestial.xyz) > 1e-6
+            ? normalize(u_SkyCelestial.xyz) : vec3(0.0, 1.0, 0.0);
+    float sunElevationSine = sunDirTrue.y;
+
+    syncedTime = u_SkyState.w * 0.05;
+
+    localRain = clamp(u_SkyState.x, 0.0, 1.0);
+    localThunder = clamp(u_FrameState.z, 0.0, 1.0);
+    float localSnowWeight = int(u_CameraSkyLight.y + 0.5) == 2 ? 1.0 : 0.0;
+
+    lighting = plagueOverworldLighting(
+            max(u_SkyColor.rgb, vec3(0.0)), sunElevationSine, u_SkyState.y,
+            localRain, u_ScreenBrightness, palette);
+
+    stratiform = plagueCloudTransitionDecks(
+            localRain,
+            localThunder,
+            clamp(u_FrameState.w, 0.0, 1.0),
+            localSnowWeight,
+            sunElevationSine,
+            syncedTime,
+            convectiveDeck,
+            stratiformDeck);
+
+    // u_Param2 is filled by the engine BY PASS NAME (see ComputePassRunner); this pass's name is
+    // not one the engine recognizes, so u_Param2 reads 0 here and this falls back to fog render
+    // distance.
+    renderDistance = max(u_RenderFog.y, 32.0);
+
+    atmColorMult = vec3(1.0);
+#ifdef ATM_COLOR_MULTS
+    atmColorMult = plagueAtmColorMult(lighting.noonFactor, lighting.sunVisibility2,
+            lighting.rainFactor,
+            vec3(u_AtmMorningR, u_AtmMorningG, u_AtmMorningB) * u_AtmMorningI,
+            vec3(u_AtmNoonR, u_AtmNoonG, u_AtmNoonB) * u_AtmNoonI,
+            vec3(u_AtmNightR, u_AtmNightG, u_AtmNightB) * u_AtmNightI,
+            vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
+#endif
+
+    ambientDome = plagueAtmoSkyHemisphere(sunDirTrue, plagueAtmoCameraRadius());
+
+    // Three contributors, each marched only when it has something to draw: the convective low
+    // deck, the low etage's smooth forms, the deep precipitating object. Compositing premultiplied
+    // in ray order IS the union 1 - prod(1 - a), so forms coexist rather than trade. The smooth
+    // forms need their own march because deck.cell is five times coarser for a sheet and cannot
+    // move: a world-coordinate divisor rephases the field around world origin.
+    lowSheet = plagueCloudLowStratiform(localSnowWeight, sheetDeck);
+
+    lowRolls = plagueCloudStratocumulus(localSnowWeight, rollDeck);
+
+    plagueCloudUpperDecks(cirrusDeck, cirrocumulusDeck, altocumulusDeck, upperMasks);
+
+    cumulusOn = (u_CloudTierCumulus > 0.5 ? 1.0 : 0.0);
+    rainOn = (u_CloudTierNimbostratus > 0.5 ? 1.0 : 0.0);
+
+    // The End drops the two weather decks and keeps the sheets. A cumulus needs warm ground to rise
+    // off and a nimbostratus needs rain to drop, and a fair-weather heap over the void reads as a
+    // piece of the Overworld that followed you through the portal. Sheets carry no such claim: they
+    // pass as torn layers of the same medium the sky is made of, and without them the End has no
+    // cloud at all, since the high decks are thin and often not overhead.
+    float weatherDecks = u_WorldBounds.w == 3.0 ? 0.0 : 1.0;
+    cumulusOn *= weatherDecks;
+    rainOn *= weatherDecks;
+}
+#endif
+
 void main() {
+#if CLOUDS_VOLUMETRIC
+    if (gl_LocalInvocationIndex == 0u && u_SkyState.z > 0.5) {
+        plaguePrepareCloudWorkgroup();
+    }
+    // Edge invocations must also reach this barrier. Returning early on bounds can stall the group.
+    barrier();
+#endif
     ivec2 outSize = imageSize(u_OutClouds);
     ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(texelCoord, outSize))) {
@@ -84,94 +188,11 @@ void main() {
             * fract(0.06711056 * float(texelCoord.x) + 0.00583715 * float(texelCoord.y));
     dither = fract(dither + goldenRatio * mod(u_FrameState.x, 3600.0));
 
-    PlagueCustomPalette palette = PlagueCustomPalette(
-            u_AtmPaletteNoonExponent, u_AtmPaletteNoonBrightness,
-            vec3(u_AtmPaletteSunsetTintR, u_AtmPaletteSunsetTintG, u_AtmPaletteSunsetTintB),
-            vec3(u_AtmPaletteNightR, u_AtmPaletteNightG, u_AtmPaletteNightB),
-            vec3(u_AtmPaletteRainDayR, u_AtmPaletteRainDayG, u_AtmPaletteRainDayB),
-            vec3(u_AtmPaletteRainNightR, u_AtmPaletteRainNightG, u_AtmPaletteRainNightB),
-            vec3(u_LightPaletteNoonR, u_LightPaletteNoonG, u_LightPaletteNoonB),
-            vec3(u_LightPaletteSunsetR, u_LightPaletteSunsetG, u_LightPaletteSunsetB),
-            u_LightPaletteSunsetWarmth,
-            vec3(u_LightPaletteNightR, u_LightPaletteNightG, u_LightPaletteNightB),
-            vec3(u_LightPaletteRainDayR, u_LightPaletteRainDayG, u_LightPaletteRainDayB),
-            vec3(u_LightPaletteRainNightR, u_LightPaletteRainNightG, u_LightPaletteRainNightB),
-            u_LightPaletteRainMagnitude);
-
-    // Compute passes never receive the fullscreen PassParams push constant's derived sun-elevation
-    // sine: that push constant's base 32 bytes carry texelSize/param2/param3/sunDir.xyz only, per
-    // ComputePassRunner, and .w is never written for a compute dispatch. Re-derived here from the
-    // true sun direction below: the Y component
-    // of a unit direction vector is the sine of its elevation by definition, so this is the exact
-    // same value under a different name, not an approximation.
-    vec3 sunDirTrue = dot(u_SkyCelestial.xyz, u_SkyCelestial.xyz) > 1e-6
-            ? normalize(u_SkyCelestial.xyz) : vec3(0.0, 1.0, 0.0);
-    float sunElevationSine = sunDirTrue.y;
-
-    float syncedTime = u_SkyState.w * 0.05;
-
-    float localRain = clamp(u_SkyState.x, 0.0, 1.0);
-    float localThunder = clamp(u_FrameState.z, 0.0, 1.0);
-    float localSnowWeight = int(u_CameraSkyLight.y + 0.5) == 2 ? 1.0 : 0.0;
-
-    PlagueLighting lighting = plagueOverworldLighting(
-            max(u_SkyColor.rgb, vec3(0.0)), sunElevationSine, u_SkyState.y,
-            localRain, u_ScreenBrightness, palette);
-
-    PlagueCloudDeck convectiveDeck;
-    PlagueCloudDeck stratiformDeck;
-    float stratiform = plagueCloudTransitionDecks(
-            localRain,
-            localThunder,
-            clamp(u_FrameState.w, 0.0, 1.0),
-            localSnowWeight,
-            sunElevationSine,
-            syncedTime,
-            convectiveDeck,
-            stratiformDeck);
-
-    // u_Param2 is filled by the engine BY PASS NAME (see ComputePassRunner); this pass's name is
-    // not one the engine recognizes, so u_Param2 reads 0 here and this falls back to fog render
-    // distance.
-    float renderDistance = max(u_RenderFog.y, 32.0);
-
-    vec3 atmColorMult = vec3(1.0);
-#ifdef ATM_COLOR_MULTS
-    atmColorMult = plagueAtmColorMult(lighting.noonFactor, lighting.sunVisibility2,
-            lighting.rainFactor,
-            vec3(u_AtmMorningR, u_AtmMorningG, u_AtmMorningB) * u_AtmMorningI,
-            vec3(u_AtmNoonR, u_AtmNoonG, u_AtmNoonB) * u_AtmNoonI,
-            vec3(u_AtmNightR, u_AtmNightG, u_AtmNightB) * u_AtmNightI,
-            vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
-#endif
-
-    // The two colours every tier below shares: the sky's own hemisphere and what a ray dissolves
-    // into at the render cutoff, computed once rather than per tier since neither depends on the
-    // deck. Both come from atmo_lut.glsl (the same table the sky and the
-    // terrain fog beside this cloud already read) with the pack's own sunset-band warmth
-    // (plagueWarmSkyBand, sky.glsl).
-    vec3 ambientDome = plagueAtmoSkyHemisphere(sunDirTrue, plagueAtmoCameraRadius());
+    // The cutoff colour is directional, so each ray keeps its own sky lookup and grading.
     vec3 skyAlong = plagueAtmoSkyView(viewDir, sunDirTrue, plagueAtmoCameraRadius()).rgb;
     skyAlong = plagueWarmSkyBand(skyAlong, viewDir.y, dot(viewDir, sunDirTrue), sunDirTrue.y);
     skyAlong = plagueStormDarkenSky(skyAlong, viewDir.y, dot(viewDir, sunDirTrue), sunDirTrue.y,
                                     localRain, localThunder) * atmColorMult;
-
-    // Three contributors, each marched only when it has something to draw: the convective low
-    // deck, the low etage's smooth forms, the deep precipitating object. Compositing premultiplied
-    // in ray order IS the union 1 - prod(1 - a), so forms coexist rather than trade. The smooth
-    // forms need their own march because deck.cell is five times coarser for a sheet and cannot
-    // move: a world-coordinate divisor rephases the field around world origin.
-    PlagueCloudDeck sheetDeck;
-    float lowSheet = plagueCloudLowStratiform(localSnowWeight, sheetDeck);
-
-    PlagueCloudDeck rollDeck;
-    float lowRolls = plagueCloudStratocumulus(localSnowWeight, rollDeck);
-
-    PlagueCloudDeck cirrusDeck;
-    PlagueCloudDeck cirrocumulusDeck;
-    PlagueCloudDeck altocumulusDeck;
-    vec3 upperMasks;
-    plagueCloudUpperDecks(cirrusDeck, cirrocumulusDeck, altocumulusDeck, upperMasks);
 
     vec4 layer[PLAGUE_CLOUD_LAYERS];
     float front[PLAGUE_CLOUD_LAYERS];
@@ -182,17 +203,6 @@ void main() {
 
     // Own dither phase each: they walk the same ray, and a shared offset would put their samples
     // on the same planes and correlate independent fields.
-    float cumulusOn = (u_CloudTierCumulus > 0.5 ? 1.0 : 0.0);
-    float rainOn = (u_CloudTierNimbostratus > 0.5 ? 1.0 : 0.0);
-
-    // The End drops the two weather decks and keeps the sheets. A cumulus needs warm ground to rise
-    // off and a nimbostratus needs rain to drop, and a fair-weather heap over the void reads as a
-    // piece of the Overworld that followed you through the portal. Sheets carry no such claim: they
-    // pass as torn layers of the same medium the sky is made of, and without them the End has no
-    // cloud at all, since the high decks are thin and often not overhead.
-    float weatherDecks = u_WorldBounds.w == 3.0 ? 0.0 : 1.0;
-    cumulusOn *= weatherDecks;
-    rainOn *= weatherDecks;
     if (cumulusOn > 0.0 && stratiform < 1.0) {
         // Faded by how far the sky has turned stratiform, so the convective deck hands over to the
         // sheet by going away rather than by shrinking. Premultiplied, so scaling is a clean

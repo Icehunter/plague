@@ -22,7 +22,7 @@ feature that is off costs nothing because its passes are not in the graph at all
 
 `atmo_transmittance` → `atmo_multiscatter` → `atmo_skyview` → `atmo_aerial`, first in the file
 because nothing before them needs the sky and the resolve does. Each writes one small fixed-size
-table (256 × 64, 32 × 32, 192 × 108, 1088 × 32, all rgba16f) every frame: how much light gets
+table (256 × 64, 32 × 32, 192 × 108, 1088 × 32, all rgba16f): how much light gets
 through from a point in the air to space, what arrives there after more than one bounce, the dome as
 the camera sees it from its own height, and the same march stopped at each screen froxel's depth
 (32 × 32 froxels, 32 depth slices out to twice the render distance, plus a slice of the sky along
@@ -30,6 +30,11 @@ each froxel and one of the frame's transmittance chroma). All lit by the true su
 opposite it; the aerial pass adds the fog drive's mist as a shallow layer. The mappings live in
 `shaders/include/atmo_lut.glsl`, one function per writer/reader pair; a compute reader loads the
 tables as storage images, a fullscreen one samples them. Writers and targets are unconditional.
+The first two passes declare `reuse_when_unchanged`: their output depends only on density, haze,
+ozone, rain and thunder. Fornax skips their kernels when those inputs and resources stay the same,
+but still updates descriptors and keeps sync correct. A shader reload or a new target forces a
+rerun. Sky-view and aerial still run every frame. Sky-view has each workgroup column march its two
+horizon rays once and share them; the pole case and above-horizon rays are unaffected.
 Scattering is the sole atmosphere model: `fog_aerial.glsl` builds
 the same `PlagueFogTerms` from the aerial table and the sky along the ray, so a pixel at the render
 cutoff is the same table read as the sky beside it.
@@ -78,6 +83,9 @@ light they cast agree. Global Minecraft rain and thunder strengths drive weather
 camera precipitation type picks rain or snow. Each march writes paired targets: premultiplied colour
 in `cloudsVolumeCompute` and the first density-bearing ray distance in `cloudsVolumeDistance`, with
 full-resolution equivalents for the highest quality tier.
+Weather, cloud decks, lighting and hemisphere sampling run once per 16 × 16 workgroup. Each
+invocation keeps its own view direction, noise phase and ray samples; a barrier shares the setup
+before any invocation can exit at the edge of the image.
 
 The composite samples the destination pixel's reversed-Z terrain depth, works out its terrain
 distance, and resolves the colour from four fixed diagonal cloud taps. Each tap fetches colour and

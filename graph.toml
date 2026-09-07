@@ -228,6 +228,7 @@ storage = true
 [[pass]]
 name = "atmo_transmittance"
 type = "compute"
+reuse_when_unchanged = { runtime = ["u_AirDensity", "u_AirTurbidity", "u_AirOzone"], globals = ["u_SkyState.x", "u_FrameState.z"] }
 shader = "shaders/compute/atmo_transmittance.comp"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
@@ -237,6 +238,7 @@ outputs = ["atmoTransmittance"]
 [[pass]]
 name = "atmo_multiscatter"
 type = "compute"
+reuse_when_unchanged = { runtime = ["u_AirDensity", "u_AirTurbidity", "u_AirOzone"], globals = ["u_SkyState.x", "u_FrameState.z"] }
 shader = "shaders/compute/atmo_multiscatter.comp"
 local_size = [16, 16]
 dispatch = [1, 1, 1]

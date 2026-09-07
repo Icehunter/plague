@@ -2,8 +2,8 @@
 #define PLAGUE_ATMO_LUT
 
 // The scattering tables: what the air between the eye and the sky does to light, integrated
-// rather than fitted. Three small textures, rewritten every frame by the atmo_* compute
-// passes and sampled by whoever needs the sky in a direction.
+// rather than fitted. The base air tables update only when their declared inputs change; sky-view
+// and aerial update every frame. Either way, readers sample the same storage targets.
 //
 //   atmoTransmittance  what survives from a point in the air to the top of the atmosphere
 //   atmoMultiScatter   light that has bounced more than once before reaching a point, per unit sun
@@ -697,11 +697,15 @@ vec4 plagueAtmoMarch(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec3 
     float muFloor = sin(radians(-PLAGUE_ATMO_HORIZON_FLOOR_DEG));
     vec3 dirTop = up * muTop + horizontal * sqrt(max(0.0, 1.0 - muTop * muTop));
     vec3 dirFloor = up * muFloor + horizontal * sqrt(max(0.0, 1.0 - muFloor * muFloor));
+    float w = 1.0 - smoothstep(muFloor, muTop, mu0);
+    if (w == 1.0) {
+        return plagueAtmoMarchTo(origin, dirFloor, sunDir, sunRadiance, moonRadiance, air,
+                                 plagueAtmoDistanceToTop(r0, muFloor), steps);
+    }
     vec4 top = plagueAtmoMarchTo(origin, dirTop, sunDir, sunRadiance, moonRadiance, air,
                                  plagueAtmoDistanceToTop(r0, muTop), steps);
     vec4 floorSample = plagueAtmoMarchTo(origin, dirFloor, sunDir, sunRadiance, moonRadiance, air,
                                          plagueAtmoDistanceToTop(r0, muFloor), steps);
-    float w = 1.0 - smoothstep(muFloor, muTop, mu0);
     return mix(top, floorSample, w);
 }
 #endif
