@@ -10,11 +10,11 @@ Four manifests, all read by Fornax at load: `pack.toml` (identity), `graph.toml`
 ## Rules
 
 1. **Pass `inputs` are POSITIONAL.** They arrive in the shader as `u_GeomInput0`, `u_GeomInput1`,
-   `u_GeomInput2`… so inserting an entry renumbers every later sampler with no error anywhere — the
-   shader simply samples a different texture. `terrain`'s own comment says it: `builtin.noise` is
+   `u_GeomInput2`… so inserting an entry renumbers every later sampler with no error anywhere: the
+   shader samples a different texture. `terrain`'s own comment says it: `builtin.noise` is
    THIRD and every puddle, ripple, splash and snow-dusting call reads it as `u_GeomInput2`.
    **Append, never insert.**
-2. **Passes execute in declaration order.** Position in the file is semantics, not tidiness.
+2. **Passes execute in declaration order.** Position in the file is meaning, not tidiness.
 3. **A blend-only pass must not name the target it blends into as an input.** That is a same-frame
    read-write hazard; `clouds_composite` and `water_composite` both document the convention.
 4. **Only COMPILE options may appear in `enabled_if`.** A runtime option has no value at graph-build
@@ -67,7 +67,7 @@ enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
 - Inserting an input in the middle of a list "to keep it grouped".
 - A pass gated on an `enabled_if` whose option is runtime, not compile.
 - Adding a category to `blocks.toml` for convenience. Identity buys nothing unless the alternative is
-  genuinely impossible.
+  impossible.
 - Assuming a mipchain pass name and its declared target name are the same string.
 
 ## Checklist
@@ -77,4 +77,4 @@ enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
 - [ ] `enabled_if` references compile options only
 - [ ] New option reachable: listed on a screen, and in `sliders` if ranged
 - [ ] New texture has an `ASSETS.md` row and real PNG bytes (see `.claude/rules/assets.md`)
-- [ ] `tools/check_shaders.sh` run — the pre-commit gate watches `graph.toml` and `screens.toml` too
+- [ ] `tools/check_shaders.sh` run: the pre-commit gate watches `graph.toml` and `screens.toml` too

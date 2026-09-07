@@ -4,31 +4,31 @@ paths: "shaders/**/*.{fsh,vsh,glsl,comp}"
 
 # Shader Standards
 
-Plague ships 7 geometry stages under `shaders/blocks/` (14 files -- each is a `.vsh`/`.fsh`
+Plague ships 7 geometry stages under `shaders/blocks/` (14 files: each is a `.vsh`/`.fsh`
 pair), 28 fullscreen passes under `shaders/post/`,
 4 compute stages under `shaders/compute/`, and 32 shared includes under `shaders/include/`.
 
 ## Rules
 
 1. **Every shader edit is LIVE.** The pack is symlinked into the Minecraft profile, so a write lands
-   in the running install immediately. Batch edits and say explicitly when a set is complete and safe
-   to load. Never ask for an in-game reading mid-edit: a "broken shader" report taken then is a false
-   signal about work that was never finished.
+   in the running install at once. Batch edits and say when a set is complete and safe to load.
+   Never ask for an in-game reading mid-edit: a "broken shader" report taken then is a false signal
+   about work that was never finished.
 2. **A new preprocessor arm needs a `variants_for()` entry in `tools/check_shaders.sh`, in the same
-   change.** An option that is default-off preprocesses its entire feature away, and the script then
-   reports `ok` on a file whose new code never met a compiler. `PLAGUE_SNOW` shipped that way;
-   `terrain.fsh`'s deferred arm — every opaque block in the world — went unchecked for the pack's
+   change.** A default-off option leaves its whole feature out of the build, and the script then
+   reports `ok` on a file whose new code never went through a compiler. `PLAGUE_SNOW` shipped that
+   way; `terrain.fsh`'s deferred arm, every opaque block in the world, went unchecked for the pack's
    whole life. An arm never compiled there is only ever compiled on the user's GPU.
 3. **Same-name `#define` declarations are merged across files and any mismatch is a load error.**
    `SSR_QUALITY` is declared byte-identically in seven files, and the engine reads it and
-   `SSR_WATER_MODE` BY NAME to gate the water pre-pass — those two are a contract with Fornax, not a
+   `SSR_WATER_MODE` BY NAME to gate the water pre-pass: those two are a contract with Fornax, not a
    pack-internal choice. Change one declaration, change all of them character for character.
 4. **A geometry pass gets no `u_PackOptions` block.** A *runtime* option cannot be declared in one:
-   the `#define` is stripped and the identifier is left undefined, which is a hard crash at the first
-   terrain draw. Declare it in a fullscreen shader and bridge it by name (`u_BumpStrength` and
+   the `#define` is stripped and the identifier is left undefined, a hard crash at the first terrain
+   draw. Declare it in a fullscreen shader and bridge it by name (`u_BumpStrength` and
    `u_AOStrength` are the worked example; see the note at the top of `screens.toml`).
 5. **Declaring an option does not make it appear.** It must also be listed on a screen in
-   `screens.toml`, and a ranged runtime option renders as a cycle button unless its name is in that
+   `screens.toml`, and a ranged runtime option draws as a cycle button unless its name is in that
    file's top-level `sliders` array. Both failures are silent.
 6. **Every authored constant carries a provenance comment.** See `.claude/rules/clean-room.md`.
 
@@ -49,12 +49,12 @@ pair), 28 fullscreen passes under `shaders/post/`,
 - **Multi-arm files declare it at the top.** `terrain.fsh` opens by naming its three output shapes
   (`USE_DEFERRED`, `USE_WATER_PREPASS`, neither) and the rule that follows from one compiled file:
   anything referenced outside the `#ifdef` chain must be declared in every arm.
-- **Comments are for what the code cannot say by itself.** One to two lines, stating the one
-  non-obvious fact a reader would otherwise have to work out or get wrong: why a constant has the
-  value it has, what invariant a guard protects, which failure mode this prevents. If a reader can
-  get the answer from the code itself, there is no comment to write. Go past two lines only when a
-  single fact genuinely needs it — a formula, a citation, a number — never for restating history,
-  narrating how a bug was found, or explaining what the code already makes obvious.
+- **Comments are for what the code cannot say by itself.** One to two lines stating the one
+  non-obvious fact a reader would otherwise get wrong: why a constant has the value it has, what
+  invariant a guard protects, which failure mode this prevents. If the code itself answers it, there
+  is no comment to write. Go past two lines only for a single fact that needs it: a formula, a
+  citation, a number. Never to restate history, narrate how a bug was found, or explain what the
+  code already makes obvious.
 
 ## Anti-Patterns
 

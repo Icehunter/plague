@@ -2,41 +2,41 @@
 
 ## Project Overview
 
-Plague is a shaderpack, a player-supplied bundle of shader programs and settings that replaces how
-a Minecraft world is lit and drawn, written for the **Fornax** engine, a Vulkan deferred renderer
+Plague is a shaderpack: a player-supplied bundle of shader programs and settings that replaces how a
+Minecraft world is lit and drawn. It is written for the **Fornax** engine, a Vulkan deferred renderer
 that ships as a Fabric client mod. Fornax hardcodes no pipeline: this pack declares its render
 passes, render targets and player-facing options in TOML, and the engine's graph interpreter walks
-them. Everything visible in game is authored here; the engine only routes.
+them. Everything seen in game is authored here; the engine only routes.
 
 The pack ships under MIT (`Copyright (c) 2026 Ryan Wilson`, see `LICENSE`). Fornax lives in the
 sibling repository `../fornax` and is the only side of the pair that needs a build.
 
-**The visual north star**: physically-motivated light, time of day, real sources, bounces, at the
+**The visual north star**: light that follows physics, time of day, real sources, bounces, at the
 best framerate that allows.
 
 ## Before you write shader code, read `.claude/rules/clean-room.md`
 
-That document is the working protocol for this repository, not background reading. The licence
-landscape it sits in, and what each position allows:
+That document is the working protocol here, not background reading. The licence landscape it sits
+in, and what each position allows:
 
 | Neighbour | Licence | What you may do |
 |---|---|---|
 | **Fornax** | MIT | Read it freely. Same owner, and the ABI this pack speaks to. Dependencies run one way, pack to engine, never the reverse. |
 | **Any other shaderpack** | mostly all-rights-reserved | Read to learn what is possible. Take nothing: not code, not constants, not option names. Reader and writer must be separate contexts. |
-| **The labPBR spec** | a published format spec | Implement it. Its decode thresholds and channel meanings are dictated by the format and are yours to use. **A pack's data authored to spec IS the default look**: roughness controls *what* a metal reflects, never *whether*. |
-| **Published literature** | papers | Cite the paper and implement it. Lottes, Hammon, Cornette–Shanks, GGX, Pope & Fry, Jimenez, Roberts. |
+| **The labPBR spec** | a published format spec | Implement it. The format dictates its decode thresholds and channel meanings, so they are yours to use. **A pack's data authored to spec IS the default look**: roughness controls *what* a metal reflects, never *whether*. |
+| **Published literature** | papers | Cite the paper and implement it. Lottes, Hammon, Cornette-Shanks, GGX, Pope & Fry, Jimenez, Roberts. |
 
 The two rules that bite most often:
 
-1. **A context that has read another shaderpack may not write the implementation.** Reader produces
-   a prose spec with no code, no identifiers and no constants; a separate writer implements from the
-   spec and never opens the reference. Doing both in one context is how statement order gets
-   reproduced.
+1. **A context that has read another shaderpack may not write the implementation.** The reader
+   produces a prose spec with no code, no identifiers and no constants; a separate writer implements
+   from the spec and never opens the reference. Doing both in one context is how statement order
+   gets copied.
 2. **Never name another pack as a source** in code or in a commit message. Not a "ported from"
    note, not a "matches their default" note, not a line-number citation into another tree. Describe
    the mechanism on its own terms instead.
 
-Naming a shader ABI to interoperate with it (`heldBlockLightValue`, `isEyeInWater`, `gbuffers_*`,
+Naming a shader ABI to talk to it (`heldBlockLightValue`, `isEyeInWater`, `gbuffers_*`,
 Fornax's `builtin.*` inputs) is fine and is not what rule 2 is about.
 
 `.claude/rules/clean-room.md` is the protocol in full. It is the authority, not a summary.
@@ -46,15 +46,15 @@ Fornax's `builtin.*` inputs) is fine and is not what rule 2 is about.
 **Follow these steps for EVERY change. No exceptions.**
 
 1. **Check the licence position first.** If the task involves reading any other pack, split reader
-   and writer contexts before a single line is written.
+   and writer contexts before a line is written.
 2. **Read the user's actual option values, not the shader's defaults.** A `#if` means the file you
    are reading may not describe the shader that is running.
 3. **Implement the smallest correct change**, and give every authored constant a provenance comment.
 4. **Register what needs registering.** A new option is invisible until it is on a screen in
-   `screens.toml`. A new pass file is never executed until a `[[pass]]` names it. A new preprocessor
+   `screens.toml`. A new pass file is never run until a `[[pass]]` names it. A new preprocessor
    arm is never compiled until `tools/check_shaders.sh` has a variant for it.
-5. **Verify**: `tools/check_shaders.sh` plus the relevant offline verifier. A look change is not
-   verified by a compile; it needs a picture, and ultimately the owner's own eyes in a client.
+5. **Verify**: `tools/check_shaders.sh` plus the relevant offline verifier. A compile does not
+   verify a look change; that needs a picture, and in the end the owner's own eyes in a client.
 6. **Say explicitly when the edit set is complete.** This pack is live in the user's profile
    (below). Only then is it fair to ask for an in-game reading.
 
@@ -69,16 +69,16 @@ python3 tools/derive_<subsystem>.py # Regenerate a constant table; the script IS
 
 **Only the generators are tracked.** `derive_*.py`, `generate_foam.py` and the `plague_*` modules
 they import are in the repository because shaders cite them as the origin of their constant tables:
-rerun one and you get the shipped numbers. The rest of `tools/` is local: an offline verification
-apparatus that is no use to anyone installing a shaderpack. It is on disk and fully working; it is
-just not part of what this repository publishes.
+rerun one and you get the shipped numbers. The rest of `tools/` is local: offline checks that are no
+use to anyone installing a shaderpack. They are on disk and fully working, just not part of what
+this repository publishes.
 
 There is no CI and no test framework here. `tools/pre-commit` is the gate: it runs the lint, then the
 compile check, whenever a commit touches `shaders/`, `graph.toml`, `screens.toml` or the notices
 files. `glslangValidator` is required (`brew install glslang`); the hook skips cleanly without it.
 Python tooling needs `numpy` (and `Pillow` for renders).
 
-**Never launch Minecraft.** Live verification comes from the user's own sessions: they launch, they
+**Never launch Minecraft.** Live checks come from the user's own sessions: they launch, they
 report. If a task needs in-game evidence, say so and stop rather than launching. **And do not create
 a commit until the owner has run the change locally.**
 
@@ -103,28 +103,27 @@ from `$PLAGUE_CAPTURES` (default `~/plague-captures`). See `tools/captures_dir.p
 Fornax routes geometry, declares targets and uploads matrices. Plague picks projection, filtering,
 curves and colour. If a change needs new *data* to make a look possible, that is an engine change;
 if it needs a different *decision* about existing data, it belongs here. Never ask the engine to
-carry block identity into the fragment stage on the pack's behalf: **no IPBR**. Material properties
+carry block identity into the fragment stage for the pack: **no IPBR**. Material properties
 come from labPBR channels or from the albedo. `blocks.toml` declares exactly one category, water,
-and the full argument for why is written at the top of that file.
+and the full argument for why sits at the top of that file.
 
 ### A green check is not a clearance
 
 Every gate here has a stated blind spot, and reporting a result means repeating it. The compile gate
 proves the arms it was told about compile, not that the feature works, and not that an arm it was
-never told about exists. A lint that matches text catches the text it matches and nothing adjacent
+never told about exists. A lint that matches text catches the text it matches and nothing next
 to it. A verifier that cannot reproduce the photographed bug is testing assumptions, not the shader.
 
 ### Measure, then pick
 
 Sixteen constant-tweak launches failed to converge on the caustics because nobody had rendered the
 thing being tuned. Render it at the user's own live option values and *pick the constant off the
-picture* rather than guessing and shipping. When a fix is guessed, the
-compensation constants added along the way must be deleted once the root cause is found, otherwise
-the real fix looks broken.
+picture* instead of guessing and shipping. When a fix is guessed, the compensation constants added
+along the way must be deleted once the root cause is found, or the real fix looks broken.
 
 ### Fail loudly, and know where it fails silently
 
-Most of this pack's historical bugs are silent: an uncompiled arm, an unregistered option, a
+Most of this pack's bugs are silent: an uncompiled arm, an unregistered option, a
 renumbered positional input, an unreferenced include. `.claude/rules/` lists them by file. When you
 add a mechanism, ask what its silent-failure mode is and write it into the file's own comment:
 one or two lines, stating the failure a reader could not otherwise predict.
@@ -195,7 +194,7 @@ Gitignored working dirs you may see and should not commit: `tools/out/`, `tools/
 
 ### The silent failures, in one list
 
-- **An uncompiled arm.** An option that is default-off preprocesses its whole feature away;
+- **An uncompiled arm.** An option that is default-off strips its whole feature out of the build;
   `check_shaders.sh` reports `ok` on code that never met a compiler. `PLAGUE_SNOW` shipped this way,
   and `terrain.fsh`'s deferred arm (every opaque block in the world) went unchecked for the pack's
   whole life. Add a `variants_for()` entry in the same change.
