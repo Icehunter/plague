@@ -486,6 +486,9 @@ elements = [
     "u_SsrStrength",
     "u_SsrMaxDistance",
     "u_SsrTraceQuality",
+    "<group:Water Recovery>",
+    "PLAGUE_VOXEL_REFLECTIONS",
+    "u_LightReach",
 ]
 
 [screens.end]
@@ -735,8 +738,6 @@ elements = [
     "<group:Water>",
     "PLAGUE_WATER_REFLECTION_DEBUG",
     "PLAGUE_VOXEL_COVERAGE",
-    "PLAGUE_VOXEL_REFLECTIONS",
-    "u_LightReach",
     "PLAGUE_SHORE_DEBUG",
 
     "<group:Parallax>",
@@ -753,10 +754,10 @@ pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "occlusion
 # Prose shown in each option's tooltip, above the mechanical Default/Range/Applies lines.
 [descriptions]
 PLAGUE_VOXEL_REFLECTIONS = """
-Experimental stand-in for weak above-water reflections.
-Reflects solid blocks from a coarse grid around the camera, using one average colour per face with plain sun and sky light.
-Cutout blocks test their alpha against the grid's stand-in sprite. Custom leaf shapes, fine material colour, local glow and small-scale shading are not rebuilt.
-Where the grid has no data the normal fallback is used. Still water and waves take the same path."""
+Recovers missing water reflections from nearby world geometry, including terrain outside the screen.
+Needs Water Surface set to Reflective and Reflections set to Fancy or Fast.
+Voxel Reach and loaded terrain limit coverage; fine geometry and shading can differ from the visible scene.
+Works above water with both still water and waves."""
 PLAGUE_VOXEL_COVERAGE = """
 Test overlay on water, not a reflection.
 Green: hit a solid block. Magenta: cutout or cross block, alpha not tested.
@@ -765,11 +766,11 @@ Cyan: clear all the way to the edge of the grid. This does not prove open sky.
 White: the buffers are missing or do not match.
 Behind Cutouts skips whole cutout cells, to show whether solid ground stands behind them.
 Telling empty apart from not-yet-loaded needs the engine's summary set up correctly.
-Off removes both test passes. The experimental reflection option can ask for the grid on its own."""
+Off removes both test passes. Voxel SSR Recovery asks for the grid on its own."""
 
 u_LightReach = """
-How far the block grid reaches around the camera, in chunks, for coverage and experimental reflections.
-Set 4 to 16 in one-chunk steps to compare coverage. Memory grows with the cube of the width.
+How far the block grid reaches around the camera, in chunks, for water reflection recovery and the coverage overlay.
+Set 1 to 16 in one-chunk steps. Larger values cover more terrain and cost more memory and time.
 The engine may cap this at render distance or at its own detail limit.
 Blocks outside this range are not there to reflect."""
 

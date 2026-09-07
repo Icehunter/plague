@@ -229,12 +229,13 @@ pack.
 A constant that is not generated carries a comment saying why it has the value it has: a paper, a
 measurement, or the render it was tuned against.
 
-### Experimental voxel water fallback
+### Voxel water reflection recovery
 
-`PLAGUE_VOXEL_REFLECTIONS` runs `voxel_water_reflection` between the water SSR trace and the blur,
-at half size. Screen-space geometry stays the detailed source; this fills in where SSR found
-nothing. With the option on, SSR flags its sky guesses with negative confidence so the voxel pass
-can tell sky from a real hit, and the blur puts the sign back when there is no voxel hit. The
+`PLAGUE_VOXEL_REFLECTIONS` defaults On under Reflections and runs `voxel_water_reflection` between
+the water SSR trace and the blur, at half size. It needs reflective water and SSR on. Screen-space
+geometry stays the detailed source; this fills in where SSR found nothing. With the option on, SSR
+flags its sky guesses with negative confidence so the voxel pass can tell sky from a real hit, and
+the blur puts the sign back when there is no voxel hit. The
 target is allocated next to water SSR so the blur's appended input binds even with the option Off,
 which draws and reads nothing.
 
@@ -263,8 +264,8 @@ only on a confirmed hit, so the glitter source stops showing through when on-scr
 the frame. Needs the engine's `glint_occlusion*` PassParams routing.
 
 `PLAGUE_VOXEL_COVERAGE` is a separate switch showing first-surface and behind-cutout tests from the
-same walk. Voxel Diagnostic Reach sets the shared window, 4 to 16 chunks; render distance and
-detail caps still apply.
+same walk. Voxel Reach is a slider under Reflections, 1 to 16 chunks in one-chunk steps, default
+4; render distance and detail caps still apply.
 
 Limits: finite grid, stand-in leaf shapes, no vertex shading, SSAO, POM, weather layering or Nether
 noise, nothing past the second bounce. Cost is unmeasured; no compile check or fixture says how it

@@ -21,7 +21,7 @@ layout(std140) uniform u_PassParams {
     vec3  u_SunDirection;
 };
 
-#define PLAGUE_VOXEL_REFLECTIONS 0 //[0 1] compile "Voxel Water Reflections" {0="Off" 1="Experimental"}
+#define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "Voxel SSR Recovery" {0="Off" 1="On"}
 #define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
 #define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 

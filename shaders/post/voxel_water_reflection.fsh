@@ -2,7 +2,7 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:water_reflection.glsl>
 
-#define PLAGUE_VOXEL_REFLECTIONS 0 //[0 1] compile "Voxel Water Reflections" {0="Off" 1="Experimental"}
+#define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "Voxel SSR Recovery" {0="Off" 1="On"}
 // The stand-in sprite's alpha keeps leaves; see-through texels fall through to the background.
 #define PLAGUE_VOXEL_ALPHA_CUTOUTS
 #define PLAGUE_VOXEL_TEXTURED_FACES

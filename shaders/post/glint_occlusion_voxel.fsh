@@ -2,7 +2,7 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:water_reflection.glsl>
 
-#define PLAGUE_VOXEL_REFLECTIONS 0 //[0 1] compile "Voxel Water Reflections" {0="Off" 1="Experimental"}
+#define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "Voxel SSR Recovery" {0="Off" 1="On"}
 uniform sampler2D u_Input0; // water normal
 uniform sampler2D u_Input1; // water depth
 uniform sampler2D u_Input2; // opaque depth

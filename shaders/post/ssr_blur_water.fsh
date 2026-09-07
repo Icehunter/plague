@@ -29,7 +29,7 @@
 #moj_import <fornax_runtime:water_reflection.glsl>
 
 uniform sampler2D u_Input0; // ssrWaterRaw
-#define PLAGUE_VOXEL_REFLECTIONS 0 //[0 1] compile "Voxel Water Reflections" {0="Off" 1="Experimental"}
+#define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "Voxel SSR Recovery" {0="Off" 1="On"}
 #if PLAGUE_VOXEL_REFLECTIONS != 0
 uniform sampler2D u_Input4; // half-resolution current SSR + voxel fallback
 #endif

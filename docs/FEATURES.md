@@ -78,6 +78,10 @@ covers what the pack does, not the engine under it.
 - Two real tiers: Fancy at full resolution and Fast at half resolution with a joint-bilateral
   upsample. Fast is a quarter of the rays, not a coarser ray. Controls for strength, distance and
   step budget.
+- Voxel SSR Recovery fills missing above-water reflections from nearby world geometry, on by
+  default. Needs reflective water and SSR on. Voxel Reach sets its window: 1 to 16 chunks in
+  one-chunk steps, default 4. Both controls sit under Reflections; the coverage overlay is on
+  Debug.
 
 ## Water
 

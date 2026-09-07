@@ -839,7 +839,7 @@ enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0"
 format = "rgba16f"
 scale = 0.5
 filter = "linear"
-# Keeps the blur's input bindable while Off. Only the experimental pass writes or reads it.
+# Keeps the blur's input bindable while recovery is Off; that shader arm does not sample it.
 enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
 
 [[pass]]
@@ -1253,8 +1253,7 @@ outputs = ["builtin.output"]
 # compute→fullscreen dependency for a pack pass, so ordering it last is what makes the same-frame
 # read deliberately one-frame-old rather than a race.
 
-# Coverage test only: no voxel colour reaches SSR or the water composite.
-# Quarter width and height, so one ray covers sixteen full-size pixels.
+# Shared geometry buffers for water reflection recovery and the separate coverage overlay.
 [targets.voxelOccupancy]
 kind = "buffer"
 enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0"
@@ -1267,7 +1266,7 @@ enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0"
 kind = "buffer"
 enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0"
 
-# Optional baked face UV and tint buffer, allocated only for the experimental reflections.
+# Optional baked face UV and tint buffer for water reflection recovery.
 [targets.voxelFaceTexture]
 kind = "buffer"
 enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0"

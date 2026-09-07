@@ -3,8 +3,8 @@
 #moj_import <fornax_runtime:water_reflection.glsl>
 
 #define PLAGUE_VOXEL_COVERAGE 0 //[0 1 2] compile "Voxel Reflection Coverage" {0="Off" 1="First Surface" 2="Behind Cutouts"}
-// Test radius: four to sixteen chunks, one whole chunk at a time.
-#define u_LightReach 4.0 //[4.0..16.0 step 1.0] runtime "Voxel Diagnostic Reach (Chunks)"
+// The engine may cap this at render distance or at its own detail limit.
+#define u_LightReach 4.0 //[1.0..16.0 step 1.0] runtime "Voxel Reach (Chunks)"
 
 uniform sampler2D u_Input0; // current water surface
 uniform sampler2D u_Input1; // current water depth
