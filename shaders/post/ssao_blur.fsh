@@ -17,14 +17,17 @@ out float fragColor;
 void main() {
     vec2 texelSize = 1.0 / vec2(textureSize(u_Input0, 0));
 
+    // Bilinear pairs [-2,-1] and [0,1], plus [2], reproduce the radius-two box.
+    // ssaoRaw must use linear clamp sampling or these nine taps change the kernel.
+    const float offsets[3] = float[3](-1.5, 0.5, 2.0);
+    const float weights[3] = float[3](2.0, 2.0, 1.0);
     float sum = 0.0;
-    float count = 0.0;
-    for (int x = -SSAO_BLUR_RADIUS; x <= SSAO_BLUR_RADIUS; x++) {
-        for (int y = -SSAO_BLUR_RADIUS; y <= SSAO_BLUR_RADIUS; y++) {
-            sum += texture(u_Input0, texCoord + vec2(x, y) * texelSize).r;
-            count += 1.0;
+    for (int x = 0; x < 3; x++) {
+        for (int y = 0; y < 3; y++) {
+            sum += texture(u_Input0, texCoord + vec2(offsets[x], offsets[y]) * texelSize).r
+                    * weights[x] * weights[y];
         }
     }
-    float blurred = sum / count;
+    float blurred = sum / 25.0; // Five equal source taps on each axis.
     fragColor = blurred;
 }

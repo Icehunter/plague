@@ -23,7 +23,9 @@ vec4 plagueShoreNoiseRepeat(sampler2D tex, vec2 uv);
 #moj_import <fornax_runtime:water_waves.glsl>
 #moj_import <fornax_runtime:shore_spill.glsl>
 
-layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+// 16x16 groups run faster than 32x32 on the shore clipmap's sparse occupancy;
+// graph dispatch doubles the group count on each axis to cover the same area.
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 // Binding order mirrors graph.toml's inputs-then-outputs for this pass exactly: 0 globals (above),
 // 1 waterWaveState, 2 surfaceFluidClipmap (fixed by surface_fluid.glsl's own declaration, which is

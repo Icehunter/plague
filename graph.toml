@@ -269,6 +269,7 @@ outputs = ["atmoAerial"]
 [targets.ssaoRaw]
 format = "r8"
 scale = 1.0
+filter = "linear" # The spatial blur combines adjacent box taps bilinearly.
 
 [targets.ssao]
 format = "r8"
@@ -1115,7 +1116,7 @@ enabled_if = "PLAGUE_SHORE_SPILL != 0 && PLAGUE_WATER_INTERACTION == 1"
 inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "packOptions", "waterWaveB",
           "shoreWetness.history", "builtin.noise"]
 outputs = ["shoreWetness"]
-dispatch = [16, 16, 1]
+dispatch = [32, 32, 1]
 
 [[pass]]
 name = "water_shore_performance"
@@ -1125,7 +1126,7 @@ enabled_if = "PLAGUE_SHORE_SPILL != 0 && PLAGUE_WATER_INTERACTION == 2"
 inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "packOptions", "waterWaveB",
           "shoreWetness.history", "builtin.noise"]
 outputs = ["shoreWetness"]
-dispatch = [8, 8, 1]
+dispatch = [16, 16, 1]
 
 [[pass]]
 name = "water_commit"

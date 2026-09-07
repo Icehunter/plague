@@ -62,6 +62,10 @@ resolve.
 `ssr_trace_fancy` **or** `ssr_trace_fast`, each followed by its own blur, with `ssr_upsample` for the
 half-resolution tier and `ssr_prefilter` building a roughness pyramid.
 
+The AO blur evaluates a five-by-five box using nine weighted bilinear samples. Its `ssaoRaw`
+input is R8 with linear clamp sampling; changing that sampler changes the kernel. The R8 output
+contains only the current frame's AO.
+
 The tier split is the pattern to notice: `ssr_trace_fancy` and `ssr_trace_fast` are two passes with
 mutually exclusive `enabled_if` guards, not one pass with a quality branch. The blur is one shader
 file compiled as two passes at two sizes, because every size-dependent value comes from
@@ -174,11 +178,12 @@ so the chain stays valid.
 output when volumetrics are on), `water_volume_composite_submerged`, then a separated blur:
 `underwater_blur_h` → `underwater_blur_v`.
 
-### 8. Surface simulation: 6 compute passes
+### 8. Surface simulation: 8 compute passes
 
-`water_prepare`, then `water_step_a`/`water_step_b` in a quality or performance variant, then
-`water_commit`. This is a fluid simulation on the water surface, kept in compute because it carries
-state between frames.
+`water_prepare`, then `water_step_a`/`water_step_b` and `water_shore` in a quality or performance
+variant, then `water_commit`. This is a fluid simulation on the water surface, kept in compute
+because it carries state between frames. Shoreline work uses 16×16 workgroups: 32×32 groups cover
+the 512² Quality grid, and 16×16 groups cover the 256² Performance grid.
 
 ### 9. Output: 10 passes
 
