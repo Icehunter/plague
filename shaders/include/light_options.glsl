@@ -1,5 +1,5 @@
 // Every light/ambient-colour option, declared once: gbuffer_resolve.fsh, water_composite.fsh,
-// water_volume_march.fsh and clouds_march.fsh all import this rather than each carrying its own
+// water_volume_march.fsh and clouds_march_volume.comp all import this rather than each carrying its own
 // copy, since the option scanner requires every declaration of a name to be byte-identical across
 // files. Same arrangement, and the same reason, as fog_options.glsl.
 //

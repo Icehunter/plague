@@ -8,8 +8,7 @@
 //
 // The program owns the samplers and hands in every table read: the aerial sample at the fragment,
 // the brightness let through at PLAGUE_FOG_SKY_LIGHT_REACH short of it (the gate's handover), the
-// sky along the ray, and the frame's colour for that light. This file tests no compile option; the
-// program picks this dispatcher under PLAGUE_SKY_MODEL == 1.
+// sky along the ray, and the frame's colour for that light.
 
 #moj_import <fornax_runtime:fog.glsl>
 

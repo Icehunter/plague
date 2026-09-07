@@ -29,9 +29,7 @@
 // Named directly though sky.glsl already pulls it in: the march reads plagueMoonColor and
 // plagueAirEyePos and should say where they come from rather than inherit them transitively.
 #moj_import <fornax_runtime:atmosphere.glsl>
-// Unconditional, same as gbuffer_resolve.fsh: under PLAGUE_SKY_MODEL == 0 the branches below that
-// read it are compiled away, but the include itself (and any PLAGUE_ATMO_READS_* the caller
-// defined before importing this file) must still be present.
+// The caller declares its PLAGUE_ATMO_READS_* hooks before importing this file.
 #moj_import <fornax_runtime:atmo_lut.glsl>
 
 // ------------------------------------------------------------------------------------------------
@@ -453,7 +451,7 @@ vec3 plagueCloudAirTransmittance(float eyeY, float rayUp, float dist) {
  * @param dither          per-pixel 0..1 offset on the first sample, avoiding banded steps
  * @param ambientDome     the sky's cosine-weighted hemisphere average, already graded
  * @param skyAlong        what this ray dissolves into at the render cutoff, already graded by
- *                        atmColorMult and (under the scattering sky) plagueWarmSkyBand
+ *                        atmColorMult and plagueWarmSkyBand
  * @param sunDirTrue      the true sun direction, never the active light: keying off the active
  *                        body would build a noon sky at midnight
  * @param syncedTime      seconds since world start, for the drift
@@ -463,11 +461,7 @@ vec3 plagueCloudAirTransmittance(float eyeY, float rayUp, float dist) {
  * blocks-per-metre compression is deliberately not applied to the air: it fits a 9km altitude
  * ladder into a 384-block build height and says nothing about how much air separates the decks.
  *
- * Low-level entry: the caller has already decided where the sky comes from. The overload below
- * takes a PlagueSkyColors and an atmColorMult instead, and builds these two from the palette:
- * every existing caller (clouds_march.fsh, and clouds_march_volume.comp under
- * PLAGUE_SKY_MODEL == 0) keeps using that one unchanged. clouds_march_volume.comp calls this one
- * directly under PLAGUE_SKY_MODEL == 1, with both read from atmo_lut.glsl instead.
+ * clouds_march_volume.comp supplies both sky colours from atmo_lut.glsl.
  */
 vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, float dither,
                      PlagueCloudDeck deck, vec3 ambientDome, vec3 skyAlong, PlagueLighting lighting,
@@ -847,26 +841,6 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // by it before the mix.
     vec3 rgb = mix(luminance, skyAlong * alpha, airOp);
     return vec4(max(rgb, vec3(0.0)), alpha);
-}
-
-/**
- * The palette overload: builds ambientDome and skyAlong from the palette (plagueSkyHemisphere and
- * plagueGetSky, matching the low-level entry's parameter definitions above), then forwards. Every
- * caller that has not opted into the scattering tables uses this one: clouds_march.fsh always, and
- * clouds_march_volume.comp under PLAGUE_SKY_MODEL == 0. This file tests no compile option itself
- * (an import is spliced before the program's own defines, so a #if here would silently read 0, the
- * same rule atmo_lut.glsl states for itself): the program picks the overload.
- */
-vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, float dither,
-                     PlagueCloudDeck deck, PlagueSkyColors skyColours, PlagueLighting lighting,
-                     vec3 sunDirTrue, float syncedTime, float renderDistance,
-                     vec3 atmColorMult, out float cloudFrontDistance) {
-    vec3 ambientDome = plagueSkyHemisphere(skyColours, skyColours.lightUp);
-    float VdotS = dot(viewDir, sunDirTrue);
-    vec3 skyAlong = plagueGetSky(skyColours, viewDir.y, VdotS, dither, true, false) * atmColorMult;
-    return plagueGetClouds(viewDir, cameraPosAbs, terrainDistance, dither, deck, ambientDome,
-                           skyAlong, lighting, sunDirTrue, syncedTime, renderDistance,
-                           cloudFrontDistance);
 }
 
 /**

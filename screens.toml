@@ -234,10 +234,8 @@ sliders = [
 # convenience. Each one scales a density or a gain the integration already reads, so none of them
 # changes how much work is done -- there is no quality tier hiding in here, and nothing to rebuild.
 #
-# Grouped air / light / dome, because that is the real split. The first three are weather and change
-# how the atmosphere behaves. The next three are the eye and the exposure, and change how what comes
-# out of it is read. The last four are the dome itself -- how the scattering is gathered into a sky.
-# Turning "Air Density" up is a different KIND of act from turning "Sun Intensity" up.
+# Air and sunset controls shape the scattering sky. Sky fill and forward-fog glow retain the
+# shared palette estimates used by ambient lighting, water and translucent geometry.
 [screens.atmosphere]
 title = "Atmosphere"
 elements = [
@@ -260,7 +258,7 @@ elements = [
     "u_SunsetTemp",
     "u_AmbientSkyBleed",
 
-    "<group:Dome>",
+    "<group:Sky Fill>",
     "u_SkyGradient",
     "u_SkyBrightness",
     "u_SkyBiomeTint",
@@ -272,6 +270,8 @@ elements = [
     "u_MoonLibration",
     "u_SunDiscBrightness",
     "u_MoonDiscBrightness",
+
+    "<group:Translucent Fog Glow>",
     "u_SunGlowStrength",
     "u_SunGlowTightness",
     "u_MoonGlowStrength",
@@ -282,7 +282,6 @@ elements = [
 title = "Sky"
 elements = [
     "SKY_PROCEDURAL",
-    "PLAGUE_SKY_MODEL",
 
     "<group:Stars>",
     "PLAGUE_STAR_AMOUNT",
@@ -822,15 +821,16 @@ you move. Skip is the sane setting."""
 
 
 u_SkyBrightness = """
-How bright the sky itself is.
+Brightness of the sky fill used by ambient lighting, water illumination, reflected clouds and \
+translucent particle/banner fog.
 
-Brightness only. The sky's colours stay the same."""
+The sky fill keeps its hue. The visible scattering sky has its own lighting."""
 
 u_SkyBiomeTint = """
-How much each biome's own sky colour tints the sky.
+How much the biome's sky colour tints ambient sky fill, water illumination, reflected clouds \
+and translucent particle/banner fog.
 
-At 0 every biome gets the same sky; higher lets each biome tint it the way vanilla does. It \
-shifts the colour without changing the brightness."""
+At 0 the fill ignores biome tint. Higher values shift its hue while preserving brightness."""
 
 u_SunsetSkyWarmth = """
 How orange the sunset sky gets.
@@ -852,7 +852,7 @@ Low is a deep ember red, around 2000 K is a low sun through thick air, and high 
 at all. The sky and the light share this value, so they always warm toward the same colour."""
 
 u_AmbientSkyBleed = """
-Whether ambient light comes from the whole sky or just the patch straight overhead.
+Whether ambient light samples the whole sky colour estimate or just its overhead colour.
 
 At 1 surfaces are lit by everything above them, so a sunset casts a warm glow across the world. \
 At 0 only the sky directly overhead counts, and sunsets stop colouring the ground."""
@@ -893,17 +893,16 @@ The same, for the moon.
 Dimmer than the sun's by default, so the stars and nebula still show against the night sky."""
 
 u_TwilightSpan = """
-How long sunrise and sunset last.
+How long the added sunrise and sunset warmth lasts.
 
-Higher stretches the golden light and the sunset colours over more real time; lower snaps \
-between day and night quickly. A Minecraft day is only twenty minutes, so at the default a \
-sunset lasts about a minute and a half."""
+Higher spreads the warmth and ambient sky colour transitions across more time. The sun's \
+movement and the atmospheric scattering still follow the game clock."""
 
 u_SkyGradient = """
-How quickly the sky's colour changes from overhead down to the horizon.
+How quickly the ambient sky colour estimate changes from overhead to horizon.
 
-Low blends the two colours across most of the sky. High holds the overhead colour nearly all the \
-way down, keeping the horizon a distinct band."""
+Low spreads the horizon colour through more of the fill. High concentrates it near the horizon. \
+This also affects water illumination, reflected clouds and translucent particle/banner fog."""
 
 u_SunsetBandWidth = """
 How far around the horizon the warm sunset colour reaches.
@@ -918,27 +917,24 @@ Higher keeps the warmth in a thin strip along the horizon. Lower lets it climb t
 the sky, which is most of what makes a sunset feel like one."""
 
 u_SunGlowStrength = """
-How bright the halo around the sun is.
+Strength of the sunward glow in translucent particle and banner fog near the render limit.
 
-It is part of the sky itself, so it still shows with Bloom turned off. 0 removes the halo and \
-leaves just the disc."""
+0 removes this fog glow. The visible sky's sun halo comes from atmospheric scattering."""
 
 u_SunGlowTightness = """
-How far the sun's halo spreads.
+Spread of the sunward glow in translucent particle and banner fog.
 
-High keeps it a tight ring around the disc; low spreads it across much of the sky like haze. A \
-wide halo usually looks best with the strength turned down."""
+High concentrates it around the sun direction; low spreads it across more of the horizon."""
 
 u_MoonGlowStrength = """
-How bright the halo around the moon is.
+Strength of the moonward glow in translucent particle and banner fog near the render limit.
 
-Less glow keeps the night sky darker, which lets the stars and nebula show."""
+0 removes this fog glow. The visible sky's moon halo comes from atmospheric scattering."""
 
 u_MoonGlowTightness = """
-How far the moon's halo spreads.
+Spread of the moonward glow in translucent particle and banner fog.
 
-Tighter than the sun's by default, so it stays a ring instead of washing out the stars around \
-it."""
+High concentrates it around the moon direction; low spreads it across more of the horizon."""
 
 u_AirDensity = """
 How thick the air is. This is the main sunset control.

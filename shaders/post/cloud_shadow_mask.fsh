@@ -30,7 +30,7 @@ uniform sampler2D u_Input0; // builtin.depth (reversed-Z: 0.0 sky, >0.0 geometry
 #define PLAGUE_CLOUD_DETAIL_3D(uvw) vec4(plagueSkyFbm((uvw).xz * 3.0 + (uvw).y, 2))
 #moj_import <fornax_runtime:clouds.glsl>
 
-// Same block clouds_march.fsh declares: u_SunDirection is per-pass, not part of globals, so a
+// u_SunDirection is per-pass, not part of globals, so a
 // fullscreen pass that needs it declares the block itself.
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;

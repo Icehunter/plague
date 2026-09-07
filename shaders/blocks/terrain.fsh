@@ -35,8 +35,6 @@ const float PLAGUE_ATLAS_GHOST_DIST = 32.0;
 // not a pack choice. Every declaring file must match byte-identically.
 #define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
 
-// Byte-identical to gbuffer_resolve.fsh's declaration: a pane's fog is the wall's fog behind it.
-#define PLAGUE_SKY_MODEL 1 //[0 1] compile "Sky Model" {0="Palette" 1="Scattering"}
 #define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 
 // Wave complexity is fixed at compile time; only strength (u_WaveStrength, bridged below) is a runtime scalar.
@@ -1034,11 +1032,6 @@ void main() {
         // would put this pane's veil at a different distance than the wall behind it, a visible seam.
         float renderDistance = u_CameraSkyLight.z > 1.0 ? u_CameraSkyLight.z : max(u_RenderFog.y, 32.0);
 
-        // The same interleaved-gradient noise the sky and the resolve dither with, so the fog and the
-        // sky it converges to break their banding identically rather than crossing patterns.
-        float fogDither = fract(52.9829189
-                * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
-
         // Underwater-only pack-ambient relight: this arm's surface is vanilla's own lightmap, the
         // only one the pack never relights, and the underwater fog floor rises with distance, so a
         // near pane would sit visibly darker than the background behind it without this. Applies the
@@ -1062,7 +1055,6 @@ void main() {
             fragColor.rgb = max(fragColor.rgb, uwRelit);
         }
 
-#if PLAGUE_SKY_MODEL == 1
         // The aerial table alone: a geometry pass has no sky-view sampler to spare, so the sky this
         // pane dissolves into is the table's own sky slice along its froxel (fog_aerial.glsl).
         vec2 fogNdcUv = (v_Clip.xy / v_Clip.z) * 0.5 + 0.5;
@@ -1078,13 +1070,6 @@ void main() {
                                                  u_FogBorderDensity, u_DepthDarkness,
                                                  0.0, 32.0, 32.0, vec3(0.80, 0.87, 0.97),
                                                  vec3(1.0, 1.0, 999.0), fogLighting, vec3(1.0));
-#else
-        PlagueFogTerms fogTerms = plagueFogTerms(v_WorldPos, v_SkyLight, u_CameraSkyLight.x,
-                                                 renderDistance,
-                                                 v_CameraAbs.y, fogDither, fogSky, fogLighting,
-                                                 fogSunDir, u_FogDensity, u_FogBorderDensity,
-                                                 u_DepthDarkness);
-#endif
         // Per-channel vec3, not scalar: underwater tint differs by wavelength (red dies first);
         // above water every channel agrees exactly, so this costs nothing there.
         vec3 fogOpacity = plagueFogOpacity(fogTerms);

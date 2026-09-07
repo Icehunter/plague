@@ -77,13 +77,13 @@ uniform sampler2D u_Input14; // moonNormal, tangent-space relief for the same pr
 // cloudShadowMask, quarter scale. How much sun gets past the cloud: 1.0 full sun, less is shaded.
 uniform sampler2D u_Input15;
 #define CLOUD_SHADOW_MASK u_Input15
-uniform sampler2D u_Input16; // atmoSkyView, the marched dome (atmo_lut.glsl); zero under Palette
+uniform sampler2D u_Input16; // atmoSkyView, the marched dome (atmo_lut.glsl)
 #define ATMO_SKY_VIEW u_Input16
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
     return texture(ATMO_SKY_VIEW, uv);
 }
-uniform sampler2D u_Input17; // atmoAerial, in-scatter and transmittance per screen froxel; zero under Palette
+uniform sampler2D u_Input17; // atmoAerial, in-scatter and transmittance per screen froxel
 #define ATMO_AERIAL u_Input17
 
 vec4 plagueAtmoFetchAerial(vec2 uv) {
@@ -91,16 +91,15 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 }
 
 // Metal allows 16 samplers per fragment function, counting only the ones read.
-// tools/check_metal_pipelines.py counts 14 here under Scattering, 12 under Palette. The debug-only
-// reads below add 2, so Scattering with the views on sits right at the ceiling and any new input to
+// tools/check_metal_pipelines.py counts 14 here. The debug-only reads below add 2,
+// so the views sit right at the ceiling and any new input to
 // this pass has to displace a read. Past the ceiling the pipeline refuses to build, with nothing in
 // the log but a pipeline error.
 //#define PLAGUE_DEBUG_VIEWS //[] compile "Motion and Shadow-Map Debug Views"
 
 // Must follow NOISE_TEX: PLAGUE_CLOUD_NOISE expands inline where clouds.glsl calls it, so an
 // earlier import would name NOISE_TEX before it exists. clouds.glsl also declares
-// CLOUDS_VOLUMETRIC/u_CloudAltitude/u_CloudAmount/u_CloudSpeed/CLOUD_RESOLUTION, byte-identical to
-// clouds_march.fsh (the option scanner merges same-name declarations).
+// CLOUDS_VOLUMETRIC/u_CloudAltitude/u_CloudAmount/u_CloudSpeed/CLOUD_RESOLUTION for every consumer.
 #define PLAGUE_CLOUD_NOISE(uv) texture(NOISE_TEX, uv)
 // The cloud-shadow query here cannot bind a real sampler3D: Vulkan's fullscreen-pipeline
 // reflection step refuses any non-2D/Cube sampler, so only the compute march reads the real 3D
@@ -193,12 +192,6 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 // The ENGINE reads this exact name to cancel vanilla's sky pass (GraphRunner.packOwnsSky). Off:
 // vanilla's sky shows through and this shader discards those fragments.
 #define SKY_PROCEDURAL //[] compile "Procedural Sky"
-
-// Which dome the sky, the reflection probe and the screen-space miss sample: the five-key palette
-// in sky.glsl, or the scattering tables in atmo_lut.glsl. Declared byte-identically in
-// water_environment.fsh. Under Scattering the halo and sunset-band sliders do not reach the dome:
-// the aureole is the aerosol's own forward lobe and the band is the air.
-#define PLAGUE_SKY_MODEL 1 //[0 1] compile "Sky Model" {0="Palette" 1="Scattering"}
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -583,7 +576,6 @@ int debugView = int(u_Param3 + 0.5);
             // marched dome it rides the sun's elevation through twilight (atmo_lut.glsl), so stars
             // wait for the sky to darken rather than for the palette's night factor.
             float nightGate = 1.0;
-#if PLAGUE_SKY_MODEL == 1
             // The tables assume an overhead sun and a Rayleigh atmosphere; the Nether has neither,
             // so an ungated sample paints Overworld daylight through every gap in its ceiling.
             // u_FogColor is vanilla's per-dimension fog tint and stands in until the atmosphere
@@ -610,18 +602,6 @@ int debugView = int(u_Param3 + 0.5);
                 nightGate = plagueAtmoNightGate(sunDirTrue.y);
                 skyOut = max(skyOut + (skyDither - 0.5) / 128.0, vec3(0.0));
             }
-#else
-            // Same two dimensions the scattering arm gates, for the same reason: the palette is an
-            // Overworld sky and neither of these has one.
-            if (u_WorldBounds.w == 2.0) {
-                skyOut = u_FogColor.rgb * atmColorMult;
-            } else if (u_WorldBounds.w == 3.0) {
-                skyOut = plagueEndSky(viewRay, plagueEndSkyLevel()) * atmColorMult;
-            } else {
-                skyOut = plagueGetSky(skyColours, VdotU, VdotS, skyDither, true, false)
-                       * atmColorMult;
-            }
-#endif
 
             // Additive, not blended: stars are emitters seen through the atmosphere, so a bright
             // sky washes them out via the day/night term inside plagueGetStars.
@@ -1286,16 +1266,11 @@ int debugView = int(u_Param3 + 0.5);
     // Same sky the pack paints, sampled once along the mirror direction, celestial disc suppressed.
     // Graded so a reflection miss agrees with the dome it is reflecting.
     vec3 reflDir = reflect(-viewDir, normal);
-#if PLAGUE_SKY_MODEL == 1
     // Nether reflections read vanilla's own fog tint rather than an Overworld daylight table; see
     // the sky branch's own comment on why the table cannot speak for a dimension with no sun.
     vec3 skyMiss = u_WorldBounds.w == 2.0 ? u_FogColor.rgb * atmColorMult
             : u_WorldBounds.w == 3.0 ? plagueEndSky(reflDir, plagueEndSkyLevel()) * atmColorMult
             : plagueAtmoSkyView(reflDir, sunDirTrue, plagueAtmoCameraRadius()).rgb * atmColorMult;
-#else
-    vec3 skyMiss = plagueGetSky(skyColours, reflDir.y, dot(reflDir, sunDirTrue), 0.5,
-                                false, true) * atmColorMult;
-#endif
     // Same night correction the diffuse path takes (skyReflectionLift), applied before the warm
     // pull and the underwater override so every consumer of the sky guess agrees. 1.0 in daylight.
     skyMiss *= skyReflectionLift;
@@ -1623,13 +1598,8 @@ int debugView = int(u_Param3 + 0.5);
         // u_RenderFog.y is the headless fallback, not the primary: it tracks fog attribute
         // distances rather than the chunk grid, so the veil can sit below 1.0 where geometry ends.
         float renderDistance = u_Param2 > 1.0 ? u_Param2 : max(u_RenderFog.y, 32.0);
-        // Same interleaved-gradient noise the sky branch dithers its dome with, so fog and the sky
-        // it converges to break banding identically rather than crossing patterns.
-        float fogDither = fract(52.9829189
-                * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
         // atmColorMult is computed above the sky branch (see there) so the dome and the fog it
         // fades into agree.
-#if PLAGUE_SKY_MODEL == 1
         // The marched air along this pixel's froxel, and the sky it dissolves into, from the tables
         // (fog_aerial.glsl). texCoord is the froxel coordinate: the same NDC the ray came from.
         float fogDist = length(worldPos);
@@ -1676,18 +1646,6 @@ int debugView = int(u_Param3 + 0.5);
                                                  vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
                                                  vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
                                                       plagueChunksToBlocks(u_WaterDarknessDepth)), lighting, atmColorMult);
-#else
-        PlagueFogTerms fogTerms = plagueFogTerms(worldPos, skyLight, u_CameraSkyLight.x,
-                                                 renderDistance, u_CameraAbs.y, fogDither,
-                                                 skyColours, lighting, sunDirTrue,
-                                                 u_FogDensity, u_FogBorderDensity, u_DepthDarkness,
-                                                 plagueChunksToBlocks(u_UnderwaterFogStart),
-                                                 plagueChunksToBlocks(u_WaterDistanceFog),
-                                                 plagueChunksToBlocks(u_WaterDepthFog),
-                                                 vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
-                                                 vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
-                                                      plagueChunksToBlocks(u_WaterDarknessDepth)), atmColorMult);
-#endif
         // No cap on the in-water leg: this fogs the whole eye-to-fragment ray. The water term is
         // the only thing that seals the horizon underwater, since the border curve
         // (d/renderDistance)^16 gives nothing below ~160 blocks.

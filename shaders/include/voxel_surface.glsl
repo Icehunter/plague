@@ -140,11 +140,7 @@ vec3 plagueVoxelSurfaceReflection(PlagueVoxelSurface surface, vec3 viewDir, vec3
             }
         } else if (state==5.0) {
             // Clear as far as the grid goes, no further. Waiting or bad data cannot open sky.
-#if PLAGUE_SKY_MODEL == 1
             incoming = plagueAtmoSkyView(direction,sunDirTrue,plagueAtmoCameraRadius()).rgb;
-#else
-            incoming = plagueGetSky(skyColours,direction.y,dot(direction,sunDirTrue),0.5,false,true);
-#endif
             incoming *= atmColorMult*colours.skyReflectionLift;
         }
         sum += incoming*w; weight += w;

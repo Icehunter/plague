@@ -1,7 +1,6 @@
 #ifndef PLAGUE_VOXEL_REFLECTION_FOG
 #define PLAGUE_VOXEL_REFLECTION_FOG
 
-#define PLAGUE_SKY_MODEL 1 //[0 1] compile "Sky Model" {0="Palette" 1="Scattering"}
 
 // Import before anything else that uses atmo_lut: its include guard would otherwise drop the
 // march functions with no error.
@@ -74,7 +73,6 @@ vec3 plagueVoxelReflectionFog(vec3 radiance, vec3 origin, vec3 hit, float skyLig
     if (distanceBlocks < 1e-4) return radiance;
     vec3 dir = segment / distanceBlocks;
     float rain = clamp(u_SkyState.x, 0.0, 1.0);
-#if PLAGUE_SKY_MODEL == 1
     float thunder = clamp(u_FrameState.z, 0.0, 1.0);
     PlagueFogDrive drive = PLAGUE_FOG_DRIVE(lighting);
     // Same mist drive as the table producer; 1.6 is its conversion to mist scale.
@@ -117,20 +115,6 @@ vec3 plagueVoxelReflectionFog(vec3 radiance, vec3 origin, vec3 hit, float skyLig
             plagueChunksToBlocks(u_WaterDepthFog), vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
             vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
                  plagueChunksToBlocks(u_WaterDarknessDepth)), lighting, atmColorMult);
-#else
-    // Palette fog has its own model; the scattering tables are empty in this mode.
-    PlagueSkyColors skyColours = plagueSkyColors(max(u_SkyColor.rgb, vec3(0.0)), sunDirTrue,
-            lighting.sunVisibility, rain, u_CameraAbs.y);
-    // Same interleaved-gradient dither as the raster fog site.
-    float dither = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
-    PlagueFogTerms terms = plagueFogTermsPath(segment, hit, skyLight, u_CameraSkyLight.x,
-            renderDistance, u_CameraAbs.y + origin.y, dither, skyColours, lighting, sunDirTrue,
-            u_FogDensity, u_FogBorderDensity, u_DepthDarkness,
-            plagueChunksToBlocks(u_UnderwaterFogStart), plagueChunksToBlocks(u_WaterDistanceFog),
-            plagueChunksToBlocks(u_WaterDepthFog), vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
-            vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
-                 plagueChunksToBlocks(u_WaterDarknessDepth)), atmColorMult);
-#endif
     radiance = mix(radiance, terms.atmColor, clamp(terms.atm, 0.0, 1.0));
     radiance = mix(radiance, terms.borderColor, plagueBorderColorWeight(terms.border));
 #endif

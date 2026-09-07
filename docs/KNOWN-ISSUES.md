@@ -21,7 +21,7 @@ notes; what is here is what a reader needs to know the limit exists.
 - **The climate signal snaps at biome borders**, so fog character can change sharply across a line.
 - **Thunder is not its own fog driver.** Heavy weather reads as ordinary rain.
 - **The resolve sits close to Metal's ceiling of 16 live samplers per fragment function**, at 14
-  under the scattering sky and 12 under Palette (`tools/check_metal_pipelines.py` counts them). The
+  (`tools/check_metal_pipelines.py` counts them). The
   `gbuf_consolidate` pass (`graph.toml`, see `docs/PACK-FORMAT.md`) already buys back three slots;
   the motion and raw-shadow-map debug views (`PLAGUE_DEBUG_VIEWS`) are left out of the build either
   way, and the ceiling itself cannot be raised from where this engine plugs in: Blaze3D's bind-group
@@ -30,10 +30,9 @@ notes; what is here is what a reader needs to know the limit exists.
   (`lighting.light` / `plagueMoonColor` in `shaders/include/clouds.glsl`), so a cloud's lit side can
   disagree with the air under it at dusk. A table-lit direct term was tried and turned down by eye:
   clouds under a low deck's horizon went grey where the palette keeps them warm. Open. (A cloud's
-  ambient and its distance fade-to-sky DO read the scattering tables under
-  `PLAGUE_SKY_MODEL == 1`, through the `plagueGetClouds` overload `clouds_march_volume.comp` calls,
-  with the pack's own sunset-band warmth on the fade; only the direct term is still palette-only.
-  `clouds_march.fsh`, the non-live fullscreen fallback, still calls the palette overload every time.)
+  ambient and its distance fade-to-sky DO read the scattering tables through
+  `clouds_march_volume.comp`, with the pack's own sunset-band warmth on the fade;
+  only the direct term is still palette-based.)
 - **The sun disc's own brightness is not on the dome's exposure ladder** (`PLAGUE_ATMO_SKY_GAIN`,
   the twilight adaptation): it is gated off at sunset (`sunSetGate` in `gbuffer_resolve.fsh`) so
   it does not sit bright on a dark sky, but while it is up its brightness is still

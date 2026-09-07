@@ -10,26 +10,23 @@ covers what the pack does, not the engine under it.
 
 ## Sky
 
-- Procedural sky dome, two models behind one option. `Scattering`, the default, marches the air:
+- Procedural sky dome from scattering through the air:
   Rayleigh, aerosol and ozone with multiple scattering, from the camera's own height, into three
   small tables rebuilt every frame. Sunset, twilight blue and the sun's glow around it all fall out
   of that maths, with a gain on the sun's light through twilight standing in for the light metering
-  the pack does not have yet. `Palette` is a nine-colour gradient with sunset band and glare
-  sliders, kept for side-by-side comparison while the scattering dome's brightness is tuned. Water
-  reflections and screen-space misses follow whichever dome is picked. Under `Scattering` the haze
+  the pack does not have yet. Water reflections and screen-space misses sample the same dome. The haze
   on distant terrain, water and glass is marched too: added light and how much light gets through,
   per screen froxel, with the fog drive's morning, night, after-rain and snow mist as a shallow
   layer. The render-edge veil fades into the sky along the same ray. The night-sky gate follows the
-  picked dome; ambient light, cloud lighting, smoke and banner fog read the palette under both
-  settings.
+  scattering dome. Shared palette estimates still supply surface ambient, water illumination,
+  cloud direct lighting, reflection-probe clouds, smoke and banner fog; their controls remain active.
 - Stars, with amount, size, roundness and softness controls.
 - Night nebula (intensity, zoom, amount).
 - Shooting stars (count, speed, frequency).
 - Aurora borealis: a marched curtain with Smooth and Blocky styles, an every-clear-night or
   full-moon-only condition, and detail/size/intensity/quality controls.
 - Sun and moon discs drawn from vanilla's celestials atlas, with their own shading.
-- Ambient light optionally read off the drawn dome, so the sky and what it lights always agree as
-  the sky reddens.
+- Ambient light optionally follows the shared sky colour estimate and its sunset controls.
 
 ## Clouds and fog
 

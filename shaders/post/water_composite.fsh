@@ -54,8 +54,8 @@ uniform sampler2D u_Input9; // waterEnvironment, filtered Plague sky radiance
 uniform sampler2D u_Input10; // moonAlbedo, equirectangular, near side centred
 uniform sampler2D u_Input11; // moonNormal, tangent-space relief for the same projection
 uniform sampler2D u_Input12; // cloudFront: live tier's first-hit cloud distance (0.0 = empty ray)
-uniform sampler2D u_Input13; // atmoSkyView, the marched dome (atmo_lut.glsl); zero under Palette
-uniform sampler2D u_Input14; // atmoAerial, in-scatter and transmittance per screen froxel; zero under Palette
+uniform sampler2D u_Input13; // atmoSkyView, the marched dome (atmo_lut.glsl)
+uniform sampler2D u_Input14; // atmoAerial, in-scatter and transmittance per screen froxel
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
     return texture(u_Input13, uv);
@@ -82,8 +82,6 @@ layout(std140) uniform u_PassParams {
 
 #define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
 
-// Byte-identical to gbuffer_resolve.fsh's declaration: the water's fog is the terrain's fog.
-#define PLAGUE_SKY_MODEL 1 //[0 1] compile "Sky Model" {0="Palette" 1="Scattering"}
 #define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 #define PLAGUE_WATER_REFLECTION_DEBUG 0 //[0 1 2 3 4] compile "Water Reflection View" {0="Off" 1="Roughness" 2="Trace Confidence" 3="Fallback Sky" 4="Source Mix"}
 // Byte-identical to clouds.glsl's declaration: the option scanner merges same-name declarations
@@ -743,17 +741,12 @@ void main() {
         // TRUE sun, never the active light — same rule the sky, clouds and resolve's fog all follow.
         vec3 fogSunDir = dot(u_SkyCelestial.xyz, u_SkyCelestial.xyz) > 1e-6
                 ? normalize(u_SkyCelestial.xyz) : vec3(0.0, 1.0, 0.0);
-        PlagueSkyColors fogSky = plagueSkyColors(max(u_SkyColor.rgb, vec3(0.0)),
-                fogSunDir, lighting.sunVisibility, rainFactor, u_CameraAbs.y);
 
         // u_Param2: the resolve's own anchor, kept identical here to avoid a seam at the shoreline.
         float renderDistance = u_Param2 > 1.0 ? u_Param2 : max(u_RenderFog.y, 32.0);
-        float fogDither = fract(52.9829189
-                * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
 
         // atmColorMult is computed at the top of the pass (see there) so this fog term agrees
         // with the zenith and underwater-exit sky samples above.
-#if PLAGUE_SKY_MODEL == 1
         // The same table reads the resolve makes for the terrain beside this water (fog_aerial.glsl).
         float fogDist = length(worldPos);
         float fogFar = plagueAtmoAerialFar();
@@ -783,18 +776,6 @@ void main() {
         surface = mix(surface, fogTerms.borderColor, plagueBorderColorWeight(fogTerms.border));
         surface = mix(surface, fogTerms.waterColor, clamp(fogTerms.water, 0.0, 1.0));
         surface *= fogTerms.uwTint;
-#else
-        surface = plagueApplyFog(surface, worldPos, skyLight, u_CameraSkyLight.x,
-                                 renderDistance, u_CameraAbs.y,
-                                 fogDither, fogSky, lighting, fogSunDir,
-                                 u_FogDensity, u_FogBorderDensity, u_DepthDarkness,
-                                 plagueChunksToBlocks(u_UnderwaterFogStart),
-                                 plagueChunksToBlocks(u_WaterDistanceFog),
-                                 plagueChunksToBlocks(u_WaterDepthFog),
-                                                 vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
-                                                 vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
-                                                      plagueChunksToBlocks(u_WaterDarknessDepth)), atmColorMult);
-#endif
 
 #if PLAGUE_UNDERWATER
         // Matches the resolve's own far-field water-fog handover exactly (byte-identical logic,

@@ -1,7 +1,11 @@
 #ifndef PLAGUE_SKY
 #define PLAGUE_SKY
 
-// The dome: an authored palette, keyed on the sun's elevation, not computed live from scattering.
+// Shared sky colour estimates for surface ambient, water illumination, reflection-probe clouds
+// and forward particle/banner fog, plus the warmth and weather grading used by the scattering sky.
+// The visible dome and aerial fog use atmo_lut.glsl; these shared estimates remain palette-based.
+//
+// Palette provenance:
 // A pure single-scattering dome measured wrong at the terminator (sunset horizon red-to-blue ratio
 // 1.34, not orange) and switched which body lit the sky on a threshold that fired exactly when the
 // sunset should be strongest. Day and night keys are still SAMPLED from the scattering model below;

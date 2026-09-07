@@ -29,14 +29,14 @@ the camera sees it from its own height, and the same march stopped at each scree
 each froxel and one of the frame's transmittance chroma). All lit by the true sun and the moon
 opposite it; the aerial pass adds the fog drive's mist as a shallow layer. The mappings live in
 `shaders/include/atmo_lut.glsl`, one function per writer/reader pair; a compute reader loads the
-tables as storage images, a fullscreen one samples them. The passes are gated on
-`PLAGUE_SKY_MODEL == 1`; the tables are not, because `resolve`, `water_composite`,
-`water_environment_seed` and `terrain` list them as inputs under either setting, and the
-gate-consistency check refuses a pass that can run while a target it reads does not exist. Under
-`Palette` the tables stay zero and unread; the five-key palette in `sky.glsl` paints the dome and
-the Weibull haze in `fog_model.glsl` fogs the world. Under `Scattering`, `fog_aerial.glsl` builds
+tables as storage images, a fullscreen one samples them. Writers and targets are unconditional.
+Scattering is the sole atmosphere model: `fog_aerial.glsl` builds
 the same `PlagueFogTerms` from the aerial table and the sky along the ray, so a pixel at the render
 cutoff is the same table read as the sky beside it.
+
+`sky.glsl` retains the shared palette estimates used for surface ambient, water illumination,
+reflection-probe clouds and forward particle/banner fog, plus the scattering sky's warmth and
+weather grading. Their controls remain live; removing the alternate dome does not retire them.
 
 ### 1. Geometry: 7 passes
 
@@ -64,8 +64,8 @@ file compiled as two passes at two sizes, because every size-dependent value com
 
 ### 3. The deferred resolve: 1 pass
 
-`resolve` is where the frame is lit: it reads the G-buffer, samples the sky from the sky-view table
-(or the palette, per `PLAGUE_SKY_MODEL`), evaluates the sun, filters shadows, applies ambient and
+`resolve` is where the frame is lit: it reads the G-buffer, samples the sky from the sky-view table,
+evaluates the sun, filters shadows, applies ambient and
 blocklight, composites reflections in, and lays fog over the result. It is by far the largest shader
 in the pack.
 
