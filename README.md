@@ -2,37 +2,36 @@
 
 <img src="docs/icon.png" width="96" height="96" alt="Plague icon" align="left">
 
-Plague is a shaderpack: a description of how a Minecraft world should be lit and drawn. It does not
-render anything itself. It is a folder of GLSL and plain-text TOML that the
-[Fornax](https://github.com/Icehunter/fornax) engine reads and runs: the TOML declares the render
+Plague is a shaderpack: a description of how a Minecraft world should be lit and drawn. It draws
+nothing itself. It is a folder of GLSL and plain-text TOML that the
+[Fornax](https://github.com/Icehunter/fornax) engine reads and runs. The TOML declares the render
 passes, the targets they draw into, the options the player can change, and the settings screen those
 options appear on.
 
-The look it aims for is physically motivated light: time of day, real sources, and bounces, at the
-best framerate that allows. Deferred shading with labPBR materials, screen-space reflections,
-volumetric clouds and water, a procedural sky, and an underwater treatment that models the water
-column rather than tinting the screen blue.
+It aims for physically motivated light: time of day, real sources, and bounces, at the best
+framerate that allows. Deferred shading with labPBR materials, screen-space reflections, volumetric
+clouds and water, a procedural sky, and an underwater treatment that models the water column rather
+than tinting the screen blue.
 
-**The pack format is Fornax's own.** It is not compatible with packs written for other loaders, and
-they are not compatible with it.
+The pack format is Fornax's own. Packs written for other loaders do not work here, and this one does
+not work there.
 
 ## Requirements
 
 - [Fornax](https://github.com/Icehunter/fornax), and everything it requires: Minecraft 26.2,
   Fabric Loader ≥ 0.19.2, Sodium 0.9.1 or 0.9.2, and Java 25 or newer.
-- A GPU that can carry a deferred pipeline with volumetrics. Most settings have a quality tier, and
-  the heaviest features can be turned off individually.
+- A GPU that can run a deferred pipeline with volumetrics. Most settings have a quality tier, and
+  the heaviest features can be turned off one by one.
 
 ## Installing
 
-Put this folder (or a zip of it) in `shaderpacks/` and select it in game. Everything is adjustable
-from the pack's own settings screens; nothing needs editing by hand.
+Put this folder, or a zip of it, in `shaderpacks/` and select it in game. Everything is set from the
+pack's own settings screens; nothing needs editing by hand.
 
 ## What it does
 
-[docs/FEATURES.md](docs/FEATURES.md) lists what currently works, verified against the graph and the
-shader tree rather than from memory. [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md) is the honest other
-half.
+[docs/FEATURES.md](docs/FEATURES.md) lists what works, checked against the graph and the shader tree
+rather than from memory. [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md) lists what does not.
 
 ## How it is built
 
