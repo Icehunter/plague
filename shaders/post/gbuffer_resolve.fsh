@@ -18,22 +18,22 @@
 #moj_import <fornax_runtime:celestials.glsl>
 #moj_import <fornax_runtime:aurora.glsl>
 #moj_import <fornax_runtime:main_lighting.glsl>
-// Imported after sky.glsl: fog colour samples plagueGetSky along the view ray, which is why the
-// render-distance edge disappears rather than hardening. water_composite.fsh imports the same file.
+// After sky.glsl: fog colour calls plagueGetSky along the view ray. water_composite.fsh imports
+// the same file.
 #moj_import <fornax_runtime:fog.glsl>
 #moj_import <fornax_runtime:fog_aerial.glsl>
 #moj_import <fornax_runtime:ocean_caustics.glsl>
 #moj_import <fornax_runtime:end_sky.glsl>
+#moj_import <fornax_runtime:surface_lighting.glsl>
 
-// Draws the fog's own strength instead of the world, to check it against
-// tools/plague_atmo_lut.py. Declared here, not in fog_options.glsl, which terrain.fsh imports and
-// which is built without an options block.
+// Draws fog strength instead of the world, to check against tools/plague_atmo_lut.py. Declared
+// here, not in fog_options.glsl: terrain.fsh imports that and is built with no options block.
 #define u_FogOpacityView 0 //[0 1] runtime "Fog Opacity View" {0="Off" 1="On"}
 
 uniform sampler2D u_Input0; // builtin.gNormal
 #define G_NORMAL u_Input0
-// Consolidated by a "consolidate" pass (graph.toml): one sampler slot instead of three, one
-// array layer per builtin. See docs/PACK-FORMAT.md's "consolidate exists for the sampler budget".
+// A "consolidate" pass (graph.toml) packs three builtins into one sampler slot, one per array
+// layer. See docs/PACK-FORMAT.md, "consolidate exists for the sampler budget".
 uniform sampler2DArray u_Input1; // layer 0 = gAlbedo   (rgb albedo, a = sky light)
                                   // layer 1 = gMaterial (r = smoothness, g = F0, b = porosity/SSS, a = block light)
                                   // layer 2 = gAo       (r = per-texel AO, g = emission,
@@ -65,16 +65,16 @@ uniform sampler2D u_Input10; // builtin.waterDepth. Reversed-Z, 0.0 = no water s
 #define WATER_DEPTH_TEX u_Input10
 uniform sampler2D u_Input11; // causticsTexture
 #define CAUSTICS_TEX u_Input11
-// Aliases sunShadowMap to a plain sampler2D via a different target string (graph.toml):
-// FullscreenPassRunner keys the comparison-sampler branch on the exact string, so this reads raw
-// stored depth where SUN_SHADOW_MAP's sampler2DShadow can only return a pass/fail compare.
+// Aliases sunShadowMap to a plain sampler2D under a second target string (graph.toml):
+// FullscreenPassRunner keys the comparison-sampler branch on that exact string, so this reads raw
+// stored depth where SUN_SHADOW_MAP can only return a pass/fail compare.
 uniform sampler2D u_Input12; // sunShadowMapRaw (raw, non-comparison. Debug only, see DBG_SHADOW_QUERY_3)
 #define SUN_SHADOW_MAP_RAW u_Input12
 uniform sampler2D u_Input13; // moonAlbedo, equirectangular, near side centred
 #define MOON_ALBEDO u_Input13
 uniform sampler2D u_Input14; // moonNormal, tangent-space relief for the same projection
 #define MOON_NORMAL u_Input14
-// cloudShadowMask, quarter scale. Ground cloud-shadow TRANSMITTANCE: 1.0 full sun, lower is shaded.
+// cloudShadowMask, quarter scale. How much sun gets past the cloud: 1.0 full sun, less is shaded.
 uniform sampler2D u_Input15;
 #define CLOUD_SHADOW_MASK u_Input15
 uniform sampler2D u_Input16; // atmoSkyView, the marched dome (atmo_lut.glsl); zero under Palette
@@ -90,26 +90,20 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
     return texture(ATMO_AERIAL, uv);
 }
 
-// Metal allows 16 samplers per fragment function, counting only the ones the code reads, and this
-// pass sits at that ceiling. The two reads below serve debug views alone, so they are compiled out
-// unless asked for: live under Scattering, the dome table is the seventeenth sampler and the
-// resolve pipeline refuses to build, with nothing in the game log but a pipeline error. Metal
-// compiler count: 15 live samplers as shipped, 16 with these views under Palette, 17 under
-// Scattering. Enable only with PLAGUE_SKY_MODEL at Palette. Any further input to this pass must
-// displace a remaining read.
+// Metal allows 16 samplers per fragment function, counting only the ones read, and this pass sits
+// at that ceiling: 15 as shipped, 16 with these debug-only reads under Palette, 17 under
+// Scattering, where the pipeline then refuses to build with nothing in the log but a pipeline
+// error. Enable only with PLAGUE_SKY_MODEL at Palette. Any new input must displace a read.
 //#define PLAGUE_DEBUG_VIEWS //[] compile "Motion and Shadow-Map Debug Views"
 
-// Must come after NOISE_TEX's declaration: PLAGUE_CLOUD_NOISE expands inline wherever clouds.glsl
-// calls it, so an earlier import would reference NOISE_TEX before it exists. Also declares
+// Must follow NOISE_TEX: PLAGUE_CLOUD_NOISE expands inline where clouds.glsl calls it, so an
+// earlier import would name NOISE_TEX before it exists. clouds.glsl also declares
 // CLOUDS_VOLUMETRIC/u_CloudAltitude/u_CloudAmount/u_CloudSpeed/CLOUD_RESOLUTION, byte-identical to
-// clouds_march.fsh's own copy (the option scanner merges same-name declarations).
+// clouds_march.fsh (the option scanner merges same-name declarations).
 #define PLAGUE_CLOUD_NOISE(uv) texture(NOISE_TEX, uv)
-// This pass's cloud-shadow query (plagueCloudDensityCoarse, below) cannot bind a real sampler3D:
-// Vulkan's fullscreen-pipeline shader-reflection step refuses any non-2D/Cube sampler outright, so
-// only the compute-based direct-view march samples the real 3D volumes. This uses the same ALU
-// approximation as the region field (plagueSkyFbm), folding height into the 2D coordinate for some
-// vertical variance. A lower-fidelity stand-in for a shadow query, never a bare constant; see
-// clouds.glsl's own noise-hook contract doc for why.
+// The cloud-shadow query here cannot bind a real sampler3D: Vulkan's fullscreen-pipeline
+// reflection step refuses any non-2D/Cube sampler, so only the compute march reads the real 3D
+// volumes. This folds height into a 2D plagueSkyFbm instead: a rough stand-in, not a constant.
 #define PLAGUE_CLOUD_NOISE_3D(uvw) vec4(plagueSkyFbm((uvw).xz + (uvw).y, 4))
 #define PLAGUE_CLOUD_DETAIL_3D(uvw) vec4(plagueSkyFbm((uvw).xz * 3.0 + (uvw).y, 2))
 #moj_import <fornax_runtime:clouds.glsl>
@@ -124,17 +118,15 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 #define DBG_AO          7
 #define DBG_BLOCK_LIGHT 8
 #define DBG_RT_SHADOW  12
-// Appended last: GBufferDebugView.java is a lockstep enum, and inserting mid-list would shift
-// every later ordinal out from under every shader's hardcoded branch numbers.
+// Appended last: GBufferDebugView.java is a lockstep enum, so inserting mid-list shifts every
+// later ordinal out from under each shader's branch numbers.
 //
-// Number carrier, not a visual: fragColor is read back at the crosshair by
-// EnvSpecularRatioReadback.java (Fornax), and on-screen appearance is meaningless. Deep branch:
-// dispatches after the material/lighting decode, not in the early G-buffer-read block above,
-// since its inputs don't exist yet there. Same two caveats apply to every DBG_ENV_*/DBG_CONDUCTOR_*
-// ordinal below.
+// Number carrier, not a picture: EnvSpecularRatioReadback.java (Fornax) reads fragColor back at
+// the crosshair. Deep branch: it dispatches after the material/lighting decode, since its inputs
+// do not exist in the early G-buffer block. Both caveats hold for every DBG_ENV_*/DBG_CONDUCTOR_*
+// below.
 #define DBG_ENV_SPEC_RATIO 21
-// Every term the ratio above is built from, split across ordinals since one vec4 cannot hold
-// them all; see each branch below for what it packs.
+// The terms the ratio is built from, split across ordinals since one vec4 cannot hold them all.
 #define DBG_ENV_DECOMP_SKY 22
 #define DBG_ENV_DECOMP_MIX 23
 #define DBG_ENV_DECOMP_MAT 24
@@ -142,20 +134,18 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 #define DBG_ENV_DECOMP_AO 26
 #define DBG_ENV_DECOMP_RESIDUAL 27
 
-// gAlbedo's raw byte and v_RawTint at runtime, measured rather than assumed. Split across two
-// ordinals: seven raw numbers do not fit two vec4s, and 29 needs terrain.fsh's cooperation
-// (u_AlbedoIdentityDebug) while 28 does not.
+// gAlbedo's raw byte and v_RawTint at runtime. Split across two ordinals: seven numbers do not fit
+// two vec4s, and 29 needs terrain.fsh's u_AlbedoIdentityDebug while 28 does not.
 #define DBG_ALBEDO_WRITE_VS_READ 28
 #define DBG_ALBEDO_IDENTITY_INPUTS 29
 
-// Number carrier, deep branch (see DBG_ENV_SPEC_RATIO above). Reads the opaque-terrain-while-
-// submerged branch (gated on fragSubmerged, not on the water surface mesh), so point the
-// crosshair at submerged seabed/terrain. Reads 0,0,0,0 if not underwater-eligible when selected.
+// Number carrier, deep branch (see DBG_ENV_SPEC_RATIO). Reads the submerged-terrain branch, gated
+// on fragSubmerged and not on the water mesh, so aim the crosshair at submerged ground. Reads
+// 0,0,0,0 otherwise.
 #define DBG_UW_CLOSURE 30
 
-// Number carrier, deep branch (see DBG_ENV_SPEC_RATIO above): these three don't exist as values
-// until the SHADOWS block's visibility()/ndotl/worldPos/sunDir are computed. Point the crosshair
-// at the fragment under investigation.
+// Number carrier, deep branch (see DBG_ENV_SPEC_RATIO): these three do not exist until the SHADOWS
+// block computes visibility()/ndotl/worldPos/sunDir. Aim the crosshair at the fragment in question.
 #define DBG_SHADOW_QUERY_1 31
 #define DBG_SHADOW_QUERY_2 32
 #define DBG_SHADOW_QUERY_3 33
@@ -164,10 +154,10 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 // (caster absent from the map) from "read-side" (caster present, addressed wrong) in one look.
 #define DBG_SHADOW_MAP_VIEW 40
 
-// Seven number-carrier ordinals walking one pixel's specular chain end to end (decoded F0,
-// split-sum energy, mirror content, wide content and its trust, the post-cut environment term,
-// the direct sun term, the final HDR value). Ids 68-74 continue GBufferDebugView's shaderId range
-// (64-67 are the water-shaft views). Same number-carrier/deep-branch caveats as DBG_ENV_SPEC_RATIO.
+// Seven number-carrier ordinals walking one pixel's specular chain: decoded F0, split-sum energy,
+// mirror content, wide content and its trust, the environment term, the direct sun term, the final
+// HDR value. Ids 68-74 continue GBufferDebugView's shaderId range (64-67 are the water shafts).
+// Same caveats as DBG_ENV_SPEC_RATIO.
 #define DBG_CONDUCTOR_F0 68
 #define DBG_CONDUCTOR_ENERGY 69
 #define DBG_CONDUCTOR_MIRROR 70
@@ -209,36 +199,21 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 // the aureole is the aerosol's own forward lobe and the band is the air.
 #define PLAGUE_SKY_MODEL 1 //[0 1] compile "Sky Model" {0="Palette" 1="Scattering"}
 
-// Zenith-direction sample of the pack's own sky function, evaluated directly rather than through a
-// LUT: cheaper and exact for the single direction ambient needs.
-#define SKY_AMBIENT //[] compile "Ambient From Sky"
-// How far sky-sampled ambient and the guessed-sky reflection content pull toward a sunlit-ground
-// bounce hue. Luminance-preserving and sun-gated at both sites.
-#define u_AmbientBounceWarmth 0.35 //[0.0..1.0 step 0.05] runtime "Ground Bounce Warmth"
-const vec3 PLAGUE_GROUND_BOUNCE_TINT = vec3(1.30, 1.00, 0.62);
-
-// For the Physical model (CUSTOM_LIGHT_COLORS off). Raising it cools torchlight toward daylight.
-#define u_BlockLightTemp 2200.0 //[1500.0..8000.0 step 100.0] runtime "Block Light Temperature"
-
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
     float u_Param2;
     float u_Param3;
-    // Preferred over u_SkyCelestial: populated for every pack, whereas the globals sky block only
-    // means anything once a pack owns the sky.
-    //
-    // xyz is the active light (sun by day, moon once it sets) — right for shading, wrong for
-    // asking "is it day" (the moon at midnight sits where the sun sits at noon). w carries the
-    // TRUE sun elevation, positive only while the sun is genuinely up.
+    // Preferred over u_SkyCelestial: filled for every pack, where the globals sky block means
+    // something only once a pack owns the sky. xyz is the active light (sun by day, moon once it
+    // sets): right for shading, wrong for "is it day", since the moon at midnight sits where the
+    // noon sun does. w is the TRUE sun elevation, positive only while the sun is up.
     vec4  u_SunDirection;
 
-    // This frame's sun and phase-indexed moon sprite rects {u0, v0, u1, v1} in builtin.celestials.
-    // Minecraft 26.2 stores each moon phase as its own atlas sprite, so a disc pass cannot compute
-    // its sub-region itself; the engine hands it over via CelestialSprites.
-    //
-    // Widens this block from 32 to 64 bytes; legal, since the engine always binds the full
-    // u_PassParams buffer regardless of how much a given shader's block covers. Zero-rect when the
-    // atlas has never been captured, guarded at the draw site.
+    // This frame's sun and moon sprite rects {u0, v0, u1, v1} in builtin.celestials. Minecraft 26.2
+    // gives each moon phase its own atlas sprite, so a disc pass cannot work out the sub-region
+    // itself; the engine hands it over via CelestialSprites. Widening this block to 64 bytes is
+    // legal: the engine binds the whole u_PassParams buffer whatever a shader's block covers.
+    // Zero-rect when the atlas was never captured, guarded at the draw site.
     vec4  u_SunSpriteRect;
     vec4  u_MoonSpriteRect;
 };
@@ -265,27 +240,23 @@ out vec4 fragColor;
 
 #ifdef SHADOWS
 // Sun visibility at a camera-relative world position, 1.0 lit, 0.0 fully shadowed. The shadow map
-// is written with a radial distortion (u_ShadowMapParams.x) that must be matched on read or every
-// off-centre sample lands on the wrong texel, failing as acne rather than anything structural.
+// is written with a radial distortion (u_ShadowMapParams.x) that must be matched on read, or every
+// off-centre sample lands on the wrong texel and shows up as acne.
 //
-// Kept inline, not shared through shadow.glsl: extracting this into a thin wrapper over
-// plagueSunVisibilityAt once turned every lit surface black with no provable logic difference
-// found by static tracing — suspected cause is a sampler2DShadow passed across a function-parameter
-// boundary, a known rough edge in some GLSL->SPIR-V lowering. Verify in a running client, not just
-// check_shaders.sh, before re-attempting.
+// Trap: moving this into shadow.glsl as a wrapper turned every lit surface black. Suspected cause
+// is a sampler2DShadow crossing a function-parameter boundary, a rough edge in some GLSL->SPIR-V
+// lowering. Check in a running client, not just check_shaders.sh, before trying again.
 
-// Point-symmetric golden-angle (Vogel) disk PCF, radius ~ (i/N)^p with p and per-count disk radius
-// fitted against a committed behaviour fixture (tools/verify_shadow_filter.py re-checks on every
-// run). Vogel 1979. Each sample taken as a symmetric +/-offset pair, halving shot noise for the
-// same tap budget. Reads SUN_SHADOW_MAP as a global rather than a parameter, for the same reason this
-// function is kept inline above.
+// Golden-angle (Vogel) disk PCF, radius ~ (i/N)^p, with p and the per-count radius fitted against a
+// committed fixture (tools/verify_shadow_filter.py re-checks it). Vogel 1979. Each sample is a
+// +/-offset pair, halving noise for the same taps. Reads SUN_SHADOW_MAP as a global, for the same
+// reason this function is kept inline.
 
 // radius_i = diskRadius * (i / SHADOW_SAMPLES)^p. Fitted jointly across all four sample counts.
 const float PLAGUE_SHADOW_RADIAL_EXPONENT = 1.266505;
 
 // Disk outer radius per sample count, in (u_ShadowSoftness / SHADOW_RESOLUTION) texel units.
-// Growing with N is expected: more rings need to reach further out to reproduce the same profile
-// width with fewer discretization artifacts near the disk edge.
+// Growing with N is expected: more rings reach further out for the same profile width.
 #if SHADOW_SAMPLES == 2
 const float PLAGUE_SHADOW_DISK_RADIUS = 1.358320;
 #elif SHADOW_SAMPLES == 4
@@ -301,17 +272,17 @@ const float PLAGUE_SHADOW_GOLDEN_ANGLE = 2.39996323;
 
 const float PLAGUE_SHADOW_TWO_PI = 6.28318531;
 
-// Wider than the sun-disc penumbra: a caster occludes the sky dome broadly, and the ambient
-// darkening needs a low-frequency signal or the sharp per-pixel visibility's noise blotches it.
+// Wider than the sun-disc penumbra: a caster blocks the sky dome broadly, and the fill-light
+// darkening needs a smooth signal or the sharp per-pixel visibility blotches it.
 const float PLAGUE_SHADOW_AMBIENT_BROADEN = 4.0;
 
 // Overcast rain is a larger, softer light source, so the penumbra widens with the square of rain
 // intensity (matched to the fixture's recorded full-rain d-scale).
 const float PLAGUE_SHADOW_RAIN_WIDEN_SCALE = 3.0;
 
-// temporalNoise rigidly rotates the whole disk per frame (interleaved gradient noise advanced by
-// the golden-ratio fraction, Jimenez 2014), so the rotation equidistributes across the circle over
-// many frames (Weyl equidistribution) — the condition the disk radii above were fitted under.
+// temporalNoise rotates the whole disk each frame (interleaved gradient noise stepped by the
+// golden-ratio fraction, Jimenez 2014), so the rotation spreads evenly around the circle over many
+// frames (Weyl equidistribution): the condition the radii above were fitted under.
 float plagueSunVisibilityFiltered(vec2 shadowUv, float refDepth, float texelScale,
                                   float temporalNoise, float rainFactor) {
     float rainScale = 1.0 + (PLAGUE_SHADOW_RAIN_WIDEN_SCALE - 1.0) * rainFactor * rainFactor;
@@ -335,17 +306,15 @@ float plagueSunVisibilityFiltered(vec2 shadowUv, float refDepth, float texelScal
 
 float sunVisibilityAt(vec3 worldPos, vec3 normal, vec3 sunDir, float rainFactorForShadow,
                       float radiusScale) {
-    // Offset along the surface normal before projecting. Depth bias alone cannot fix acne on
-    // surfaces near-parallel to the light: the required bias there approaches infinity, whereas a
-    // normal offset stays bounded and scales naturally with texel size.
+    // Offset along the normal before projecting. Depth bias alone cannot fix acne on surfaces
+    // near-parallel to the light: the bias needed there runs to infinity, where a normal offset
+    // stays bounded and scales with texel size.
     float slope = 1.0 - abs(dot(normal, sunDir));
     vec3 biased = worldPos + normal * (0.05 + 0.35 * slope);
 
-    // Added on top of the normal offset, not replacing it: the normal offset's effect on the
-    // compared depth is proportional to dot(normal, sunDir), which goes to zero at grazing
-    // incidence — exactly where slope above maximizes the world-space offset but its depth-axis
-    // effect collapses to nothing. sunDir is unit length, so this term is angle-immune and closes
-    // that gap without touching the normal offset's footprint-scaling job.
+    // On top of the normal offset, not instead of it: that offset moves the compared depth by
+    // dot(normal, sunDir), which goes to zero at grazing angles, exactly where slope above is
+    // largest. sunDir is unit length, so this term does not depend on angle and covers the gap.
     biased += sunDir * 0.05;
 
     vec4 lightClip = u_SunViewProj * vec4(biased, 1.0);
@@ -371,8 +340,8 @@ float sunVisibilityAt(vec3 worldPos, vec3 normal, vec3 sunDir, float rainFactorF
     const float goldenRatioFrac = 0.61803398875;
     float temporalNoise = fract(gradientNoise + goldenRatioFrac * mod(u_FrameState.x, 4096.0));
 
-    // Divides by the declared resolution, not a literal 2048.0: the map really does resize per
-    // SHADOW_RESOLUTION, and a hardcoded constant would detach softness from texel size at 1024/4096.
+    // Divides by SHADOW_RESOLUTION, not a literal 2048.0: the map does resize, and a constant
+    // would detach softness from texel size at 1024/4096.
     float texelScale = (u_ShadowSoftness / float(SHADOW_RESOLUTION)) * radiusScale;
 
     return plagueSunVisibilityFiltered(shadowUv, refDepth, texelScale, temporalNoise,
@@ -385,7 +354,7 @@ float sunVisibility(vec3 worldPos, vec3 normal, vec3 sunDir, float rainFactorFor
 
 #if WATER_CAUSTICS
 // One-tap visibility for water-volume samples. Unlike sunVisibility(), a position outside the
-// covered shadow volume reads dark rather than inventing sunlight with no occlusion evidence.
+// covered shadow volume reads dark rather than inventing sunlight.
 float plagueWaterSunVisibility(vec3 worldPos, vec3 sunDir) {
     vec3 biased = worldPos + sunDir * 0.08;
     vec4 lightClip = u_SunViewProj * vec4(biased, 1.0);
@@ -404,18 +373,14 @@ float plagueWaterSunVisibility(vec3 worldPos, vec3 sunDir) {
 #endif
 
 #if PLAGUE_UNDERWATER && WATER_SUN_TINT
-// Per-channel multiplier turning caustic focus (`pattern`, 0 = unfocused, 1 = full focus) into a
-// sun-colour tint: wavelength-dependent Beer-Lambert absorption along the in-water path (red
-// attenuates fastest, blue slowest — Mobley 1994 ch. 3; Pope & Fry 1997 absorption spectrum).
-//
-// Two additive terms per channel: GLOW grows as pattern^0.75 across the whole range (weak
-// convergence still gathers light before tight focus); CORE stays zero until a per-channel
-// threshold (blue lowest, red highest, matching blue's longer attenuation length) then grows as
-// (pattern - threshold)^~1.75 — exponent above 1 keeps the join smooth, not kinked.
-//
-// Absolute levels (including the above-1 blue peak) are the calibration that restores the caustic
-// swing this pack's display pipeline would otherwise compress, fitted by
-// tools/fit_uw_sun_tint_parity.py against the committed fixture.
+// Turns caustic focus (`pattern`, 0 unfocused, 1 full focus) into a sun-colour tint: Beer-Lambert
+// absorption along the in-water path, red dying fastest and blue slowest (Mobley 1994 ch. 3; Pope
+// & Fry 1997 absorption spectrum). Two terms per channel: GLOW grows as pattern^0.75 over the
+// whole range, since weak focus still gathers light; CORE stays at zero until a per-channel
+// threshold (blue lowest, red highest, matching blue's longer reach) then grows as
+// (pattern - threshold)^~1.75, the exponent above 1 keeping the join smooth. The levels, blue's
+// above-1 peak included, restore the caustic swing this pack's display pipeline would otherwise
+// squash; fitted by tools/fit_uw_sun_tint_parity.py against the committed fixture.
 const float PLAGUE_UW_SUN_GLOW_EXPONENT = 0.75;
 const vec3 PLAGUE_UW_SUN_GLOW_AMPLITUDE = vec3(0.1422373, 0.23921368, 0.51084074);
 
@@ -437,7 +402,7 @@ vec3 plagueUnderwaterSunTint(float pattern) {
 
 void main() {
     // Reversed-Z: the buffer clears to 0.0 = far, so depth zero means nothing was drawn here. Let
-    // vanilla's own sky show through rather than painting over it when this pack does not own the sky.
+    // vanilla's sky show through rather than painting over it when this pack does not own the sky.
     float depth = texture(G_DEPTH, texCoord).r;
 
     vec4 normalSample = texture(G_NORMAL, texCoord);
@@ -471,17 +436,16 @@ int debugView = int(u_Param3 + 0.5);
             return;
         }
         if (debugView == DBG_SHADOW_MAP_VIEW) {
-            // texCoord is the shadow map's own UV: this is the light's view, not the camera's, so a
-            // caster's silhouette here will not line up with where it sits on screen anywhere else.
+            // texCoord is the shadow map's own UV: this is the light's view, so a caster's outline
+            // here does not line up with where it sits on screen.
             //
-            // No linearization needed: ShadowCamera projects orthographically (setOrtho), so the raw
-            // stored value already varies linearly. Forward-Z, clear = 1.0.
+            // No linearization: ShadowCamera is orthographic (setOrtho), so the stored value is
+            // already linear. Forward-Z, clear = 1.0.
             //
-            // Remapped for legibility: real geometry measures into roughly the bottom fifth of the
-            // stored range (SHADOW_MAP_VIEW_OCCUPIED, empirical — retune if ShadowCamera.java's
-            // depthHalfExtent changes) while the clear sentinel sits at the top; a naive grayscale
-            // ramp crushes every real caster near-black. The clear sentinel gets its own synthetic
-            // colour so "nothing rasterized" can't be misread as "far geometry".
+            // Remapped to be readable: real geometry measures into about the bottom fifth of the
+            // range (SHADOW_MAP_VIEW_OCCUPIED, measured; retune if ShadowCamera.java's
+            // depthHalfExtent changes), and a plain ramp would crush every caster near black. The
+            // clear value gets its own colour so "nothing drawn" cannot read as "far geometry".
 #ifdef SHADOWS
             const float SHADOW_MAP_VIEW_OCCUPIED = 0.2;
             const vec3 SHADOW_MAP_VIEW_CLEAR_COLOR = vec3(1.0, 0.0, 0.7);
@@ -515,19 +479,16 @@ int debugView = int(u_Param3 + 0.5);
     // ground light under it can never disagree about the time of day.
     float rainFactor = clamp(u_SkyState.x, 0.0, 1.0);
 
-    // u_SunDirection.xyz is the active light (sun by day, moon once it sets), which at midnight
-    // reads as "sun overhead" if used to decide day/night. u_SunDirection.w is the TRUE sun's
-    // elevation regardless of which body is lighting the scene, so it answers "is it day".
+    // u_SunDirection.xyz is the active light, which reads as "sun overhead" at midnight. .w is the
+    // true sun elevation, so it answers "is it day".
     float trueSunHeight = u_SunDirection.w;
     // Below the horizon the sun contributes nothing, with a soft edge so dusk is not a hard switch.
     float dayFactor = smoothstep(-0.08, 0.08, trueSunHeight);
 
-    // u_SkyColor.rgb is populated for every pack (Fornax's SkyProbe reads it off the camera's
-    // environment probe), unlike u_SkyCelestial which needs sky ownership. Clamped since vanilla's
-    // sky colour goes near-zero in a thunderstorm and pow() of a negative is NaN.
-    //
-    // Built unconditionally from this file's runtime options regardless of which model
-    // CUSTOM_LIGHT_COLORS selects: downstream consumers read .light/.ambient unconditionally.
+    // u_SkyColor.rgb is filled for every pack (Fornax's SkyProbe), unlike u_SkyCelestial, which
+    // needs sky ownership. Clamped: vanilla's sky colour nears zero in a thunderstorm and pow() of
+    // a negative is NaN. Built whatever CUSTOM_LIGHT_COLORS selects, since callers read
+    // .light/.ambient either way.
     PlagueCustomPalette palette = PlagueCustomPalette(
             u_AtmPaletteNoonExponent, u_AtmPaletteNoonBrightness,
             vec3(u_AtmPaletteSunsetTintR, u_AtmPaletteSunsetTintG, u_AtmPaletteSunsetTintB),
@@ -557,9 +518,8 @@ int debugView = int(u_Param3 + 0.5);
     float plagueSunFactor = lighting.sunFactor;
     float plagueNightFactor = lighting.nightFactor;
 
-    // Computed before the sky branch, which returns before PLAGUE_FOG's block runs, so the dome,
-    // the haze and the fog border all grade off one shared value. Every consumer of plagueGetSky
-    // in this file reads this, not a local copy.
+    // Computed before the sky branch, which returns before the fog block runs, so the dome, the
+    // haze and the fog border all grade off one value. Every plagueGetSky caller here reads it.
     vec3 atmColorMult = vec3(1.0);
 #ifdef ATM_COLOR_MULTS
     atmColorMult = plagueAtmColorMult(lighting.noonFactor, lighting.sunVisibility2,
@@ -575,18 +535,17 @@ int debugView = int(u_Param3 + 0.5);
     // SKY_PROCEDURAL the engine cancels vanilla's sky pass and this paints the dome in its place.
     if (depth <= 0.0) {
 #ifdef SKY_PROCEDURAL
-        // Unprojects at a far-but-finite depth (0.0001, reversed-Z) rather than the true far plane
-        // (0.0, degenerate — posH.w is 0 there). Unprojecting near the eye instead of far amplifies
-        // Minecraft's view-bob translation (which lives in the projection matrix, not the
-        // model-view) into a large spurious rotation of the reconstructed ray; far-but-finite keeps
-        // that translation negligible against the distance, leaving only the real ~0.25 degree bob.
-        // Same constant as motion_fill.fsh's SKY_PROXY_DEPTH for the identical problem.
+        // Unprojects at a far but finite depth (0.0001, reversed-Z), not the true far plane (0.0,
+        // where posH.w is 0). Unprojecting near the eye would turn Minecraft's view-bob translation
+        // (it rides in the projection matrix) into a large false rotation of the ray; far keeps
+        // that translation small against the distance, leaving the real ~0.25 degree bob. Same
+        // constant as motion_fill.fsh's SKY_PROXY_DEPTH.
         vec4 skyClip = vec4(texCoord * 2.0 - 1.0, 0.0001, 1.0);
         vec4 skyWorldH = u_InvProjModelView * skyClip;
         vec3 viewRay = normalize(skyWorldH.xyz / skyWorldH.w);
 
         // Against the true sun, not the active light: the warm band and glare stay on the sun's
-        // side of the sky even after the moon takes over lighting duty.
+        // side of the sky after the moon takes over.
         float skyDither = fract(52.9829189
                 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
 
@@ -594,9 +553,8 @@ int debugView = int(u_Param3 + 0.5);
         vec3 auroraTerm = vec3(0.0);
 
 #if PLAGUE_UNDERWATER
-        // A submerged no-hit ray is a water ray of maximum length, not a sky ray to paint over
-        // afterward: it takes the water path directly rather than computing and discarding the
-        // dome/stars/nebula/discs/aurora.
+        // A submerged no-hit ray is a water ray at full length, not a sky ray to paint over: it
+        // takes the water path instead of building and throwing away the dome and everything on it.
         if (u_WaterState.x > 0.5) {
             float uwRenDis = u_Param2 > 1.0 ? u_Param2 : max(u_RenderFog.y, 32.0);
             // Same darkening the geometry and closed-volume veils take; all three sites must agree
@@ -618,35 +576,31 @@ int debugView = int(u_Param3 + 0.5);
             float VdotU = viewRay.y;
             float VdotS = dot(viewRay, sunDirTrue);
 
-            // Graded so the dome agrees with the aerial haze and border fog it fades into; all
-            // three read the same atmColorMult. Additive stars/nebula/discs/aurora below are
-            // separate light sources, not haze, and stay ungraded.
-            // How much of the additive night sky shows: under the marched dome, gated on the sun's
-            // elevation through twilight (atmo_lut.glsl), so stars wait for the sky to go dark
-            // rather than for the palette's night factor.
+            // Graded so the dome agrees with the haze and border fog it fades into; all three read
+            // atmColorMult. The additive stars/nebula/discs/aurora below are light sources, not
+            // haze, and stay ungraded. nightGate is how much of that night sky shows: under the
+            // marched dome it rides the sun's elevation through twilight (atmo_lut.glsl), so stars
+            // wait for the sky to darken rather than for the palette's night factor.
             float nightGate = 1.0;
 #if PLAGUE_SKY_MODEL == 1
-            // The tables assume an overhead sun and a Rayleigh atmosphere, neither of which the
-            // Nether has, so an ungated sample paints Overworld daylight through every gap in its
-            // own ceiling. u_FogColor is vanilla's own per-dimension fog tint, already correct for
-            // wherever the camera is, and stands in until the atmosphere carries a real per-
-            // dimension aerosol profile. No stars either: nightGate drops to 0.
+            // The tables assume an overhead sun and a Rayleigh atmosphere; the Nether has neither,
+            // so an ungated sample paints Overworld daylight through every gap in its ceiling.
+            // u_FogColor is vanilla's per-dimension fog tint and stands in until the atmosphere
+            // carries a real per-dimension aerosol profile. No stars either: nightGate goes to 0.
             if (u_WorldBounds.w == 2.0) {
                 skyOut = u_FogColor.rgb * atmColorMult;
                 nightGate = 0.0;
             } else if (u_WorldBounds.w == 3.0) {
-                // The End lights itself; see end_sky.glsl. No stars from the Overworld's own
-                // night term either: its clock is frozen here, so nightGate would hold one value
-                // for ever.
+                // The End lights itself; see end_sky.glsl. No stars either: its clock is frozen, so
+                // nightGate would hold one value for ever.
                 skyOut = plagueEndSky(viewRay, plagueEndSkyLevel()) * atmColorMult;
                 nightGate = 0.0;
                 skyOut = max(skyOut + (skyDither - 0.5) / 128.0, vec3(0.0));
             } else {
-                // One table read, dithered as plagueGetSky is: a smooth gradient is where banding
-                // shows first. Warmed by the pack's own sunset band (sky.glsl) before atmColorMult:
-                // a clear physical sky is white well before it is dark, since the reddened sunlight
-                // that colours it is confined to a shrinking band near the sun, not spread across
-                // the dome the way the palette's authored band was.
+                // One table read, dithered like plagueGetSky: a smooth gradient is where banding
+                // shows first. Warmed by the pack's sunset band (sky.glsl) before atmColorMult: a
+                // clear physical sky goes white well before it goes dark, since the reddened light
+                // that colours it sits in a shrinking band near the sun.
                 vec3 skyPhysical = plagueAtmoSkyView(viewRay, sunDirTrue, plagueAtmoCameraRadius()).rgb;
                 skyPhysical = plagueWarmSkyBand(skyPhysical, VdotU, VdotS, sunDirTrue.y);
                 skyPhysical = plagueStormDarkenSky(skyPhysical, VdotU, VdotS, sunDirTrue.y,
@@ -677,16 +631,12 @@ int debugView = int(u_Param3 + 0.5);
                                      invNoonFactor * invNoonFactor,
                                      plagueSunVisibility, 1.0 - rainFactor, u_SunriseColor.w) * nightGate;
 
-            // Own coords (sphereness 0.75, not the star field's 0.5); additive order vs. stars
-            // doesn't matter.
+            // Own coords (sphereness 0.75, not the star field's 0.5); order against stars is free.
             if (u_WorldBounds.w == 3.0) {
-                // The End's own cloud. Everything the Overworld one gates on is dead here: night
-                // never comes, it never rains, and the clock does not move. What it rides instead
-                // is the same path length the sky itself does, so the cloud is thickest where the
-                // medium is thickest and the two read as one thing rather than as a picture hung
-                // in front of a backdrop.
-                //
-                // Its cores burn the violet pair rather than oxygen's green; see nebula.glsl.
+                // The End's own cloud. Every gate the Overworld one uses is dead here: no night, no
+                // rain, no clock. It rides the same path length the sky does, so it is thickest
+                // where the medium is and the two read as one thing. Its cores burn the violet
+                // pair, not oxygen's green; see nebula.glsl.
                 float endDepth = plagueEndPathLength(clamp(viewRay.y, -1.0, 1.0));
                 float endFullDepth = PLAGUE_END_REACH / PLAGUE_END_SLAB_HALF;
                 float endVisible = clamp(endDepth / endFullDepth, 0.0, 1.0);
@@ -703,10 +653,9 @@ int debugView = int(u_Param3 + 0.5);
                                                u_SunriseColor.w) * nightGate;
             }
 
-            // Reuses starCoord so meteors travel the same projected plane as the stars. moon phase
-            // index (u_SkyCelestial.w): a new moon lets more of them through. u_WorldClock.x/.y
-            // (world-clock, /time-set-aware) pick tonight's pattern, passed separately, never
-            // summed; see plagueGetShootingStars's own doc.
+            // Reuses starCoord so meteors travel the stars' own plane. u_SkyCelestial.w is the moon
+            // phase: a new moon lets more through. u_WorldClock.x/.y pick tonight's pattern and are
+            // passed separately, never summed; see plagueGetShootingStars.
             skyOut += plagueGetShootingStars(starCoord, VdotU, VdotS, syncedTime,
                                              u_WorldClock.x, u_WorldClock.y,
                                              invNoonFactor * invNoonFactor, plagueSunVisibility,
@@ -714,26 +663,21 @@ int debugView = int(u_Param3 + 0.5);
 
             // --- Sun and moon discs -------------------------------------------------------------
             //
-            // Drawn from the real celestials atlas, not procedural blobs, so a resource pack's own
-            // sun/moon art keeps working. SKY_PROCEDURAL cancels vanilla's own draw of these.
-            //
-            // Moon visibility is driven from the moon's actual elevation (-trueSunDir), not just
-            // nightFactor, so the atlas moon stays present whenever it's geometrically above the
-            // horizon rather than vanishing on a stale time driver.
+            // Drawn from the real celestials atlas, so a resource pack's own sun and moon art keeps
+            // working. SKY_PROCEDURAL cancels vanilla's own draw of these. Moon visibility rides
+            // the moon's own elevation (-trueSunDir), not nightFactor, so it stays up whenever it
+            // is above the horizon.
             float plagueMoonDiscGlow = smoothstep(-0.03, 0.08, -sunDirTrue.y)
                                       * (1.0 - plagueSunVisibility);
-            // Same radiances the world is lit by, so the disc and its shadows can never disagree
-            // about colour, and it reddens through sunset because its light does. plagueSunColor's
-            // own transmittance is clamped at the horizon (atmosphere.glsl), by design, since below
-            // it the ray has hit the planet and reddening it further is meaningless, so nothing
-            // upstream ever dims the disc once it sets, and it sits at full brightness on the water
-            // after the sky around it has gone dark. Faded out over the same 0.833 degrees (34
-            // arcmin horizontal refraction plus the sun's own 16 arcmin radius) that define sunset:
-            // the last sliver above a level horizon is where the real sun visually disappears.
+            // Same radiances the world is lit by, so the disc and its shadows agree about colour
+            // and it reddens through sunset. plagueSunColor clamps its own light loss at the
+            // horizon (atmosphere.glsl), so nothing upstream dims the disc once it sets and it
+            // would sit at full brightness on the water after the sky went dark. Faded out over the
+            // 0.833 degrees that define sunset: 34 arcmin of horizontal refraction plus the sun's
+            // own 16 arcmin radius.
             vec3 discEyePos = plagueAirEyePos(u_CameraAbs.y);
-            // Nothing in the sky in the End. Its clock is frozen, so the sun sits at one fixed
-            // angle for ever and the gate below would hold it permanently open on a disc vanilla
-            // does not draw there.
+            // Nothing in the sky in the End: the clock is frozen, so the gate below would hold open
+            // for ever on a disc vanilla never draws there.
             float dimensionDiscGate = u_WorldBounds.w == 3.0 ? 0.0 : 1.0;
             float sunSetGate = smoothstep(-0.014535, 0.0, sunDirTrue.y) * dimensionDiscGate;
             skyOut += plagueCelestialDiscs(viewRay, sunDirTrue, u_SkyCelestial.w,
@@ -747,12 +691,12 @@ int debugView = int(u_Param3 + 0.5);
             // Marches the flattened view ray, so it's the only sky element with a real cost curve;
             // gated to zero for daylight, rain, and anything but a full moon by default.
             if (u_WorldBounds.w == 3.0) {
-                // Curtains reach higher here than an aurora does. An aurora sits in a shell above
-                // you and thins toward the zenith; these fronts are in the same medium you are
-                // standing in, so they run most of the way up the sky.
+                // Curtains reach higher here than an aurora. An aurora sits in a shell overhead and
+                // thins toward the zenith; these fronts are in the same medium the camera is in, so
+                // they run most of the way up the sky.
                 float stormVisible = clamp(VdotU / max(u_EndStormReach, 0.05), 0.0, 1.0);
-                // The storm sits over the middle island. Fly out and it falls behind, on top of
-                // the dimming the whole sky already gets out there.
+                // The storm sits over the middle island. Out in the outer islands it falls behind,
+                // on top of the dimming the whole sky gets there.
                 float endStormPlace = mix(1.0, 1.0 - clamp(u_EndOuterStormFade, 0.0, 1.0),
                                           plagueEndOuterFactor());
                 PlagueCurtainTuning endStorm = PlagueCurtainTuning(
@@ -777,18 +721,16 @@ int debugView = int(u_Param3 + 0.5);
         fragColor = vec4(skyOut, 1.0);
 #endif
 #else
-        // Pack does not own the sky: keep vanilla's, as before.
+        // Pack does not own the sky: keep vanilla's.
         discard;
 #endif
         return;
     }
 
-    // gAlbedo holds a display-encoded byte: terrain/entities/block_entities each decode their raw
-    // texture sample, multiply by vertex colour/tint/shade, then re-encode before writing (see
-    // terrain.fsh's `rawAlbedo` — `decode(tex*k) != decode(tex)*k` for sRGB, so multiplying in
-    // display space first is wrong). This is the one place that recovers the true linear
-    // reflectance every computation below needs; gMaterial/gAo/gNormal and .a (sky light, not
-    // colour) are plain data and must not be decoded.
+    // gAlbedo holds a display-encoded byte: the geometry stages decode their texture sample,
+    // multiply by vertex colour/tint/shade, then re-encode (decode(tex*k) != decode(tex)*k for
+    // sRGB). This is the one place that recovers linear reflectance. gMaterial/gAo/gNormal and .a
+    // (sky light, not colour) are plain data and must not be decoded.
     vec3 albedo    = plagueSrgbToLinear(albedoSample.rgb);
     float skyLight = albedoSample.a;
 
@@ -806,14 +748,12 @@ int debugView = int(u_Param3 + 0.5);
     // Minecraft's own light-level precision.
     float blockLight = texture(G_BUF, vec3(texCoord, 1.0)).a;
 
-    // Normalised 0..1 emitter luminance: gAo is RGBA8_UNORM, so the scale (PLAGUE_EMISSION_MAGNITUDE)
-    // is applied downstream in plagueEmittedRadiance instead, where the nonlinear saturation ramp
-    // needs the normalised value rather than an already-scaled one.
+    // Emitter luminance, 0..1: gAo is RGBA8_UNORM, so PLAGUE_EMISSION_MAGNITUDE is applied later in
+    // plagueEmittedRadiance, whose saturation ramp needs the unscaled value.
     float emitterLum = texture(G_BUF, vec3(texCoord, 2.0)).g;   // gAo.g
 
-    // NOTE: vanilla's lightmap is no longer sampled for lighting; block light uses this pack's own
-    // fitted curve and colour (main_lighting.glsl). sampleLightmap() is kept for the engine's binding
-    // but unused today.
+    // Block light uses this pack's own curve and colour (main_lighting.glsl), not vanilla's
+    // lightmap. sampleLightmap() is unused, kept for the engine's binding.
 
     // Per-texel AO (labPBR _n blue) darkens indirect light only: applying it to direct sun would
     // double-darken surfaces the sun can plainly see.
@@ -828,8 +768,8 @@ int debugView = int(u_Param3 + 0.5);
     ao *= texture(SSAO_TEX, texCoord).r;
 #endif
 
-    // Outside the shadow block: the specular term below needs worldPos regardless of whether
-    // SHADOWS is compiled in. Verified with glslangValidator in both configurations.
+    // Outside the shadow block: the specular term below needs worldPos whether or not SHADOWS is
+    // compiled in.
     vec4 clip = vec4(texCoord * 2.0 - 1.0, depth, 1.0);
     vec4 worldH = u_InvProjModelView * clip;
     vec3 worldPos = worldH.xyz / worldH.w;
@@ -848,9 +788,8 @@ int debugView = int(u_Param3 + 0.5);
             uwSurfWorldY = u_CameraAbs.y + uwSurfPos.y;
         }
     }
-    // Consumed by sunColour; identity on every dry path. Declared here (not just in the caustic
-    // block) so the SHADOWS-off build — which compiles the whole builder out — keeps this as a
-    // no-op rather than undefined.
+    // Consumed by sunColour; identity on every dry path. Declared here, not in the caustic block,
+    // so the SHADOWS-off build, which leaves the whole builder out, keeps it defined.
     vec3 uwSunTint = vec3(1.0);
     // Added to the lit scene before fog; 0 on every dry/gated path.
     float uwWeb = 0.0;
@@ -860,22 +799,18 @@ int debugView = int(u_Param3 + 0.5);
     // white without touching the body.
     float uwWebHot = 0.0;
 
-    // Submerged: from in the water, everything closer than the surface (or any ray crossing none)
-    // is in the volume; from dry air, everything beyond the surface is. Both arms additionally
-    // require the fragment to sit below the crossing (the dry-land pin below): "the ray crossed a
-    // water surface" is not "the fragment is under water" — a ray crossing an inlet or wave crest
-    // can carry on to dry terrain above the waterline.
+    // Submerged: from in the water, everything nearer than the surface is in the volume; from dry
+    // air, everything past it. Both arms also require the fragment below the crossing, since a ray
+    // crossing an inlet or a wave crest can carry on to dry terrain above the waterline.
     float uwFragDist = length(worldPos);
     float uwDirY = worldPos.y / max(uwFragDist, 1e-4);
     float uwFragWorldY = u_CameraAbs.y + worldPos.y;
-    // Dry-eye classification uses the real surface crossing on this pixel (reconstructed from
-    // waterDepth above), deliberately independent of u_WaterState.z: that global is scanned only in
-    // the camera's column, so it misses neighbouring water a standing-on-island camera can't see.
+    // The dry-eye test uses this pixel's own surface crossing, not u_WaterState.z: that global is
+    // scanned in the camera's column alone, so it misses water beside an island camera.
     //
-    // uwNearWaterlineFallback below covers the case the translucent prepass legitimately misses a
-    // surface at the bobbing waterline (uwSurfDist stuck at its 1e9 sentinel): bounded to the
-    // camera-column altitude near the waterline, not an unbounded direction test, which would
-    // misclassify dry caves below sea level as underwater.
+    // uwNearWaterlineFallback covers the prepass missing a surface at the bobbing waterline
+    // (uwSurfDist stuck at 1e9). Bounded to camera altitude near the waterline, not a bare
+    // direction test, which would read dry caves below sea level as underwater.
     bool uwHasSubmergedSurfaceCrossing = uwSurfDist < 1e8 && uwSurfDist < uwFragDist
             && uwFragWorldY < uwSurfWorldY;
     bool uwNearWaterlineFallback = abs(u_CameraAbs.y - u_WaterState.z) <= 0.35 && uwDirY < -1e-4;
@@ -886,15 +821,14 @@ int debugView = int(u_Param3 + 0.5);
 #endif
 
 #ifdef SHADOWS
-    // Queried unconditionally, not gated behind ndotl > 0.0: that gate is harmless for the diffuse
-    // term (N.L already zeroes it) but wrong for specular/ambient/cloud-shadow/water-glitter, which
-    // all read a self-shadowed slope as fully lit regardless of true occlusion. Faded separately
-    // where there's no sky access below, so an indoor fragment isn't double-darkened.
+    // Queried always, not behind ndotl > 0.0: that gate is harmless for the diffuse term (N.L
+    // zeroes it anyway) but wrong for specular, fill light, cloud shadow and water glitter, which
+    // would all read a self-shadowed slope as fully lit.
     //
     // The acne offset must ride the geometric surface, not the bumped normal: a normal-mapped
-    // groove would wobble the projected sample point per texel and paint patchy occlusion
-    // following the texture. Screen-space derivatives of the reconstructed position give the true
-    // face plane; falls back to the shading normal where the cross product degenerates (depth edges).
+    // groove would wobble the sample point per texel and paint occlusion that follows the texture.
+    // Screen derivatives of the position give the true face plane, falling back to the shading
+    // normal where the cross product degenerates.
     vec3 shadowGeomNormal = cross(dFdx(worldPos), dFdy(worldPos));
     float shadowGeomLen = length(shadowGeomNormal);
     shadowGeomNormal = shadowGeomLen > 1e-6 ? shadowGeomNormal / shadowGeomLen : normal;
@@ -902,16 +836,14 @@ int debugView = int(u_Param3 + 0.5);
         shadowGeomNormal = -shadowGeomNormal;
     }
     float visibility = sunVisibility(worldPos, shadowGeomNormal, sunDir, rainFactor);
-    // Queried at PLAGUE_SHADOW_AMBIENT_BROADEN times the filter radius; the guessed-sky
-    // desaturation below rides this field at every slider position, and the sharp per-pixel
-    // visibility's noise would paint ink patches on any surface whose appearance is the
-    // reflection chain.
+    // Queried at PLAGUE_SHADOW_AMBIENT_BROADEN times the filter radius: the sky guess below rides
+    // this at every slider position, and sharp per-pixel visibility would paint ink patches on any
+    // surface made of reflections.
     float ambientVisibility = sunVisibilityAt(worldPos, shadowGeomNormal, sunDir, rainFactor,
                                               PLAGUE_SHADOW_AMBIENT_BROADEN);
 
-    // A read-only, debug-branch-local mirror of sunVisibilityAt's bias/projection math, not a
-    // call into it: touching that function once already shipped a black-screen regression (see its
-    // own comment above).
+    // A local copy of sunVisibilityAt's bias and projection maths, not a call into it; see that
+    // function's own trap note above.
     if (debugView == DBG_SHADOW_QUERY_1) {
         fragColor = vec4(sunDir, ndotl);
         return;
@@ -932,18 +864,17 @@ int debugView = int(u_Param3 + 0.5);
             fragColor = vec4(dbgShadowUv, dbgInRange ? 1.0 : 0.0, visibility);
             return;
         }
-        // DBG_SHADOW_QUERY_3: the actual stored depth at dbgShadowUv, read through SUN_SHADOW_MAP_RAW as a
-        // plain sampler2D: SUN_SHADOW_MAP's sampler2DShadow can only return a pass/fail compare, never
-        // the raw texel. Clamped UV means this is only meaningful when QUERY_2's inRange was 1.0.
+        // DBG_SHADOW_QUERY_3: the stored depth at dbgShadowUv, read through SUN_SHADOW_MAP_RAW,
+        // since SUN_SHADOW_MAP can only return a pass/fail compare. The clamped UV means this only
+        // means anything when QUERY_2's inRange was 1.0.
 #ifdef PLAGUE_DEBUG_VIEWS
         ivec2 dbgShadowTexel = ivec2(clamp(dbgShadowUv, 0.0, 1.0) * vec2(textureSize(SUN_SHADOW_MAP_RAW, 0)));
         float dbgStoredDepth = texelFetch(SUN_SHADOW_MAP_RAW, dbgShadowTexel, 0).r;
 #else
         float dbgStoredDepth = 0.0;
 #endif
-        // Red = the depth this query compares (the raw light-clip z, the write side stores it
-        // unscaled), blue = what the map actually holds there; green intentionally empty. Matching
-        // red/blue means the comparison would pass.
+        // Red = the depth this query compares, blue = what the map holds there, green empty.
+        // Matching red and blue means the comparison would pass.
         fragColor = vec4(dbgRawDepth, 0.0, dbgStoredDepth, 0.0);
         return;
     }
@@ -954,37 +885,31 @@ int debugView = int(u_Param3 + 0.5);
     float fadeStart = u_ShadowDistance * 0.75;
     visibility = mix(visibility, 1.0,
                      clamp((shadowDist - fadeStart) / max(u_ShadowDistance - fadeStart, 1e-4), 0.0, 1.0));
-    // Real moonlight is roughly a millionth of sunlight, so shadows from a low moon should read as
-    // a suggestion, not a noon-hard edge. Faded rather than switched so the sun-to-moon handoff at
-    // dusk doesn't snap.
+    // Real moonlight is about a millionth of sunlight, so a low moon's shadows should be a hint,
+    // not a hard edge. Faded, not switched, so the sun-to-moon handoff does not snap.
     float casterStrength = mix(0.18, 1.0, dayFactor);
-    // skyLight (vanilla's sky lightmap) attenuates one level per water block and hits zero by ~15
-    // blocks down, which would discard the shadow map's result entirely underwater even though the
-    // map itself is correct. Below the surface, use the same transmission curve the rest of the
-    // underwater arm gates on (exp(-d/24)) instead — that answers "how much sun reaches this
-    // fragment", where the lightmap answers "how many blocks of medium is it behind".
+    // skyLight drops one level per water block and is zero by ~15 blocks down, which would throw
+    // away a correct shadow map underwater. Below the surface the underwater arm's own curve
+    // (exp(-d/24)) is used instead: it answers how much sun reaches the fragment, where the
+    // lightmap answers how much medium sits in front of it.
     //
-    // max(), not a replacement: above water and near the surface the lightmap stays in charge.
-    // Keyed on the fragment's own depth, not camera submersion, so a seabed seen from a boat still
-    // gets its shadows.
+    // max(), not a swap: near the surface the lightmap stays in charge. Keyed on the fragment's
+    // own depth, not the camera's, so a seabed seen from a boat still gets shadows.
     float shadowFragAltitude = u_CameraAbs.y + worldPos.y;
     float shadowSubmergedDepth = max(u_WaterState.z - shadowFragAltitude, 0.0);
     float shadowSkyGate = shadowSubmergedDepth > 0.0
             ? max(skyLight, exp(-shadowSubmergedDepth / 24.0))
             : skyLight;
-    // Clamped: GLSL mix() extrapolates past its endpoint, and an unclamped strength above 1.0
-    // drives `shadow` negative across the deep half of every penumbra, which then subtracts light
-    // instead of removing it. Above 1.0 belongs to the uniform end-stage shadowFade, never to
-    // extrapolation here.
+    // Clamped: mix() extrapolates, and a strength above 1.0 drives `shadow` negative across the
+    // deep half of every penumbra, subtracting light instead of removing it. Above 1.0 belongs to
+    // shadowFade at the end, never here.
     float shadow = mix(1.0, visibility,
                        clamp(u_ShadowStrength, 0.0, 1.0) * shadowSkyGate * casterStrength)
                  * pomShadow;
 
-    // A separate query from sunVisibility() above: the sun shadow map only knows about opaque
-    // terrain, never the cloud volume, so this multiplies in as its own factor.
-    //
-    // Computed in shaders/post/cloud_shadow_mask.fsh at quarter scale, not here: it has no detail
-    // finer than a cloud cell but cost hundreds of hash evaluations per lit fragment inline.
+    // Separate from sunVisibility(): the shadow map knows only opaque terrain, never the cloud
+    // volume, so this multiplies in on its own. Computed in cloud_shadow_mask.fsh at quarter
+    // scale, since it has no detail finer than a cloud cell and cost hundreds of hashes here.
     float cloudShadow = 1.0;
 #if CLOUD_SHADOWS && CLOUDS_VOLUMETRIC
     cloudShadow = clamp(texture(CLOUD_SHADOW_MASK, texCoord).r, 0.0, 1.0);
@@ -994,81 +919,58 @@ int debugView = int(u_Param3 + 0.5);
 #if PLAGUE_UNDERWATER
     // --- Submerged sunlight: the sun's own in-water leg ----------------------------------------
     //
-    // Direct sunlight reaching a submerged fragment is coloured by its own path through the water —
-    // a leg separate from the eye's path that water_composite's absorption handles, so no double
-    // count. Built here and multiplied into sunColour below (the variable both specular and diffuse
-    // direct terms read). Reads the flat representative focus (0.5775) deliberately: the animated
-    // web is a separate scene-add and no longer rides this tint.
+    // Direct sunlight reaching a submerged fragment is coloured by its own path through the water,
+    // a leg apart from the eye path water_composite handles, so nothing is counted twice. Built
+    // here and multiplied into sunColour below. Reads one flat focus value (0.5775) on purpose:
+    // the animated web is a separate scene add and does not ride this tint.
     {
         float fragDist = uwFragDist;
         if (fragSubmerged) {
-            // The web is additive over a neutral tint. The pattern is sparse by design (mean 0.01,
-            // meant to be added, not multiplied), and multiplying the direct term by
-            // (0.35 + 0.65*p01) was a 65% flat darkening wearing a caustic's name, with the
-            // depth fade inverted around a midpoint constant inherited from the retired shaping
-            // curve. The absorption tint stays the flat physical constant below; the web rides
-            // as (1 + web) on top: neutral where the texture is dark, focused light where it
-            // is bright, fading to neutral with depth in the correct direction.
+            // The web is added over a neutral tint, not multiplied into it: the pattern is sparse
+            // by design (mean 0.01), so multiplying the direct term by it is a flat darkening.
             float pattern = 0.5775;
 #if WATER_CAUSTICS
-            // Cost gate (four wave-field evaluations per fragment): dayFactor since night light is
-            // moonlight-weak, and 152 blocks since the falloff has flattened the fine octaves by
-            // then anyway. fragSubmerged already proved this pixel is in the water volume, so this
-            // does not re-gate on vanilla's attenuated sky light or camera-column altitude — both
-            // can be zero with a valid pond crossing still present.
+            // Cost gate (four wave-field evaluations per fragment): dayFactor, since night light
+            // is moonlight-weak, and 152 blocks, since the falloff has flattened the fine octaves
+            // by then. fragSubmerged already proved the pixel is in the volume, so this does not
+            // re-gate on sky light or camera altitude, both of which can be zero over a real pond.
             if (dayFactor > 0.02 && fragDist < 152.0) {
                 // Faded, not cut: a hard edge at the 96-block fps bound draws a visible line across
                 // the seabed when looking down from above water.
                 float causticRangeFade = 1.0 - smoothstep(112.0, 152.0, fragDist);
-                // Caustic contrast washes out with depth much faster than sun transmission does
-                // (exp(-depth/24) dims only 25% over 8 blocks; real caustic contrast is gone by
-                // ~15m), so this uses its own, steeper falloff (exp(-depth/12)).
+                // Caustic contrast washes out with depth faster than sun transmission does
+                // (exp(-depth/24) dims 25% over 8 blocks; real caustic contrast is gone by ~15m),
+                // so it gets its own steeper falloff.
                 float uwCFragY = worldPos.y + u_CameraAbs.y;
                 float uwCSurfY = u_WaterState.x > 0.5
                         ? u_WaterState.z
                         : uwHasSubmergedSurfaceCrossing ? uwSurfWorldY : u_WaterState.z;
                 float uwCDepth = max(uwCSurfY - uwCFragY, 0.0);
-                // The falloff scale moved from 12 to 8 once it was clear caustics still were not
-                // reading noticeably shinier closer to the surface: at /12 an 8-block seabed sat
-                // at 0.51 vs a 2-block shore's 0.85, a 1.7x ratio the eye reads as "same". At /8
-                // the same pair is 0.37 vs 0.78, 2.1x, and a 15-block floor is at 0.15. Note the
-                // fade rides the fragment's depth, which is the physics: the same seabed looks the
-                // same whether the camera floats or dives; what changes it is how much water sits
-                // above the sand. Judge it shore-vs-deep, not by bobbing over one spot. It then
-                // moved from 8 to 14 once caustics were reading as barely visible at all, and from
-                // 14 to 10 alongside the water-optics patch below, whose sun-projected sampling
-                // concentrates the web enough that the faster fade reads as "brighter near the
-                // surface" instead of "gone everywhere".
+                // The fade rides the fragment's own depth, which is the physics: the same seabed
+                // looks the same whether the camera floats or dives; what changes it is how much
+                // water sits above the sand. Judge it shore against deep, not by bobbing over one
+                // spot.
 
-                // Sun-directed projection: project the fragment back along the incoming sun ray to
-                // the surface point whose refracted light reaches it. Sampling raw fragment xyz
-                // glued the pattern independently to every wall; this shift is why floors and the
-                // walls beside them now share one moving web. Same wave clock the visible surface
-                // runs (terrain.vsh's u_SkyState.w / 20).
+                // Sun-directed projection: push the fragment back along the sun ray to the surface
+                // point whose refracted light reaches it, so floors and the walls beside them
+                // share one moving web. Same wave clock the visible surface runs (u_SkyState.w/20).
                 vec3 causticWorldPos = worldPos + u_CameraAbs;
-                // A wall's horizontal (along-the-wall) axis reaches the field for free: moving
-                // along the wall moves worldPos.xz directly, gain 1. The vertical axis only reaches
-                // the field through this shear term, so its gain has to match that same 1 or that
-                // axis alone reads as stretched. An earlier magnitude, sunDir.xz/sunDir.y, is
-                // tan(sun zenith angle): it explodes near the horizon (shear into "zebra" stripes)
-                // and collapses toward noon (vertical gain going to 0 while the horizontal axis
-                // stays at 1), which is what made vertical faces stretch the caustic texture
-                // instead of a uniform stretch. Splitting direction (still the sun's azimuth, so
-                // streaks still rotate with the sun) from magnitude (fixed at 1, matching the
-                // horizontal axis) keeps both wall axes proportioned the same at every sun angle
-                // instead of swinging between those two failure modes.
+                // A wall's along-the-wall axis reaches the field for free at gain 1: moving along
+                // the wall moves worldPos.xz. The vertical axis only reaches it through this
+                // shear, so its gain has to be 1 as well or that axis alone reads as stretched.
+                // sunDir.xz/sunDir.y is tan(sun zenith), which explodes near the horizon and
+                // collapses toward noon; taking direction from the sun's azimuth with the
+                // magnitude fixed at 1 keeps both wall axes in proportion at every sun angle.
                 vec2 sunAzimuthRaw = sunDir.xz;
                 float sunAzimuthLen = length(sunAzimuthRaw);
                 vec2 sunAzimuth = sunAzimuthLen > 1e-4 ? sunAzimuthRaw / sunAzimuthLen : vec2(1.0, 0.0);
                 causticWorldPos.xz += sunAzimuth * uwCDepth;
-                // One sun-projected field for every face, see plagueCausticsProjected. The
-                // triplanar's three independent projections are why floors drifted diagonally and
-                // walls ran top-to-bottom: three animations, not one pattern.
-                // Runtime options arrive as floats in u_PackOptions: PackOptionsLayout types every
-                // one of them float, and DefineRewriter strips the #define at pack build. So a
-                // toggle is tested > 0.5, never against an int literal, and no float() cast is
-                // needed. Offline this file still has its #define, so an int comparison compiles
-                // clean in check_shaders.sh and fails only in a running client.
+                // One sun-projected field for every face, see plagueCausticsProjected: three
+                // independent triplanar projections would be three animations, not one pattern.
+                // Runtime options arrive as floats in u_PackOptions, and DefineRewriter strips the
+                // #define at pack build, so a toggle is tested > 0.5, never against an int
+                // literal. Offline the #define is still here, so an int compare passes
+                // check_shaders.sh and fails only in a running client.
                 float causticRate = (u_CausticSpeed * 0.01)
                                   * (u_CausticSyncWaves > 0.5 ? u_WaveSpeed : 1.0);
                 float causticSize = u_CausticScale * 0.01;
@@ -1076,97 +978,57 @@ int debugView = int(u_Param3 + 0.5);
                                                            (u_SkyState.w / 20.0) * causticRate,
                                                            causticSize);
 
-                // Low sun crosses the surface at grazing incidence and transmits almost nothing
-                // to focus (the patch's elevation gate), and it is half of the measured
-                // "web with no sunlight behind it" defect: at sunset the submerged direct term
-                // is two orders under noon while the web previously rendered at full strength.
+                // A low sun meets the surface at a grazing angle and passes almost nothing through
+                // to focus: at sunset the submerged direct term is two orders under noon, so
+                // without this gate the web shows with no sunlight behind it.
                 float sunElevationGate = smoothstep(0.12, 0.35, sunDir.y);
 
-                // Caustics no longer fade with depth on their own. causticContrast used to be
-                // exp(-depth/10), which is 0.05 by thirty blocks, and it was only one of three
-                // depth terms multiplying this same contribution (the spectral extinction below,
-                // and uwSunGate at the composition site), so the product was ~0.006 and caustics
-                // simply did not exist below the shallows. The requirement is the opposite: they
-                // should show everywhere a shadow does not, regardless of depth. Occlusion is what
-                // should decide whether a caustic lands, and that is causticShadow's job, not depth's.
-                //
-                // Depth now shapes them instead of deleting them. Near the surface the water column
-                // has not yet smeared the light the waves focused, so peaks stay sharp and flare;
-                // with depth that sharpening averages out and the same web reads as a steady glow.
-                // The twinkle is a cheap world-anchored oscillation rather than a second texture
-                // fetch: the triplanar sample is eight taps and this rides the one already taken.
+                // Depth shapes caustics, it does not delete them: they should show wherever a
+                // shadow does not, at any depth. Occlusion decides whether a caustic lands, and
+                // that is causticShadow's job. Near the surface the column has not yet smeared
+                // what the waves focused, so peaks stay sharp; with depth that averages to a glow.
                 float shimmerDepth = max(plagueChunksToBlocks(u_CausticGlowDepth), 1.0);
                 float shimmerFall = exp(-uwCDepth / shimmerDepth);
-                // No synthetic twinkle: a sine over world position and time was a second,
-                // unrelated pattern laid over the caustics. It read as an oscillating wash rather
-                // than as light, because nothing in it came from the wave field that actually
-                // focuses the light. Shaping the real pattern is what produces the effect.
-                // Squared in causticP01 so the gain lands on peaks rather than lifting the whole
-                // web, which is what makes it bloom (the bloom pass is unthresholded, so brighter
-                // peaks glow on their own) instead of just getting brighter overall.
-                // Depth dims to 50% and stops there, not to zero: the deep seabed should still
-                // read caustics, just fainter, so it keeps half-strength caustics however far down
-                // it is, where before three multiplied exponentials had taken it to 0.006 by thirty
-                // blocks.
+                // No synthetic twinkle: a sine over world position and time is a second pattern
+                // unrelated to the wave field that focuses the light. Squared in causticP01 so the
+                // gain lands on peaks rather than lifting the whole web, which is what makes it
+                // bloom (the bloom pass is unthresholded). Depth dims to 50% and stops there: a
+                // deep seabed should still read caustics, only fainter.
                 float causticDepthDim = mix(1.0, 0.5, clamp(uwCDepth / shimmerDepth, 0.0, 1.0));
 
-                // Shaping: near the surface the water column has not yet smeared what the waves
-                // focused, so the web is high contrast, narrow bright filaments against near-dark
-                // between them. With depth that averages out into an even wash. smoothstep over the
-                // upper part of the range is that contrast: it keeps the peaks and drops the
-                // low-amplitude noise, and mixing toward it by shimmerFall makes the transition a
-                // property of depth rather than a switch.
-                // Shaping now lives in the pattern, not in a curve bolted on here. The base field
-                // was 0.60 * softCell + 0.25 * filament, topping out near 0.85 before glimmer, so
-                // every downstream threshold collapsed it toward isolated sparkles, which showed up
-                // clearly in renders as thin sparkle dots rather than a connected web. It is
-                // 0.72 + 0.28 now, a full-range cellular-body plus filament split, so the connected
-                // cell structure survives.
-                //
-                // An earlier attempt sharpened with a smoothstep here and multiplied a gain on
-                // top. That was the wrong place: it threw away the mid-range the cells live in and
-                // then tried to recover brightness, which is how the web ended up as thin dots with
-                // no body. Shape the field, do not rescue it afterwards.
+                // Shaping lives in the pattern (a 0.72 cellular body plus 0.28 filament split,
+                // full range), not in a curve bolted on here: sharpening with a smoothstep and a
+                // gain throws away the mid-range the cells live in, leaving thin dots with no body.
                 float shaped = causticP01 * causticDepthDim * causticRangeFade;
 
-                // The bloom field is a separate five-tap dilation of only the hot crests, world-
-                // attached via screen derivatives so the halo stays compact instead of becoming a
-                // world-space smear. Fragment stage only (dFdx/dFdy), verified that the two files
-                // importing ocean_caustics.glsl are both .fsh.
+                // A separate five-tap dilation of the hot crests, anchored by screen derivatives
+                // so the halo stays compact. Fragment stage only (dFdx/dFdy): both files importing
+                // ocean_caustics.glsl are .fsh.
                 uwWebBloom = plagueCausticsBloomProjected(CAUSTICS_TEX, causticWorldPos,
                                                           (u_SkyState.w / 20.0) * causticRate,
                                                           causticSize)
                            * causticDepthDim * causticRangeFade;
 
-                // The package's optional HDR seed, left unwired at first, is the piece that
-                // produces the look. Bloom strength times HDR strength tops out near
-                // 0.51, so nothing ever crossed display white and the shine this term exists to
-                // produce was unreachable at any slider setting. This term is the hot crests alone.
+                // The HDR seed: bloom strength times HDR strength tops out near 0.51, so without
+                // this term nothing crosses display white at any slider setting. Hot crests alone.
                 uwWebHot = plagueCausticsBloomSeed(causticP01) * causticDepthDim
                          * causticRangeFade;
 
                 uwWeb = shaped * sunElevationGate * smoothstep(0.02, 0.15, dayFactor);
             }
 #endif
-            // WATER_SUN_TINT is a bisection switch, see underwater.glsl's own comment. Default on;
-            // gated independently of WATER_CAUSTICS above: this recolours the sun's own in-water
-            // path, the caustic web above is a separate scene-add. Off: uwSunTint keeps its
-            // declared vec3(1.0) identity, so sunColour's later multiply is a no-op and this leg
-            // contributes nothing, same as a dry fragment.
+            // WATER_SUN_TINT is a bisection switch, see underwater.glsl. Gated apart from
+            // WATER_CAUSTICS: this recolours the sun's own in-water path, the web is a scene add.
+            // Off, uwSunTint stays vec3(1.0) and the later multiply does nothing.
 #if WATER_SUN_TINT
-            // The tint itself lives at file scope (plagueUnderwaterSunTint, above main): the
-            // pack's fitted focus-to-colour curve, in linear light directly. It multiplies
-            // sunColour, and its absolute level already folds in the measured display-pipeline
-            // calibration (solved by contrast ratio from the user's frozen captures: the shaping
-            // curve saturates past ~gain 120, contrast asymptoting near 3.3%, so the caustic
-            // contrast the accepted look shows has to come from this direct term).
+            // plagueUnderwaterSunTint, above main: the pack's fitted focus-to-colour curve, in
+            // linear light. Its level folds in the measured display pipeline, solved by contrast
+            // ratio from the frozen captures (the shaping curve saturates past ~gain 120, contrast
+            // stalling near 3.3%), so the caustic contrast has to come from this direct term.
             uwSunTint = plagueUnderwaterSunTint(pattern);
-            // The web does not ride this tint any more, because a sparse caustic pattern has to be
-            // added to the scene, not multiplied into it: multiplying the submerged direct term
-            // instead (a value already shrunk by transmission, the water tint and the shadow)
-            // multiplies something tiny and stays tiny, however large the factor, invisible
-            // against the sand even when the ratio between web and direct term looked correct.
-            // The web is applied as a scene add at the fog site instead.
+            // The web does not ride this tint: the submerged direct term is already tiny after
+            // transmission, the water tint and the shadow, so multiplying it stays tiny whatever
+            // the factor. The web is added to the scene at the fog site instead.
 #endif
         }
     }
@@ -1175,223 +1037,42 @@ int debugView = int(u_Param3 + 0.5);
     float shadow = 1.0;
 #endif
 
-    // --- Sun and sky as two separate colours ---------------------------------------------------
-    //
-    // This is where a shaderpack's character actually comes from, and using one light colour for
-    // everything is why this looked washed out however the tonemap was tuned. Direct sun and sky
-    // ambient are separate, differently coloured, and the sun is intense: warm key against cool
-    // fill is the whole effect, and a single averaged colour cannot produce it at any exposure.
-    //
-    // What used to sit here was a hand-authored sketch of that idea: the right structure, one
-    // correct constant, and everything else invented, including the entire ambient system. It has
-    // been replaced by the pack's own fitted colour model: see
-    // shaders/include/light_and_ambient_colors.glsl, accepted in game, with its own drivers, its
-    // own day/night curve, its own rain branch and its own reference intensities.
-    //
-    // Every input is read from vanilla through the engine (sky colour, sun angle, sun elevation,
-    // rain), so time of day and weather are accounted for rather than approximated by a clock this
-    // shader keeps itself.
-
-#if CUSTOM_LIGHT_COLORS
-    vec3 sunColour = lighting.light;
-#else
-    // Physically derived. u_SunDirection.xyz is the active light, sun by day, moon once it sets,
-    // so the transmittance integration is fed whichever body is actually lighting the scene, and the
-    // illuminance constant is chosen to match. That keeps one light direction driving both the colour
-    // and the shadowing, which is what stopped midnight being lit as noon in the first place.
-    vec3 airEyePos = plagueAirEyePos(u_CameraAbs.y);
-    vec3 sunColour = trueSunHeight > 0.0
-            ? plagueSunColor(airEyePos, sunDir)
-            : plagueMoonColor(airEyePos, sunDir);
-    // Rain still flattens the direct term. That is weather, not atmosphere, so it belongs
-    // here on the direct light rather than in the air model. 0.95 leaves a twentieth of the
-    // direct sun at full rain: overcast is not black, and the residual keeps shadows readable.
-    sunColour *= 1.0 - rainFactor * 0.95;
-#endif
+    // Shared with voxel material hits so the two paths use identical frame light colours.
+    vec3 surfaceSunTint = vec3(1.0);
 #if PLAGUE_UNDERWATER
-    // Submerged fragments take the sun through the water: the tint built above. One site, so the
-    // specular and the diffuse direct term cannot disagree about it.
-    sunColour *= uwSunTint;
+    surfaceSunTint = uwSunTint;
 #endif
-    // The direct light takes the same warmth, from the same control, so a scene cannot end up with
-    // warm bounce and neutral key light or the reverse.
-    sunColour = plagueWarmLowSun(sunColour, sunDirTrue.y);
-
-    // Nothing shines on the End. Its clock never moves, so the sun sits at one angle for ever and
-    // lights every surface from it: end stone comes out flat and pale under a key light that is
-    // not there, and the pillars take a hard edge from a direction that means nothing. Everything
-    // there is lit by the sky instead, which is the only thing giving off light.
-    if (u_WorldBounds.w == 3.0) {
-        sunColour = vec3(0.0);
-    }
-
-#ifdef SKY_AMBIENT
-    // Ambient sampled from the sky this pack now renders. One way to get there is sampling the
-    // rendered sky texture at the straight-up direction and scaling by pi; that needs a LUT when a
-    // pipeline samples the sky in many directions, but ambient needs exactly one direction,
-    // straight up, so the sky function is evaluated directly here instead. Cheaper and exact rather
-    // than filtered.
-    //
-    // No glare and no ground: this is the sky's own light, not a view of it. Dither is zero for the
-    // same reason: a per-pixel dither belongs on a gradient being looked at, not on a light colour,
-    // where it would just add noise to every surface in frame.
-    // The hemisphere, not the zenith, and the comment below is kept because it records exactly why
-    // that was wrong. A surface sees the whole dome. At sunset the dome is dominated by a bright warm
-    // band low on the sun's side while the zenith is at its deepest blue, so sampling straight up lit
-    // the world with the single direction least representative of it, precisely when the difference
-    // was largest, with no warm bounce off water or open ground through the whole of a sunset. The
-    // scalar that used to compensate for "a surface sees the whole dome, not one sample" is still
-    // here for magnitude, but the direction problem it was standing in for is solved rather than
-    // scaled.
-    // Graded after the mix, not before: both terms sample the same sky palette, so multiplying once
-    // at the end keeps the zenith sample and the hemisphere estimate in the same ratio the mix set.
-    vec3 zenithSky = mix(plagueGetSky(skyColours, 1.0, dot(vec3(0.0, 1.0, 0.0), sunDirTrue), 0.5,
-                                      false, false),
-                         plagueSkyHemisphere(skyColours, sunDirTrue.y),
-                         u_AmbientSkyBleed) * atmColorMult;
-    // Scaled to the ambient magnitude the table it replaces established, measured: at noon against a
-    // typical plains sky the zenith value is (0.284, 0.493, 0.810), luminance 0.471, against that
-    // table's 0.607. Ratio 1.29. Integrating over the hemisphere, since a surface sees the whole
-    // dome, not one sample, is the same idea a `* pi` factor captures elsewhere; this is that factor
-    // sized against the table it replaces, so switching changes the ambient's colour without also
-    // changing exposure.
-    //
-    // Note the hue difference the numbers show: the sky's own zenith is markedly bluer than the table
-    // it replaces (0.284 red against 0.480), a stated, deliberate divergence: that table warms its
-    // ambient on purpose, and the rendered sky is left to its own hue instead.
-    //
-    // The 1.29 is the table ratio measured at noon, and at night it is computed live instead.
-    // The stated design of this path is hue from the sky, magnitude from the table it replaces, so
-    // switching changes the ambient's colour without also changing exposure. The frozen 1.29
-    // delivered that only at the time of day it was measured: at night the sky model's zenith is
-    // a further ~2.4x dimmer relative to that table's night values, a deficit the general
-    // over-brightness used to hide. Once the night/sunset decode landed, this showed up as a 5.8x
-    // display drop on night terrain against the photographed 2.5x.
-    //
-    // So the night arm now scales the sky's zenith to the luminance of lighting.ambient, the
-    // decoded table, vsBrightness fold included, which also restores the brightness slider's
-    // authored effect on night ambient. The day arm keeps the measured constant, and the blend
-    // runs on the same sunFactor as the sky's own day/night mix: at noon this is 1.29 exactly and
-    // the result bit-identical to before the decode round.
-    // The measured day anchor, named rather than repeated: the reflection lift below divides by it
-    // to normalise itself, so writing 1.29 twice would let the two drift apart silently.
-    const float PLAGUE_SKY_AMBIENT_DAY_SCALE = 1.29;
-    float zenithLuma = dot(zenithSky, vec3(0.2126, 0.7152, 0.0722));
-    float tableLuma = dot(lighting.ambient, vec3(0.2126, 0.7152, 0.0722));
-    float ambientScale = mix(tableLuma / max(zenithLuma, 1e-5),
-                             PLAGUE_SKY_AMBIENT_DAY_SCALE, plagueSunFactor);
-    vec3 ambientColour = zenithSky * ambientScale;
-    // Everything above this line is Overworld reasoning: a palette sky lit by a sun, then scaled to
-    // match a daylight table. The End has neither. Left to run there it fills end stone with blue
-    // off a sun that never moves, and the floor further down inherits the same wrong colour on
-    // exactly the surfaces it exists to rescue. The medium is the only thing giving off light in
-    // the End, so the fill comes from the medium.
-    if (u_WorldBounds.w == 3.0) {
-        ambientColour = plagueEndAmbient();
-    }
-    // The two paths must not hold two opinions about how bright the sky is.
-    //
-    // Everything above resolves a disagreement between the sky model and the ambient table in the
-    // table's favour, for the reason the comment above states: at night the model's zenith runs
-    // ~2.4x dim against the table. That correction reaches the diffuse half of the frame and stops
-    // there; the reflection half samples plagueGetSky raw, further down. A dielectric never
-    // notices, because its diffuse card carries it. A conductor's kD is exactly zero, so the
-    // corrected answer never reaches it at all and it is lit solely by the uncorrected one. That is
-    // why metals go black at night while the terrain around them stays visible.
-    //
-    // Normalised on the day arm, so this moves night and nothing else. At noon ambientScale is
-    // PLAGUE_SKY_AMBIENT_DAY_SCALE by construction, the ratio is exactly 1.0, and every daylight
-    // reflection in the pack is bit-identical to before this line existed. What is left is purely
-    // the night-vs-day relative correction the diffuse path already takes.
-    float skyReflectionLift = ambientScale / PLAGUE_SKY_AMBIENT_DAY_SCALE;
-    ambientColour = plagueWarmLowSun(ambientColour, sunDirTrue.y);
-    // Ground bounce: the dome is only half of what fills a shadow. The other half is sunlight
-    // that has already struck the surrounding terrain and arrives pre-tinted by it, which is why
-    // real open-air shadows read neutral-warm while a pure zenith sample reads deep blue. One
-    // luminance-preserving hue pull toward a sunlit-earth bounce colour, scaled by the same
-    // sunFactor as the sky's own day/night mix. Exposure is untouched at every slider position
-    // (both mix endpoints carry identical luminance), night ambient keeps the moon's cool hue
-    // (the bounce follows the sun to zero), and 0.0 is bit-identical to the bare sky sample.
-    float ambientLumaHere = dot(ambientColour, vec3(0.2126, 0.7152, 0.0722));
-    vec3 groundBounce = PLAGUE_GROUND_BOUNCE_TINT
-                      * (ambientLumaHere / dot(PLAGUE_GROUND_BOUNCE_TINT,
-                                               vec3(0.2126, 0.7152, 0.0722)));
-    ambientColour = mix(ambientColour, groundBounce,
-                        u_AmbientBounceWarmth * plagueSunFactor);
-#else
-    // The Custom palette's own ambient table (light_and_ambient_colors.glsl), read unconditionally
-    // whenever the sky-sampled ambient path above is off, see plagueOverworldLighting's own
-    // header on why .ambient stays live-correct regardless of which model CUSTOM_LIGHT_COLORS
-    // currently selects.
-    vec3 ambientColour = lighting.ambient;
-    // No lift on this arm, and that is correct rather than a gap: the disagreement being corrected
-    // is between the sky model and the ambient table, and this path never consults the sky model,
-    // it reads the table directly, so both halves already agree.
-    float skyReflectionLift = 1.0;
-#endif
-
-    // Block light colour. The Custom palette authors a warm constant; the Physical model takes
-    // whatever a 4000 K emitter actually looks like. Rescaled to the Custom palette's luminance
-    // either way, so the block-light CURVE keeps meaning the same thing and only the hue moves
-    // between models.
-#if CUSTOM_LIGHT_COLORS
-    vec3 blockLightColour = PLAGUE_BLOCKLIGHT_COL;
-#else
-    vec3 blockBody = plagueBlackbody(u_BlockLightTemp);
-    vec3 blockLightColour = blockBody
-            * (dot(PLAGUE_BLOCKLIGHT_COL, vec3(0.2126, 0.7152, 0.0722))
-             / max(dot(blockBody, vec3(0.2126, 0.7152, 0.0722)), 1e-6));
-#endif
+    PlagueSurfaceLighting surfaceLighting = plagueSurfaceLighting(lighting, skyColours,
+            sunDir, sunDirTrue, rainFactor, atmColorMult, trueSunHeight, u_CameraAbs.y,
+            surfaceSunTint);
+    vec3 sunColour = surfaceLighting.sunColour;
+    vec3 ambientColour = surfaceLighting.ambientColour;
+    vec3 blockLightColour = surfaceLighting.blockLightColour;
+    float skyReflectionLift = surfaceLighting.skyReflectionLift;
 
     // --- Material and BRDF ----------------------------------------------------------------------
     //
-    // The G-buffer has carried smoothness and F0 since terrain first wrote it. What reads them now
-    // is a real BRDF: GGX distribution, Smith height-correlated visibility, exact dielectric
-    // Fresnel, measured complex-IOR Fresnel for the eight metals labPBR names, and Hammon diffuse
-    // in place of Lambert. See shaders/include/brdf.glsl, which is written from the papers.
-    //
-    // What was here before was hand-rolled, and its own comments admitted as much: a Schlick
-    // geometry approximation with a k it made up, a hard min(specular, 3.0), and an ndotv floor "at
-    // a real angle rather than an epsilon". The floor is gone: the height-correlated visibility
-    // term cancels the 4*NdotL*NdotV denominator analytically, so nothing divides by ~0 at grazing
-    // angles any more. A cap survives, at pi^4 rather than 3.0, because a near-delta lobe against a
-    // directional light really is that bright and has nowhere to go without bloom. Both live in
-    // brdf.glsl next to the reasoning.
+    // GGX distribution, Smith height-correlated visibility, exact dielectric Fresnel, measured
+    // complex-IOR Fresnel for the eight metals labPBR names, Hammon diffuse. See brdf.glsl, which
+    // is written from the papers. It needs no NdotV floor: the height-correlated visibility term
+    // cancels the 4*NdotL*NdotV denominator, so nothing divides by ~0 at grazing angles. It caps
+    // specular at pi^4, since a near-delta lobe against a directional light is that bright.
     vec3 material = texture(G_BUF, vec3(texCoord, 1.0)).rgb;
     PlagueMaterial mat = plagueDecodeMaterial(material.r, material.g, material.b);
 
-    // Wetness, applied before the BRDF because it changes the inputs the BRDF reads: albedo,
-    // roughness and F0 all move. Applying it to the BRDF's output instead would darken the specular
-    // highlight along with the surface, which is backwards: a wet surface is darker and shinier.
+    // Wetness is applied in terrain.fsh, not here: the puddle model needs the height map and has
+    // to flatten the normal before the G-buffer write, neither of which a deferred pass can do. It
+    // is driven by u_FrameState.w (accumulated wetness), not u_SkyState.x, whose rain level snaps.
     //
-    // Driven by u_FrameState.w (accumulated wetness), not u_SkyState.x (instantaneous rain). See the
-    // lane's own doc in globals.glsl: rain level snaps, so surfaces would flick wet and dry.
-    // Moved to terrain.fsh (puddles). Wetness used to be applied here, uniformly, to every
-    // sky-facing surface, which made the whole world go evenly glossy in rain rather than pooling
-    // water where it would actually collect. The puddle model needs the height map and must flatten
-    // the normal before it reaches the G-buffer, neither of which is possible from a deferred pass,
-    // so the terrain stage now writes the wetted albedo, smoothness and normal directly.
-    //
-    // Nothing is re-applied here on purpose: `mat` already carries it. Reinstating a second
-    // application would darken soaked albedo twice and drive already-smoothed material past mirror.
+    // Nothing is re-applied here on purpose: `mat` already carries it. A second application would
+    // darken soaked albedo twice and push smoothed material past mirror.
 
-    // No snow here any more. A settled-snow material blend used to sit at this point, reading a compute
-    // pass's accumulation field and an overhead sky-exposure map. It is gone (see graph.toml's note),
-    // and two things it learned the hard way belong wherever the replacement lands:
-    //
-    //   * A mob standing in a field rendered snow-covered. Every gate the blend applied was
-    //     positional (column, surface height, facing), and a mob standing on snowy ground passes
-    //     all three, because it is at that height, on that column, with an upward-facing back. No
-    //     amount of tuning positional gates could fix it; the pass simply did not know a mob was a
-    //     mob. gAo.a carries a surface-class lane for exactly this (terrain.fsh writes 1.0 solid /
-    //     0.5 cutout, entities.fsh writes 0.75, block_entities.fsh writes 0.0); the temporal
-    //     accumulator now consumes the animated-entity class rather than re-deriving it.
-    //   * Spruce leaves came back as grey smears when foliage was shaded with the constants that
-    //     describe snow lying flat on ground. Snow caught on foliage is a different material.
-    //
-    // The replacement drives the dusting per-fragment in the geometry stage instead, from the per-block
-    // precipitation type in a_Normal.w plus v_SkyLight, which is also the only stage that can touch a
-    // normal before the G-buffer records it, and so the only one that can ever give snow a shape.
+    // Snow is drawn in the geometry stage, not here: only that stage can shape a normal before the
+    // G-buffer records it. Two traps a deferred blend hit: positional gates (column, height,
+    // facing) paint a mob standing in a field as snow-covered, so read gAo.a's surface class
+    // instead (terrain.fsh 1.0 solid / 0.5 cutout, entities.fsh 0.75, block_entities.fsh 0.0); and
+    // snow caught on foliage is a different material from snow lying flat, or spruce leaves come
+    // back as grey smears.
 
     // worldPos is camera-relative, so the direction back to the eye is its negation.
     vec3 viewDir = normalize(-worldPos);
@@ -1400,51 +1081,40 @@ int debugView = int(u_Param3 + 0.5);
 
     // --- One labPBR surface response, shared by the diffuse and the reflection ---------------------
     //
-    // These four lines are the architecture. Everything below composites from them and nothing below
-    // asks what kind of material this is, because the answer is already a number.
-    //
-    // Why the seam had to go: three shipped regressions in a row were the same failure wearing
-    // different clothes: chrome hoppers (a "metal path" that discarded authored roughness), pale
-    // chalk (a diffuse card under a dulled mirror, because the metal path and the diffuse path
-    // disagreed about whether metals have one), and a powder-blue coat (a metal path whose
-    // environment was directionless while the dielectric path's was not). Every fix moved the seam
-    // and the next frame broke somewhere else along it. A material class is a property of the
-    // decode; past that point there is one set of equations.
+    // Everything below composites from these four lines, and nothing below asks what kind of
+    // material this is: material class is a property of the decode, and past that point there is
+    // one set of equations. A metal/dielectric branch here is what produced chrome hoppers, pale
+    // chalk and a powder-blue coat, one after the other.
     //
     // reflSmoothness comes from the wetted material, matching what ssr_trace/ssr_blur keyed off:
-    // terrain.fsh bakes puddle wetness into gMaterial before the G-buffer write, so mat.alpha
-    // already carries the rain.
+    // terrain.fsh bakes puddle wetness into gMaterial before the write, so mat.alpha carries rain.
     float reflSmoothness = clamp(1.0 - sqrt(clamp(mat.alpha, 0.0, 1.0)), 0.0, 1.0);
     float NdotV = clamp(dot(normal, viewDir), 0.0, 1.0);
 
-    // The material's F0 comes only from its `_s` green byte (or the conductor decode). Wetness may
-    // alter it earlier through the explicitly weather-gated transform; dry orientation and sky
-    // access must not infer a film that the resource pack did not author.
+    // F0 comes only from the `_s` green byte (or the conductor decode). Wetness may change it
+    // earlier; dry orientation and sky access must not invent a film the resource pack never wrote.
     vec3 surfaceF0 = plagueMaterialF0(mat, albedo);
 
     // The split-sum environment response with multiple scattering: the one place energy is decided
-    // for every material. The multi-scatter term inside the helper keeps a rough conductor
-    // coloured and lit rather than grey and collapsing (see brdf.glsl).
+    // for every material. The multi-scatter term keeps a rough conductor coloured and lit rather
+    // than grey and collapsing (see brdf.glsl).
     vec3 specularAlbedo = plagueEnvSpecularAlbedo(surfaceF0, NdotV, 1.0 - reflSmoothness);
     // The analytic fit assumes a reflective interface and retains grazing bias at F0=0. labPBR
     // allows an exact zero, and Fornax uses it for an absent `_s`, so zero must stay zero per channel.
     vec3 f0Present = step(vec3(0.5 / 255.0), surfaceF0);
     specularAlbedo *= f0Present;
 
-    // Energy conservation, from the same numbers. What is not reflected is transmitted; of that, a
-    // dielectric scatters it back out as diffuse and a conductor absorbs it. Both facts are here,
-    // and neither is a branch.
+    // What is not reflected is transmitted: a dielectric scatters it back out as diffuse, a
+    // conductor absorbs it. Neither is a branch.
     vec3 kD = (1.0 - specularAlbedo) * (1.0 - mat.metalness);
 
-    // Both BRDF terms already carry N.L, so only visibility and light colour apply here;
-    // reintroducing the cosine would square it.
+    // Both BRDF terms already carry N.L, so only visibility and light colour apply here; adding
+    // the cosine again would square it.
     //
-    // Underwater, skyLight is the wrong sun-penetration signal: vanilla decrements it ~1 level per
-    // water block, so a seabed 12 blocks down reads 0.2, weakening the specular 5x before any
-    // caustic could ride it. The honest gate is transmission, exp(-depth/24) (blue attenuation
-    // length ~24m), with the shadow map still owning occlusion. Depth uses the engine's real
-    // surface altitude when the camera is wet, the ray's own crossing when it's dry. Ambient
-    // deliberately keeps the real sky light everywhere — only the sun's reach changed.
+    // Underwater, skyLight is the wrong signal for sun reach: vanilla drops it ~1 level per water
+    // block, so a seabed 12 blocks down reads 0.2 and the specular is 5x weak before a caustic can
+    // ride it. The gate is exp(-depth/24) instead (blue reaches ~24m), with the shadow map still
+    // owning occlusion. The fill light keeps the real sky light everywhere.
     if (debugView == DBG_CONDUCTOR_F0) {
         fragColor = vec4(surfaceF0, mat.metalness);
         return;
@@ -1455,17 +1125,14 @@ int debugView = int(u_Param3 + 0.5);
     }
 
     float uwSunGate = -1.0; // < 0: the standard gates stand (dry fragments, underwater off)
-    // Submerged rock sits inside the same in-scattering medium plagueWaterFogColor already prices
-    // for the eye-to-point veil, so it must not go vacuum-black the way a dry sealed room correctly
-    // does. Reuses plagueWaterFogColor rather than a new constant, so the floor and the veil are the
-    // same colour by construction. Scaled by the same exp(-depth/24) transmission the sun gate above
-    // already computes.
+    // Submerged rock sits in the same scattering medium plagueWaterFogColor already prices for the
+    // eye-to-point veil, so it must not go black the way a dry sealed room does. Reuses
+    // plagueWaterFogColor, so floor and veil share a colour, scaled by the same exp(-depth/24).
     //
-    // Known limitation: this floor only knows the fragment's own depth, not whether the water above
-    // connects to open sky, so a sky-sealed flooded cavern reads the same as a sunlit overhang. Also
-    // only a height test (fragWorldY < u_WaterState.z), not a real water mask, so a drained air
-    // pocket seen through glass from outside still reads as water ambient. Fixing either needs an
-    // engine-level signal, not a shader heuristic.
+    // Limits: the floor knows the fragment's depth, not whether the water above reaches open sky,
+    // so a sealed flooded cavern reads like a sunlit overhang; and it is a height test, not a water
+    // mask, so a drained air pocket seen through glass still reads as water. Both need an engine
+    // signal, not a shader guess.
     vec3 uwAmbientFloor = vec3(0.0);
 #if PLAGUE_UNDERWATER
     if (fragSubmerged) {
@@ -1491,15 +1158,13 @@ int debugView = int(u_Param3 + 0.5);
 
     // --- The lighting composite ------------------------------------------------------------------
     //
-    // shaders/include/main_lighting.glsl owns the composite: light sources are mixed in squared
-    // space and the result square-rooted (sources add in quadrature), so two independently-maxed
-    // sources cannot sum to double and blow out the way a linear add did.
+    // main_lighting.glsl owns the composite: sources are mixed in squared space and the result
+    // square-rooted (they add in quadrature), so two maxed sources cannot sum to double.
     //
-    // AO uses labPBR texture AO times SSAO, not vanilla's per-vertex AO: Fornax does not forward
-    // glColor.a to a deferred pass, so there's no G-buffer channel for it.
+    // AO is labPBR texture AO times SSAO, not vanilla's per-vertex AO: Fornax does not forward
+    // glColor.a to a deferred pass, so there is no G-buffer channel for it.
     //
-    // Moon phase (u_SkyCelestial.w) scales night lighting: full moon lights the world, new moon
-    // barely at all.
+    // Moon phase (u_SkyCelestial.w) scales night light: full moon lights the world, new moon not.
     float moonPhaseInf = plagueMoonPhaseInfluence(u_SkyCelestial.w, lighting.sunVisibility2);
 
     // Identity vec3(1.0) when LIGHT_COLOR_MULTS is off, so plagueDoLighting never needs to
@@ -1514,26 +1179,23 @@ int debugView = int(u_Param3 + 0.5);
             vec3(u_LightRainR, u_LightRainG, u_LightRainB) * u_LightRainI);
 #endif
 
-    // One smooth field drives every shadow-keyed appearance modifier, shaped so only confident
-    // occlusion darkens and capped before black: the sharp per-pixel visibility's noise would
-    // paint ink patches on a metal whose whole appearance rides these terms.
+    // One smooth field drives every shadow-keyed modifier, shaped so only confident occlusion
+    // darkens and capped before black: sharp per-pixel visibility would paint ink patches on a
+    // metal whose whole appearance rides these terms.
     //
-    // The strength slider's above-1.0 regime lives in exactly one place, the uniform end-stage
-    // shadowFade below: a per-input ambient cut here would darken the dielectric world differently
-    // than the traced imagery metals mirror (ssr reads last frame), diverging as the slider moves.
+    // The slider's above-1.0 range lives in shadowFade alone: a fill-light cut here would darken
+    // the dielectric world differently from the traced image metals mirror, diverging as it moves.
     float envShadowDim = 0.0;
     float shadowFade = 1.0;
 #ifdef SHADOWS
     const float PLAGUE_AMBIENT_SHADOW_MAX = 0.75;
     float shadowOcclusion = smoothstep(0.2, 0.9, 1.0 - ambientVisibility)
             * shadowSkyGate * casterStrength * PLAGUE_AMBIENT_SHADOW_MAX;
-    // A caster blocks the sun, not the sky: the fill mostly survives shadow, exactly as a
-    // mirror in shade does. One mild flat factor for the caster's hemisphere occupancy, no
-    // slider term here, by explicit design: the conductor chain contains no u_ShadowStrength.
+    // A caster blocks the sun, not the sky, so the fill mostly survives. One flat factor for the
+    // caster's share of the hemisphere, no slider: the conductor chain holds no u_ShadowStrength.
     envShadowDim = shadowOcclusion * 0.25;
-    // The whole above-1.0 semantics, in one number. The torch guard keeps locally-lit shadow
-    // regions readable: block light is real light the caster never blocked, and it rides the
-    // smooth lightmap so the guard cannot couple to any material texture.
+    // The whole above-1.0 range in one number. The torch guard keeps locally-lit shadow readable:
+    // block light is light the caster never blocked, and it rides the smooth lightmap.
     float torchShare = plagueBlockLightCurve(blockLight, u_ScreenBrightness);
     shadowFade = 1.0 - max(u_ShadowStrength - 1.0, 0.0) * shadowOcclusion
             * (1.0 - clamp(torchShare, 0.0, 1.0));
@@ -1547,10 +1209,9 @@ int debugView = int(u_Param3 + 0.5);
             lighting.noonFactor, lighting.sunVisibility2, lighting.rainFactor,
             u_ScreenBrightness, moonPhaseInf, lightColorMult, uwSunGate, uwAmbientFloor);
 
-    // Held light, added in the same squared space the composite mixes in, see plagueHeldLighting.
-    // Inert until the engine grew u_HeldLight; vanilla surfaces no such value. Coloured by the same
-    // resolved blockLightColour plagueDoLighting above already received, so a torch in the player's
-    // hand matches one placed on the ground regardless of which model resolved that colour.
+    // Held light, added in the same squared space the composite mixes in (plagueHeldLighting).
+    // Coloured by the same blockLightColour plagueDoLighting got, so a torch in hand matches one
+    // on the ground whichever model resolved that colour.
     vec3 heldLight = plagueHeldLighting(worldPos, u_HeldLight.x, u_HeldLight.y, blockLightColour);
 #if PLAGUE_UNDERWATER && WATER_HELD_LIGHT_FILTER
     // Red-heavy Beer-Lambert over the light's round trip: water absorbs red within metres, so a
@@ -1564,35 +1225,30 @@ int debugView = int(u_Param3 + 0.5);
     vec3 diffuseWithHeld = sqrt(max(litResult.diffuse * litResult.diffuse
                                   + heldLight * heldLight, vec3(0.0)));
 
-    // Emission joins in quadrature (RMS, matching the composite's own placement of it above), not
-    // inside diffuseWithHeld: it's a radiance built from albedo's hue at emission-driven luminance
-    // (emission.glsl), so applying albedo again here would apply it twice. Branched, not
-    // `sqrt(x*x)` unconditionally, because GLSL's sqrt() permits up to 3 ULP of error — the branch
-    // makes "emission 0 changes nothing" exact rather than approximately true.
+    // Emission joins in quadrature, not inside diffuseWithHeld: it is already built from albedo's
+    // hue (emission.glsl), so albedo would be applied twice. Branched rather than sqrt(x*x)
+    // always, since GLSL's sqrt() allows up to 3 ULP of error and the branch makes "emission 0
+    // changes nothing" exact.
     //
-    // kD carries a conductor's diffuse to zero (its free electrons absorb what isn't reflected, no
-    // subsurface scattering to re-emit); a dielectric keeps ~96%. Emission stays reachable — only
-    // the diffuse lobe goes.
+    // kD takes a conductor's diffuse to zero (free electrons absorb what is not reflected); a
+    // dielectric keeps ~96%. Emission stays reachable, only the diffuse lobe goes.
     //
-    // shadowFade rides every non-emission term (here, the highlight below, the environment addition
-    // at its own site) and deliberately not the emitted radiance: a glowing block glows in the
-    // deepest shadow. Applied before the RMS join so the exemption is structural.
+    // shadowFade rides every non-emission term and not the emitted radiance: a glowing block glows
+    // in the deepest shadow. Applied before the join so the exemption is structural.
     vec3 litDiffuse = kD * albedo * diffuseWithHeld * shadowFade;
     vec3 lit = (emitterLum > 0.0
                     ? sqrt(max(litDiffuse * litDiffuse
                                + litResult.emitted * litResult.emitted, vec3(0.0)))
                     : litDiffuse)
              + litResult.highlight * shadowFade
-             // The moon phase enters the highlight twice, an authored falloff: the sparkle should
-             // die out faster than the glow that casts it, so a thin crescent keeps faint diffuse
-             // moonlight but loses the glint first.
+             // Moon phase enters the highlight twice, an authored falloff: a thin crescent should
+             // keep faint diffuse moonlight but lose the glint first.
              * moonPhaseInf * moonPhaseInf;
 
-    // Vanilla sets ambient_light 0.25 in the End (the_end.json), so nothing there is ever fully
-    // dark. This pack works out its own lighting and never reads vanilla's lightmap, so it loses
-    // that floor: with no sun in the End either, a surface facing away from everything lands on
-    // zero and reads as a hole rather than a dark shape. Floored against the sky's own colour,
-    // since the sky is the only thing giving off light there.
+    // Vanilla sets ambient_light 0.25 in the End (the_end.json), so nothing there is fully dark.
+    // This pack never reads vanilla's lightmap, so it loses that floor, and with no sun either a
+    // surface facing away from everything reads as a hole. Floored against the sky's own colour,
+    // the only thing giving off light there.
     if (u_WorldBounds.w == 3.0) {
         lit = max(lit, albedo * ambientColour * PLAGUE_END_AMBIENT_FLOOR);
     }
@@ -1602,23 +1258,20 @@ int debugView = int(u_Param3 + 0.5);
     // An energy-conserving mix, never an addition: the reflected term replaces a Fresnel-weighted
     // fraction of the shaded surface rather than piling light on top of it.
     //
-    // Misses fall back to the sky: without it a horizontal mirror (nearly every upward ray leaves
-    // the screen) renders as dark silhouettes wherever a ray hit and flat unreflective metal
-    // wherever one missed. Two guards on that fallback: a sky-visibility gate (a ray with no sky
-    // access contributes nothing rather than black), and no celestial glare (reflecting the sun/moon
-    // disc through a crude directional-sky approximation aliases into sun-correlated sparkle on
-    // block edges as the view moves).
+    // Misses fall back to the sky: without it a horizontal mirror renders as dark silhouettes
+    // where a ray hit and flat metal where one missed. Two guards on that fallback: a
+    // sky-visibility gate, so a ray with no sky access adds nothing rather than black, and no
+    // celestial glare, since reflecting the discs through a crude dome aliases into sparkle on
+    // block edges as the view moves.
     //
-    // SSR_QUALITY off disables only the traced screen-space image; the wide environment lobe below
-    // must remain, since kD has already reserved that material-authored specular energy elsewhere.
+    // SSR_QUALITY off drops only the traced image; the wide lobe below must stay, since kD has
+    // already reserved that specular energy.
     //
-    // Two samples of one buffer at two convolution widths. `ssrSample` is the mirror image at LOD 0
-    // (the chain's seed level is a texel-exact copy of `ssr`). `ssrWideSample` is the same
-    // reflection prefiltered to this material's roughness: ssr_blur's kernel caps at 7x7, so beyond
-    // that cap this mip is what lets authored roughness reach the environment lobe rather than every
-    // roughness rendering alike. One buffer at two mip levels, not two different content sources, so
-    // a rough face shows one blurrier world rather than two different worlds — also why
-    // wideTraceTrust below needs no roughness term.
+    // Two samples of one buffer at two widths. `ssrSample` is the mirror image at LOD 0 (the seed
+    // level is a texel-exact copy of `ssr`). `ssrWideSample` is the same reflection prefiltered to
+    // this material's roughness: ssr_blur's kernel caps at 7x7, so past that cap this mip is what
+    // lets authored roughness reach the environment lobe. One buffer at two mips, not two content
+    // sources, which is also why wideTraceTrust below needs no roughness term.
     vec4 ssrSample = vec4(0.0);
     vec4 ssrWideSample = vec4(0.0);
 #if SSR_QUALITY != 0
@@ -1626,8 +1279,8 @@ int debugView = int(u_Param3 + 0.5);
     ssrWideSample = textureLod(SSR_PREFILTER, texCoord, plagueReflectionLod(1.0 - reflSmoothness));
 #endif
 
-    // Energy is `specularAlbedo` (decided once above), and authored roughness is spent entirely on
-    // lobe width below — no second smoothness curve may attenuate a ray that actually landed.
+    // Energy is `specularAlbedo`, decided once above, and roughness is spent on lobe width below.
+    // No second smoothness curve may dim a ray that landed.
 
     // Same sky the pack paints, sampled once along the mirror direction, celestial disc suppressed.
     // Graded so a reflection miss agrees with the dome it is reflecting.
@@ -1645,18 +1298,17 @@ int debugView = int(u_Param3 + 0.5);
     // Same night correction the diffuse path takes (skyReflectionLift), applied before the warm
     // pull and the underwater override so every consumer of the sky guess agrees. 1.0 in daylight.
     skyMiss *= skyReflectionLift;
-    // Same ground-bounce pull as the ambient: the zenith's raw saturation as reflection content
-    // kept shadowed metal blue at every ambient setting. Real screen-space hits stay faithful; only
-    // this estimate is warmed, and only the dry dome — the underwater override below replaces it.
+    // Same ground-bounce pull as the fill light: raw zenith saturation as reflection content keeps
+    // shadowed metal blue at every setting. Real hits stay faithful; only this dry-dome estimate
+    // is warmed, and the underwater override below replaces it.
     float skyGuessLuma = dot(skyMiss, vec3(0.2126, 0.7152, 0.0722));
     vec3 skyGuessWarm = PLAGUE_GROUND_BOUNCE_TINT
                       * (skyGuessLuma / dot(PLAGUE_GROUND_BOUNCE_TINT,
                                             vec3(0.2126, 0.7152, 0.0722)));
     skyMiss = mix(skyMiss, skyGuessWarm, u_AmbientBounceWarmth * plagueSunFactor);
 #if PLAGUE_UNDERWATER
-    // The sky arm's total override above does not reach a REFLECTED ray, so a missed reflection
-    // needs its own closed, angular open-water radiance or it reverts to a flat patch or visible
-    // sky/stars.
+    // The sky arm's override above does not reach a reflected ray, so a missed reflection needs
+    // its own closed open-water radiance or it shows a flat patch, or sky and stars.
     if (u_WaterState.x > 0.5) {
         vec3 uwMirrorVeil = plagueWaterFogColor(lighting)
                            * plagueAuthoredToLinear(plagueUnderwaterMult(
@@ -1668,40 +1320,34 @@ int debugView = int(u_Param3 + 0.5);
     }
 #endif
 
-    // How much sky this ray could plausibly have reached. A surface with no sky access (indoors, in
-    // a cave) reflects none regardless of direction; that half is the lightmap term.
+    // How much sky this ray could have reached. A surface with no sky access reflects none
+    // whatever its direction; that half is the lightmap term.
     //
     // A horizontal ray points at the horizon, which is sky, so the gate must not be zero there: a
-    // metal wall or door has a horizontal mirror direction, and scoring it 0 collapses reflTotalW
-    // (and with it sharpAvail/wideTraceTrust) to the flat enclosure guess, which is why the pack's
-    // copper doors used to render as the same achromatic grey chrome regardless of wear.
+    // metal wall or door has a horizontal mirror direction, and scoring it 0 collapses reflTotalW,
+    // and with it sharpAvail and wideTraceTrust, onto the flat enclosure guess, which renders
+    // copper doors as grey chrome whatever their wear.
     //
-    // plagueReflHorizon shape, hoisted here so the wide lobe below shares it rather than restating
-    // it inconsistently: 0.5 at the horizon, falling off smoothly either side. Downward rays keep a
-    // small share rather than a hard zero, since a hard cut re-textures the transition.
+    // Hoisted here so the wide lobe below shares the shape: 0.5 at the horizon, falling off either
+    // side. Downward rays keep a small share, since a hard cut re-textures the transition.
     float reflHorizon = smoothstep(-0.35, 0.35, reflDir.y);
     float reflSkyVis = reflHorizon * smoothstep(0.1, 0.7, skyLight);
 
     // Confidence-weighted blend, not a second mix(): a miss with no sky visibility must contribute
     // nothing, not black, which `mix(reflection, sky, 1 - confidence)` would give.
     float reflHitW = clamp(ssrSample.a, 0.0, 1.0);
-    // A single mirror-direction sky lookup is only valid for a narrow lobe; feeding it to rough
-    // materials made medium-rough iron look sky-textured whenever SSR missed.
+    // A single mirror-direction sky lookup is only valid for a narrow lobe; handing it to rough
+    // materials makes medium-rough iron look sky-textured whenever SSR misses. Dielectrics only:
+    // on a metal this gate zeroes the environment on rough misses (~75-87% of texels on real
+    // iron/hopper blocks) with no diffuse card underneath. Conductors take the sharp/wide split
+    // below instead, a blurrier environment rather than nothing.
     //
-    // Dielectric-only: for a metal, this same gate used to zero the environment on rough misses
-    // entirely (measured ~75-87% of texels on real iron/hopper blocks) with no diffuse card to fall
-    // back to. Conductors get the sharp/wide split below instead — a blurrier environment, never
-    // nothing. A dielectric's diffuse lobe makes this cheap gate still the right answer for it.
-    //
-    // How much of the environment actually reaches this fragment, normalized so a fully open,
-    // unshadowed outdoor fragment is exactly 1.0. Built from the pack's own light rather than a
-    // constant: numerator is what this fragment really gets (ambient through the lightmap, sun
-    // through the shadow map, block light including held), denominator is the same fragment fully
-    // open, so a sealed room lit only by a torch still scores real envAccess instead of near-zero.
-    //
-    // This is also where shadow lines return to the reflection: the direct GGX highlight was
-    // already gated by `shadow`, but an environment fill blind to sun occlusion swamped it; dimming
-    // the fill in shadow lets both the highlight and the reflected scene's own shadowing read.
+    // envAccess is how much of the environment reaches this fragment, normalised so a fully open,
+    // unshadowed outdoor fragment is 1.0. The numerator is what the fragment really gets (fill
+    // light through the lightmap, sun through the shadow map, block light including held), the
+    // denominator the same fragment fully open, so a sealed room lit by one torch still scores
+    // real access. It is also where shadow lines reach the reflection: an environment fill blind
+    // to sun occlusion swamps the direct highlight.
     float openLight = dot(ambientColour + sunColour, vec3(0.2126, 0.7152, 0.0722));
     // The denominator stays the fully-open daylight norm, so this cannot inflate an outdoor
     // fragment past 1.0: a torch pushes the numerator up, the clamp takes it back to 1.0.
@@ -1728,9 +1374,8 @@ int debugView = int(u_Param3 + 0.5);
             : ssrSample.rgb;
 
     // Same construction against the prefiltered sample, with its own confidence (the mip averages
-    // its neighbourhood's alpha too, so a lucky hit or a stray miss can't speak for the whole lobe).
-    // skyMiss is reused unfiltered: it's an analytic dome with no high frequencies for a
-    // convolution to remove.
+    // its neighbourhood's alpha too, so one lucky hit cannot speak for the whole lobe). skyMiss is
+    // reused unfiltered: an analytic dome has no high frequencies to convolve away.
     float reflHitWWide = clamp(ssrWideSample.a, 0.0, 1.0);
     float reflSkyWWide = (1.0 - reflHitWWide) * reflSkyVis * skyMirrorCompetence;
     float reflTotalWWide = reflHitWWide + reflSkyWWide;
@@ -1739,59 +1384,51 @@ int debugView = int(u_Param3 + 0.5);
             : ssrWideSample.rgb;
 
     // The environment specular term, for every labPBR material. Adds to the direct highlight
-    // rather than mixing against a substrate: different incoming radiance (a light source vs.
-    // everything else), and kD above already removed this term's share from the diffuse lobe, so
-    // nothing double-counts. Replaces an earlier `mix(lit, reflection, weight)` energy swap that
-    // could not express a metal at all.
+    // rather than mixing against a substrate: different incoming radiance, and kD already took
+    // this term's share out of the diffuse lobe, so nothing counts twice.
     //
-    // Energy is `specularAlbedo` (decided once above); content and lobe width are decided here.
-    // `sharpShare` is x*(2-x) on squared smoothness — a quadratic ease reaching full weight at s=1
-    // with zero slope — and is the fraction of a lobe this narrow that survives as a coherent
-    // image (iron's 0.489 keeps 42%; the rest is smeared, served by the wide term, not missing).
+    // Energy is `specularAlbedo`; content and lobe width are decided here. `sharpShare` is
+    // x*(2-x) on squared smoothness, a quadratic ease reaching full weight at s=1 with zero slope:
+    // the share of a lobe this narrow that survives as a coherent image (iron's 0.489 keeps 42%,
+    // the rest smeared into the wide term).
     //
-    // The wide lobe must be directional, not a flat fill: a reflection hemisphere is roughly half
-    // sky, half ground, and which half a face sees is what makes a solid object read as solid
-    // rather than painted. Sky content fades to the enclosure guess as access drops, rather than
-    // gating to zero, since an upward lobe indoors sees the ceiling, not nothing.
+    // The wide lobe must be directional, not a flat fill: a reflection hemisphere is about half
+    // sky and half ground, and which half a face sees is what makes a solid object read as solid.
+    // Sky content fades to the enclosure guess as access drops rather than gating to zero, since
+    // an upward lobe indoors sees the ceiling.
     //
-    // A forced approximation: ssr_blur's kernel caps at 7x7, so beyond that this two-lobe estimate
-    // stands in for a real convolution. The prefiltered `ssrPrefilter` sample is screen-space and
-    // can't invent data where the trace has none, so this estimate remains the fallback there.
+    // This two-lobe estimate stands in wherever the screen-space trace has no data.
     //
-    // Retired, kept declared unused: PLAGUE_ENV_FILL doubled a discount PLAGUE_ENV_GROUND already
-    // applied to the enclosure arm (tools/verify_conductor_hue.py). Reinstating it is a one-word
-    // edit if an enclosed scene ever reads too bright.
+    // PLAGUE_ENV_FILL is declared unused: it doubled a discount PLAGUE_ENV_GROUND already applies
+    // to the enclosure arm (tools/verify_conductor_hue.py). One word to reinstate if an enclosed
+    // scene reads too bright.
     const float PLAGUE_ENV_FILL = 0.45;
-    // Sky-facing share of the wide lobe, kept separate from FILL: a smeared reflection of open sky
-    // is still sky-bright since blurring preserves the hemisphere average, and discounting it by
-    // FILL stepped conductor luma 4.7x between polished and worn texels under an unchanged sky.
-    // 0.80 (not 1.0) keeps the estimator conservative for the non-sky remainder; numbers fitted in
-    // tools/verify_conductor_hue.py.
+    // Sky-facing share of the wide lobe, kept out of FILL: a smeared reflection of open sky is
+    // still sky-bright, since blurring keeps the hemisphere average, and discounting it by FILL
+    // stepped conductor luma 4.7x between polished and worn texels under one sky. 0.80, not 1.0,
+    // stays conservative for the rest; numbers fitted in tools/verify_conductor_hue.py.
     const float PLAGUE_ENV_SKY = 0.80;
     const vec3 PLAGUE_ENV_GROUND = vec3(0.085, 0.090, 0.070);
     float sharpShare = reflSmoothness * reflSmoothness;
     sharpShare = sharpShare * (2.0 - sharpShare);
 
-    // One slider semantics for every material: it selects content, never energy — both shares sum
-    // to one, so energy is conserved at every slider position (1.0 is the spec result exactly, 0.0
-    // is matte-but-lit).
+    // One slider meaning for every material: it picks content, never energy. Both shares sum to
+    // one, so energy holds at every position (1.0 is the spec result, 0.0 is matte but lit).
     float sharpAvail = 0.0;
 #if SSR_QUALITY != 0
     sharpAvail = clamp(sharpShare * reflTotalW * u_SsrStrength, 0.0, 1.0);
 #endif
 
-    // A lantern belongs in the wide lobe's radiance, not merely its gate: block light previously
-    // reached a surface only through diffuseWithHeld, which is 3.8% of the same irradiance once
-    // kD takes a conductor's diffuse card away entirely.
+    // A lantern belongs in the wide lobe's radiance, not just its gate: through diffuseWithHeld
+    // alone it is 3.8% of the same irradiance once kD takes a conductor's diffuse card away.
     //
-    // Not multiplied by PLAGUE_ENV_GROUND: that product is "terrain lit by local light reflecting
-    // back", but a lantern is the light itself, already a radiance, not something that reflects.
-    // No material branch: a dielectric receives this too, bounded by its own (small) F0, so the
-    // asymmetry with a metal's larger share is physics, not a special case.
+    // Not multiplied by PLAGUE_ENV_GROUND: that product is terrain lit by local light bouncing
+    // back, but a lantern is the light itself. No material branch: a dielectric gets this too,
+    // bounded by its own small F0.
     //
-    // PLAGUE_ENV_BLOCK is the fraction of the reflection hemisphere the emitter and its lit
-    // surroundings occupy — a solid-angle share, not a brightness (distance falloff is already in
-    // the lightmap curve). Laddered on the lantern-on-iron scene in tools/out/labpbr_unified.png.
+    // PLAGUE_ENV_BLOCK is the share of the reflection hemisphere the emitter and its lit
+    // surroundings fill, a solid angle, not a brightness (distance falloff is in the lightmap
+    // curve). Laddered on the lantern-on-iron scene in tools/out/labpbr_unified.png.
     const float PLAGUE_ENV_BLOCK = 0.25;
     vec3 blockRadiance = blockLightColour * plagueBlockLightCurve(blockLight, u_ScreenBrightness)
                        + heldLight;
@@ -1799,30 +1436,25 @@ int debugView = int(u_Param3 + 0.5);
     // Shared with reflSkyVis above rather than a second, independently-drifting expression.
     float wideHorizon = reflHorizon;
     vec3 wideEnclosure = diffuseWithHeld * PLAGUE_ENV_GROUND;
-    // Not dimmed by sun-shadow, same reasoning as reflSkyW: the dome is still overhead in a
-    // sun-shadow.
+    // Not dimmed by sun-shadow, same as reflSkyW: the dome is still overhead in a shadow.
     float wideSkyShare = wideHorizon * smoothstep(0.1, 0.7, skyLight) * envAccess;
-    // No longer takes FILL on top of GROUND (removes a double discount, not a tuned reduction): a
-    // rough conductor's kD is exactly zero, so this estimate is its entire appearance whenever the
-    // trace misses and sky is unreachable — a double discount left it near-black regardless of its
-    // specularAlbedo's true capacity to reflect.
+    // No FILL on top of GROUND: a rough conductor's kD is zero, so this estimate is its whole
+    // appearance when the trace misses and sky is out of reach, and a double discount leaves it
+    // near black whatever its specularAlbedo can reflect.
     vec3 wideEstimate = mix(wideEnclosure, skyMiss * PLAGUE_ENV_SKY, wideSkyShare);
-    // Content continuity for conductors: ssr_blur already owns the roughness spread, so `reflColor`
-    // is the roughness-matched image of the real surroundings wherever the trace or sky guess has
-    // an answer. Rides `metalness` like kD does: a dielectric's sheen sits atop its diffuse card
-    // and can tolerate estimator error; a conductor has no other card. Falls back to the estimate
-    // exactly where the trace does: enclosed, shadowed, or SSR off.
+    // Content continuity for conductors: ssr_blur owns the roughness spread, so `reflColor` is the
+    // roughness-matched image of the surroundings wherever the trace or sky guess has an answer.
+    // Rides `metalness` like kD: a dielectric's sheen sits on its diffuse card and can take
+    // estimator error, a conductor has no other card. Falls back where the trace does.
     float wideTraceTrust = clamp(reflTotalW * u_SsrStrength, 0.0, 1.0) * mat.metalness;
     // reflColorWide, not reflColor: the wide lobe gets the reflection convolved to this material's
     // roughness instead of the mirror image.
     vec3 reflWide = mix(wideEstimate, reflColorWide, wideTraceTrust);
-    // blockRadiance added past every content mix above: a real nearby emitter's solid-angle share,
-    // present regardless of which content won the sky/enclosure or SSR-trust argument. Bounded by
-    // specularAlbedo at the consumption site below like every other term in reflEnv.
+    // blockRadiance is added past every content mix above: a nearby emitter's solid-angle share,
+    // there whichever content won. Bounded by specularAlbedo below like the rest of reflEnv.
     vec3 reflEnv = reflColor * sharpAvail + reflWide * (1.0 - sharpAvail) + blockRadiance * PLAGUE_ENV_BLOCK;
-    // One uniform dim, real hits included: per-texel special-casing here would re-texture the
-    // shadow instead of darkening it. envShadowDim has no material dependence and is capped before
-    // black at every slider position (defined beside the ambient cut above).
+    // One flat dim, real hits included: per-texel handling here would re-texture the shadow
+    // instead of darkening it. envShadowDim has no material term and is capped before black.
     reflEnv *= 1.0 - envShadowDim;
 
     if (debugView == DBG_CONDUCTOR_MIRROR) {
@@ -1838,9 +1470,8 @@ int debugView = int(u_Param3 + 0.5);
         return;
     }
 
-    // Invalid over water/translucent surfaces: water_composite.fsh runs after this pass and
-    // unconditionally overwrites water pixels with no debug-view awareness, so point the crosshair
-    // at opaque geometry.
+    // Invalid over water and translucents: water_composite.fsh runs after this pass and overwrites
+    // water pixels with no debug-view awareness, so aim the crosshair at opaque geometry.
     const vec3 DBG_LUMA_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
     if (debugView == DBG_ENV_SPEC_RATIO) {
         float envSpecLuma = dot(reflEnv * specularAlbedo, DBG_LUMA_WEIGHTS);
@@ -1850,19 +1481,15 @@ int debugView = int(u_Param3 + 0.5);
         return;
     }
 
-    // A decomposition with the same reasoning and number-carrier caveat as DBG_ENV_SPEC_RATIO
-    // above: the ratio named the specular path as ~50x brighter than the diffuse path for the
-    // same surroundings; these three ordinals report every term the ratio is built from, luma-
-    // reduced, so the wrong factor is read off the crosshair rather than guessed at from source.
-    // Split across three ordinals (one vec4 cannot hold eleven values), select one at a time with
-    // the engine's Debug View Cycle, matching EnvSpecularRatioReadback.java's own per-ordinal
-    // labelling, then cycle to the next and measure again. Same water caveat as the ratio view.
+    // Same caveats as DBG_ENV_SPEC_RATIO. The ratio put the specular path ~50x over the diffuse
+    // path for the same surroundings; these ordinals report every term it is built from, luma-
+    // reduced, so the wrong factor is read off the crosshair. One vec4 cannot hold eleven values,
+    // so select one at a time with the engine's Debug View Cycle, matching
+    // EnvSpecularRatioReadback.java's labelling.
     if (debugView == DBG_ENV_DECOMP_SKY) {
-        // The specific question this ordinal answers: skyMiss and ambientColour both describe the
-        // same sky. ambientColour's own comment two screens up says it takes "hue from the sky,
-        // magnitude from the table it replaces"; if that table is a hemisphere-integrated diffuse
-        // ambient and skyMiss is a raw dome radiance sample, the two are in different units and
-        // whichever is larger is a candidate for driving the ~50x gap on its own.
+        // skyMiss and ambientColour both describe the same sky. If ambientColour is a hemisphere
+        // average and skyMiss a raw dome sample, the two are in different units, and whichever is
+        // larger could drive the ~50x gap alone.
         fragColor = vec4(dot(skyMiss, DBG_LUMA_WEIGHTS), dot(ambientColour, DBG_LUMA_WEIGHTS),
                           dot(wideEnclosure, DBG_LUMA_WEIGHTS), dot(reflWide, DBG_LUMA_WEIGHTS));
         return;
@@ -1873,7 +1500,7 @@ int debugView = int(u_Param3 + 0.5);
         return;
     }
     if (debugView == DBG_ENV_DECOMP_MAT) {
-        // .a unused: three values, not four; left explicit rather than repeating an earlier one.
+        // .a unused: three values, not four.
         fragColor = vec4(NdotV, mat.alpha, dot(surfaceF0, DBG_LUMA_WEIGHTS), 0.0);
         return;
     }
@@ -1885,17 +1512,14 @@ int debugView = int(u_Param3 + 0.5);
         return;
     }
     if (debugView == DBG_ENV_DECOMP_AO) {
-        // B/A is the AO comparison this exists for: B = litResult.vanillaAO (the diffuse path's
-        // reshaped occlusion), A = raw `ao` (the specular/wide path's unreshaped input to
-        // envAccess). If they differ substantially, the two paths disagree about occlusion.
+        // B = litResult.vanillaAO (the diffuse path's reshaped occlusion), A = raw `ao` (what
+        // envAccess reads). A large gap means the two paths disagree about occlusion.
         fragColor = vec4(wideHorizon, dot(litDiffuse, DBG_LUMA_WEIGHTS), litResult.vanillaAO, ao);
         return;
     }
     if (debugView == DBG_ENV_DECOMP_RESIDUAL) {
-        // dot(a*b*c, w) != dot(a,w)*dot(b,w)*dot(c,w) unless a/b/c share hue, so a luma-reduced
-        // readback of litDiffuse = kD*albedo*diffuseWithHeld can't reconstruct exactly from the
-        // three separate lumas. This packs each factor's own luma plus the residual so that gap is
-        // measured rather than estimated.
+        // dot(a*b*c, w) != dot(a,w)*dot(b,w)*dot(c,w) unless the three share hue, so the separate
+        // lumas cannot rebuild litDiffuse exactly. This packs each factor plus the residual.
         float albedoLuma = dot(albedo, DBG_LUMA_WEIGHTS);
         float kDLuma = dot(kD, DBG_LUMA_WEIGHTS);
         float diffuseWithHeldLuma = dot(diffuseWithHeld, DBG_LUMA_WEIGHTS);
@@ -1905,9 +1529,8 @@ int debugView = int(u_Param3 + 0.5);
         return;
     }
 
-    // `albedoSample.rgb` is the raw, still-encoded byte every writer put in gAlbedo; `albedo` is
-    // that byte decoded. Only valid when u_AlbedoIdentityDebug is off — when on, terrain.fsh has
-    // repainted gAlbedo with diagnostic floats (DBG_ALBEDO_IDENTITY_INPUTS below).
+    // `albedoSample.rgb` is the raw encoded byte in gAlbedo, `albedo` is it decoded. Only valid
+    // with u_AlbedoIdentityDebug off; on, terrain.fsh has repainted gAlbedo with diagnostic floats.
     if (debugView == DBG_ALBEDO_WRITE_VS_READ) {
         float rawWrittenLuma = dot(albedoSample.rgb, DBG_LUMA_WEIGHTS);
         float decodedAlbedoLuma = dot(albedo, DBG_LUMA_WEIGHTS);
@@ -1915,18 +1538,16 @@ int debugView = int(u_Param3 + 0.5);
         return;
     }
 
-    // Companion to DBG_ALBEDO_WRITE_VS_READ, testing texLuma * tintLuma == albedoLuma: reads gAlbedo
-    // raw (no plagueSrgbToLinear — these are terrain.fsh's diagnostic floats, not colour), and only
-    // means anything when u_AlbedoIdentityDebug is also on (a second toggle since terrain.fsh, a
-    // geometry program, cannot see u_Param3/debugView at all).
+    // Companion to DBG_ALBEDO_WRITE_VS_READ, testing texLuma * tintLuma == albedoLuma. Reads
+    // gAlbedo raw, since these are terrain.fsh's diagnostic floats, not colour, and means
+    // something only with u_AlbedoIdentityDebug on: terrain.fsh cannot see u_Param3 at all.
     if (debugView == DBG_ALBEDO_IDENTITY_INPUTS) {
         fragColor = vec4(albedoSample.r, albedoSample.g, albedoSample.b, albedoSample.a);
         return;
     }
 
-    // Unconditional: this once sat behind a leftover bisect toggle whose off state was sticky in
-    // the user's options file, silently compiling the whole environment term out of the live build.
-    // A term this central does not get a user-visible kill switch.
+    // Unconditional: a term this central gets no user-visible kill switch. A stale off state in an
+    // options file compiles the whole environment term out with no sign of it.
     lit += reflEnv * specularAlbedo * shadowFade;
     if (debugView == DBG_CONDUCTOR_LIT) {
         fragColor = vec4(lit, dot(lit, vec3(0.2126, 0.7152, 0.0722)));
@@ -1935,19 +1556,16 @@ int debugView = int(u_Param3 + 0.5);
 
     // --- Fog --------------------------------------------------------------------------------------
     //
-    // Last, after the reflection mix: fog is a veil in front of the finished surface, attenuating a
-    // bright and dark reflection by the same fraction rather than dimming the highlight without
-    // dimming what it sits on. See shaders/include/fog.glsl and tools/verify_fog.py.
+    // Last, after the reflection mix: fog is a veil in front of the finished surface, dimming a
+    // bright and a dark reflection by the same fraction. See fog.glsl and tools/verify_fog.py.
     //
-    // The reflection is not double-fogged: `ssr` was traced against last frame's finished
-    // sceneHdr, which already carries the reflected surface's own fog. A reflection-aware
-    // correction for the excess path length is deliberately not implemented — the error it would
-    // fix is near zero wherever a screen-space reflection is legible.
+    // The reflection is not fogged twice: `ssr` traced last frame's finished sceneHdr, which
+    // already carries the reflected surface's own fog. No correction for the extra path length:
+    // the error is near zero wherever a screen-space reflection is readable.
 #if PLAGUE_UNDERWATER && defined(SHADOWS) && WATER_CAUSTICS
     // Added to the scene in linear before fog, so distance veils it like everything else. Anchored
-    // to what the sun can deliver here (shadow map + depth transmission gate), sized so bright
-    // lines land 3-5x the sand they dance
-    // on rather than 1.7x a direct term nobody can see.
+    // to what the sun delivers here (shadow map plus the depth gate), sized so bright lines land
+    // 3-5x the sand they dance on.
     if (uwWeb > 0.0) {
         // Sunlight, not blue light: a caustic is focused sunlight, warm-white a block or two down,
         // turning teal only as the water filters red out with depth.
@@ -1961,25 +1579,23 @@ int debugView = int(u_Param3 + 0.5);
         vec3 uwWebAtt = exp(-uwWDepth * vec3(0.18, 0.06, 0.03));
         float uwWebPeak = max(max(uwWebAtt.r, uwWebAtt.g), max(uwWebAtt.b, 1e-4));
         vec3 uwWebSun = plagueAuthoredToLinear(vec3(0.98, 0.99, 0.92)) * (uwWebAtt / uwWebPeak);
-        // Irradiance requires a surface facing the sun — without this, back faces and near-vertical
-        // walls glow as if the caustic image were pasted on them.
+        // Light needs a surface facing the sun: without this, back faces and near-vertical walls
+        // glow as if the caustic image were pasted on them.
         float causticIncidence = smoothstep(0.03, 0.35, ndotl);
-        // cloudShadow belongs in this visibility, not beside it: a caustic is the collimated beam
-        // focused by the surface, and an overcast deck scatters that beam into hemispheric light
-        // with nothing left to focus. Terrain and cloud occlude the same sun. Falls back to 1.0
-        // when CLOUD_SHADOWS is off, which leaves the previous behaviour.
+        // cloudShadow belongs inside this visibility: a caustic is the focused beam, and an
+        // overcast deck scatters that beam into flat light with nothing left to focus. Terrain and
+        // cloud block the same sun. 1.0 when CLOUD_SHADOWS is off.
         float causticShadow = plagueWaterSunVisibility(worldPos, sunDir) * pomShadow * cloudShadow;
-        // Three terms from one visibility (causticShadow, causticIncidence, the strength slider),
-        // all gated by the same occlusion, so bloom and bounce can never appear where the direct
-        // caustic cannot. Deliberately not fed back into extinction or fog: this adds light to the
-        // scene, it does not change the medium.
+        // Three terms off one visibility, so bloom and bounce cannot appear where the direct
+        // caustic cannot. Not fed back into extinction or fog: this adds light, it does not change
+        // the medium.
         float causticVis = causticShadow * u_CausticStrength;
 
         // 1. Direct: the focused light itself, on surfaces facing the sun.
         lit += uwWebSun * uwWeb * causticVis * causticIncidence * 1.15;
 
         // 2. Local bloom: a compact halo on the hot filaments only, pushed past display white so
-        //    the unthresholded bloom pass actually spreads it.
+        //    the unthresholded bloom pass spreads it.
         lit += uwWebSun * uwWebBloom * causticVis * causticIncidence
              * u_CausticGlow * CAUSTICS_BLOOM_STRENGTH * CAUSTICS_HDR_STRENGTH;
 
@@ -2003,9 +1619,8 @@ int debugView = int(u_Param3 + 0.5);
 #if PLAGUE_FOG
     // Ungated on u_WaterState: plagueFogTerms itself carries the eye-in-water arm (fog.glsl).
     {
-        // u_RenderFog.y is the headless/no-client-options fallback, not the primary: it tracks fog
-        // attribute distances rather than the chunk grid, so it can leave the veil below 1.0 right
-        // where geometry ends.
+        // u_RenderFog.y is the headless fallback, not the primary: it tracks fog attribute
+        // distances rather than the chunk grid, so the veil can sit below 1.0 where geometry ends.
         float renderDistance = u_Param2 > 1.0 ? u_Param2 : max(u_RenderFog.y, 32.0);
         // Same interleaved-gradient noise the sky branch dithers its dome with, so fog and the sky
         // it converges to break banding identically rather than crossing patterns.
@@ -2025,8 +1640,8 @@ int debugView = int(u_Param3 + 0.5);
         // fade toward daylight otherwise.
         vec3 fogSky;
         if (u_WorldBounds.w == 2.0) {
-            // Varied by noise on the wind clock so it drifts, not a flat swatch. Placeholder
-            // until phase 5's aerosol profile.
+            // Varied by noise on the wind clock so it drifts. Stands in until a real aerosol
+            // profile.
             float syncedTime = u_SkyState.w * 0.05;
             vec2 driftUv = fogDir.xz * 0.8 + vec2(syncedTime * 0.012, -syncedTime * 0.008);
             float drift = texture(NOISE_TEX, driftUv).r;
@@ -2037,9 +1652,8 @@ int debugView = int(u_Param3 + 0.5);
             fogSky = plagueEndSky(fogDir, plagueEndSkyLevel());
         } else {
             fogSky = plagueAtmoSkyView(fogDir, sunDirTrue, plagueAtmoCameraRadius()).rgb;
-            // Same warmth the open dome above the horizon gets (sky.glsl), sampled along the
-            // border's own ray rather than the eye's: without it, geometry dissolving into the
-            // border veil fades to a sky that is warm above eye level and flatly white just below.
+            // Same warmth the open dome gets (sky.glsl), sampled along the border's own ray:
+            // without it, geometry fades into a sky warm above eye level and flat white below.
             fogSky = plagueWarmSkyBand(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y);
             fogSky = plagueStormDarkenSky(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y,
                                           rainFactor, clamp(u_FrameState.z, 0.0, 1.0));
@@ -2073,10 +1687,9 @@ int debugView = int(u_Param3 + 0.5);
                                                  vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
                                                       plagueChunksToBlocks(u_WaterDarknessDepth)), atmColorMult);
 #endif
-        // No in-water-leg cap on the veil: fogs the whole eye-to-fragment ray. The water term is
-        // the only thing that seals the horizon underwater — the border curve (d/renderDistance)^16
-        // contributes nothing below ~160 blocks — so capping it left the above-water leg with no
-        // veil term of its own, and "no sky visible while under water" needs the full-ray answer.
+        // No cap on the in-water leg: this fogs the whole eye-to-fragment ray. The water term is
+        // the only thing that seals the horizon underwater, since the border curve
+        // (d/renderDistance)^16 gives nothing below ~160 blocks.
         if (u_FogOpacityView > 0.5) {
             // Red edge fog, green distance fog, blue how far the pixel is as a share of the
             // render distance. Blue is there so strength and distance can be read off one still.
@@ -2095,25 +1708,21 @@ int debugView = int(u_Param3 + 0.5);
         lit *= fogTerms.uwTint;
 
 #if PLAGUE_UNDERWATER
-        // Exponential water fog approaches closure asymptotically, leaving loaded chunks as
-        // rectangles against the depth<=0 closed-volume branch; this hands the far field to that
-        // branch before the real render-distance boundary, leaving the near 72% unchanged.
+        // Exponential water fog only approaches closure, leaving loaded chunks as rectangles
+        // against the depth<=0 branch; this hands the far field over before the render-distance
+        // boundary, leaving the near 72% alone.
         //
-        // uwClosureScale takes whichever of render distance or (Water Distance Fog x
-        // uwVisibilityMult) is shorter, so a tight visibility setting actually closes the horizon
-        // near itself instead of deferring entirely to render-distance closure. 3x/6x
-        // (night-or-rain/clear-noon) is where the exponential veil above is already ~95% opaque on
-        // its own, so the handoff starts after the veil has done nearly all the work.
+        // uwClosureScale takes the shorter of render distance and (Water Distance Fog x
+        // uwVisibilityMult), so a tight visibility setting closes the horizon near itself. 3x/6x
+        // (night-or-rain/clear-noon) is where the veil above is already ~95% opaque on its own.
         //
-        // Pure exponential (plagueGetWaterFog, underwater.glsl), not a near/far smoothstep band:
-        // `smoothstep` on length(worldPos) is a sphere test against camera-relative position, and a
-        // sphere intersecting the frustum draws a curved, camera-following edge no near/far retuning
-        // can remove — only an unbounded curve has no edge to draw.
+        // Pure exponential (plagueGetWaterFog), not a near/far smoothstep band: smoothstep on
+        // length(worldPos) is a sphere test against camera-relative position, and a sphere cutting
+        // the frustum draws a curved, camera-following edge no retuning removes.
         //
-        // WATER_CLOSURE folded in as an always-on guarantee rather than a player option: it's
-        // redundant with the base veil whenever distanceFog <= renderDistance, and does real work
-        // only when Water Distance Fog exceeds render distance, so "Water Distance Fog alone
-        // determines underwater visibility" has to hold regardless — nothing here for a toggle to gate.
+        // Always on rather than a player option: it is redundant whenever distanceFog <=
+        // renderDistance and does real work only past that, so "Water Distance Fog alone decides
+        // underwater visibility" has to hold either way.
         if (u_WaterState.x > 0.5 && fragSubmerged) {
             float uwClearNoon = lighting.noonFactor * (1.0 - clamp(lighting.rainFactor, 0.0, 1.0));
             float uwVisibilityMult = mix(3.0, 6.0, uwClearNoon);
@@ -2126,8 +1735,7 @@ int debugView = int(u_Param3 + 0.5);
                 return;
             }
             // Same darkening the geometry veil takes (fog.glsl's terms.waterColor), or the two
-            // paths disagree again in brightness the moment the ramps do anything: the same
-            // problem in a different currency.
+            // paths disagree in brightness the moment the ramps do anything.
             vec3 closedVeil = plagueWaterFogColor(lighting)
                             * plagueWaterVeilDarkness(worldPos,
                                                       plagueChunksToBlocks(u_WaterDistanceFog),

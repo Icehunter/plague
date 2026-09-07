@@ -829,6 +829,31 @@ enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
 inputs = ["builtin.waterNormal", "builtin.waterDepth", "sceneHdr", "builtin.gNormal", "builtin.depth"]
 outputs = ["ssrWaterRaw"]
 
+# Optional engine buffer: real sky and block light, four cells per R32UI word.
+# The engine sets its own window size. With the buffer absent the shader cannot see it.
+[targets.voxelLightmap]
+kind = "buffer"
+enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0"
+
+[targets.voxelWaterReflection]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+# Keeps the blur's input bindable while Off. Only the experimental pass writes or reads it.
+enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+
+[[pass]]
+name = "voxel_water_reflection"
+type = "fullscreen"
+shader = "shaders/post/voxel_water_reflection.fsh"
+enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
+          "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
+          "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+outputs = ["voxelWaterReflection"]
+
 [[pass]]
 name = "ssr_blur_water"
 type = "fullscreen"
@@ -839,7 +864,7 @@ enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
 # ssr_blur_water.fsh header).
 # waterNormal appended so history/clipping can't borrow a lake reflection for a differently-sloped
 # surface (e.g. a waterfall).
-inputs = ["ssrWaterRaw", "ssrWater.history", "builtin.waterDepth", "builtin.waterNormal"]
+inputs = ["ssrWaterRaw", "ssrWater.history", "builtin.waterDepth", "builtin.waterNormal", "voxelWaterReflection"]
 outputs = ["ssrWater"]
 
 # rgba16f, not r8: r/g/b carry active-light / true-sun / true-moon visibility. The three lanes let
@@ -861,6 +886,19 @@ shader = "shaders/post/glint_occlusion.fsh"
 enabled_if = "SSR_WATER_MODE > 0"
 inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth"]
 outputs = ["glintOcclusion"]
+
+# Keeps the screen-space answer and hides glitter only for a confirmed off-screen blocker.
+# Multiply blend avoids reading a target while writing it. Off binds no voxel buffers.
+[[pass]]
+name = "glint_occlusion_voxel"
+type = "fullscreen"
+shader = "shaders/post/glint_occlusion_voxel.fsh"
+enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
+          "builtin.blockAtlas", "voxelFaceTexture"]
+outputs = ["glintOcclusion"]
+blend = "multiply"
 
 [[pass]]
 name = "water_volume_interval"
@@ -1214,6 +1252,53 @@ outputs = ["builtin.output"]
 # world column owns one slot with no resample step; (2) the write pass must run LAST — Fornax adds no
 # compute→fullscreen dependency for a pack pass, so ordering it last is what makes the same-frame
 # read deliberately one-frame-old rather than a race.
+
+# Coverage test only: no voxel colour reaches SSR or the water composite.
+# Quarter width and height, so one ray covers sixteen full-size pixels.
+[targets.voxelOccupancy]
+kind = "buffer"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0"
+
+[targets.voxelPayload]
+kind = "buffer"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0"
+
+[targets.voxelPalette]
+kind = "buffer"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0"
+
+# Optional baked face UV and tint buffer, allocated only for the experimental reflections.
+[targets.voxelFaceTexture]
+kind = "buffer"
+enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0"
+
+[targets.voxelBrickSummary]
+kind = "buffer"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0"
+
+[targets.voxelCoverage]
+format = "rgba8"
+scale = 0.25
+filter = "linear"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0"
+
+[[pass]]
+name = "voxel_coverage"
+type = "fullscreen"
+shader = "shaders/post/voxel_coverage.fsh"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0"
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary"]
+outputs = ["voxelCoverage"]
+
+[[pass]]
+name = "voxel_coverage_overlay"
+type = "fullscreen"
+shader = "shaders/post/voxel_coverage_overlay.fsh"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0"
+blend = "translucent"
+inputs = ["voxelCoverage"]
+outputs = ["builtin.output"]
 
 # Restores depth for vanilla translucents and first-person rendering, which draw after the graph.
 [[pass]]

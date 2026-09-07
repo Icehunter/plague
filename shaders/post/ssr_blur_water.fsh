@@ -1,37 +1,38 @@
 #version 330
 
-// Water-specific reflection resolve: nine-tap footprint scaled by roughness, cross-surface donors
-// rejected, then temporal accumulation via a motion vector derived here from builtin.waterDepth
-// rather than builtin.gMotion (which carries the seabed's motion, not the surface's).
+// Water reflection resolve: nine taps scaled by roughness, donors from another surface rejected,
+// then temporal accumulation. The motion vector is built here from builtin.waterDepth, not
+// builtin.gMotion, which carries the seabed's motion and not the surface's.
 //
 // A separate file from ssr_blur.fsh because FullscreenPassRunner keys shader identity on the
-// `shader` path alone — two passes naming one file would compile to the same program.
+// `shader` path alone: two passes naming one file compile to the same program.
 //
-// Reprojection assumes the water surface doesn't translate horizontally: wave displacement
+// Reprojection assumes the water surface does not move sideways: wave displacement
 // (plagueWaveSurfaceDisplacement) is asserted purely vertical, so world XZ under a water pixel is
-// fixed even though the surface itself now moves (up to ~0.19-0.37 blocks vertically). The residual
-// vertical error is small against the roughness blur radius and left unreprojected.
+// fixed while the surface moves up and down by up to 0.19 to 0.37 blocks. That leftover vertical
+// error is small against the roughness blur radius and is left unreprojected. A camera plus wave
+// motion vector cannot be built at any price: the wave clock (u_SkyState.w) has no previous-frame
+// value to diff against.
 //
-// A camera+wave motion vector isn't just expensive, it's unbuildable: the wave clock
-// (u_SkyState.w) has no previous-frame counterpart to diff against.
+// A moving crest still shows as a colour change even with correct reprojection: the reflected
+// direction swings with the normal (measured 0.54 deg per frame at 60fps, tools/verify_ssr.py).
+// Nothing in the geometry domain can see a wave, so two colour guards catch it: history weight
+// runs 0.35 (mirror) to 0.58 (rough) rather than a fixed blend, and clipping bounds history into
+// this frame's confident 3x3 box first.
 //
-// A moving crest still shows up as a colour-domain change even with correct reprojection, since the
-// reflected direction swings with the normal (measured ~0.54 deg/frame normal turn at 60fps,
-// tools/verify_ssr.py). Two things catch it: temporal history weight varies 0.35 (mirror) to 0.58
-// (rough) rather than a fixed blend, and neighbourhood clipping bounds history into this frame's
-// confident 3x3 box before blending — nothing in the geometry domain can see a wave, so the colour
-// domain is the only place to catch one.
-//
-// No second (motion) attachment: doesn't fit the existing target (out of spare bits at usable
-// precision), and a real second attachment costs five engine files for a value already
-// reconstructible from the depth sample this pass reads. u_CameraDelta was the one engine addition
-// needed — both model-view matrices in u_Globals are rotation-only, so previous-frame matrices alone
-// could reproject a stationary camera but not a moving one.
+// No second (motion) attachment: it does not fit the existing target at usable precision, and a
+// real one costs five engine files for a value this pass can rebuild from the depth it reads.
+// u_CameraDelta comes from the engine: both model-view matrices in u_Globals are rotation only, so
+// previous-frame matrices alone reproject a still camera but not a moving one.
 
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:water_reflection.glsl>
 
 uniform sampler2D u_Input0; // ssrWaterRaw
+#define PLAGUE_VOXEL_REFLECTIONS 0 //[0 1] compile "Voxel Water Reflections" {0="Off" 1="Experimental"}
+#if PLAGUE_VOXEL_REFLECTIONS != 0
+uniform sampler2D u_Input4; // half-resolution current SSR + voxel fallback
+#endif
 uniform sampler2D u_Input1; // ssrWater.history
 uniform sampler2D u_Input2; // builtin.waterDepth: reversed-Z, 0.0 = no water
 uniform sampler2D u_Input3; // builtin.waterNormal: raw world normal + signed water flags
@@ -59,15 +60,37 @@ const float PLAGUE_WATER_FILTER_WEIGHTS[9] = float[9](
     0.07, 0.07, 0.07, 0.07
 );
 
-// Relative threshold, not ssr_blur's absolute 0.05: an absolute distance test collapses over a lake's
-// range (measured largest valid-reprojection disagreement 1.9e-4, 260x under 0.05, so it'd never fire).
+// Relative threshold, not ssr_blur's absolute 0.05: a fixed distance test breaks down over a lake's
+// range. Largest measured valid-reprojection gap is 1.9e-4, 260x under 0.05, so it would never fire.
 const float SSR_WATER_DISOCCLUSION_RATIO = 0.25;
 
 in vec2 texCoord;
 out vec4 fragColor;
 
-// Depth alone can't distinguish a lake from a neighbouring waterfall pixel; this also checks normal
-// agreement to reject cross-slope donors before they become a borrowed rectangle of sky.
+// Keep the full-size SSR donors. Only weak rays look at the half-size fallback.
+vec4 plagueWaterRaw(vec2 uv) {
+    vec4 screen = texture(u_Input0, uv);
+#if PLAGUE_VOXEL_REFLECTIONS != 0
+    if (u_WaterState.x > 0.5) { screen.a = abs(screen.a); return screen; }
+    // A trusted surface is geometry, even where its confidence has faded toward sky.
+    if (screen.a > 0.5) return vec4(screen.rgb, 1.0);
+    if (screen.a <= 0.5) {
+        vec4 fallback = texture(u_Input4, uv);
+        // Empty fallback pixels are zero. Divide the coverage back out at the half-size edge.
+        if (fallback.a > 0.5) {
+            // Fade at the trusted-donor edge rather than switching colour outright.
+            // Negative confidence means sky, and must never tint a known geometry hit.
+            float screenWeight = smoothstep(0.0, 0.5, max(screen.a, 0.0));
+            return vec4(mix(fallback.rgb / fallback.a, screen.rgb, screenWeight), 1.0);
+        }
+    }
+#endif
+    screen.a = abs(screen.a); // Put sky confidence back when no geometry was found.
+    return screen;
+}
+
+// Depth alone cannot tell a lake from a waterfall pixel beside it, so this checks the normals too
+// and rejects donors on a different slope before they become a borrowed patch of sky.
 float plagueWaterSurfaceAgreement(vec2 uv, float centerDepth, vec3 centerNormal) {
     float sampleDepth = texture(u_Input2, uv).r;
     if (sampleDepth <= 0.0) {
@@ -92,8 +115,8 @@ float plagueWaterSurfaceAgreement(vec2 uv, float centerDepth, vec3 centerNormal)
 }
 
 void main() {
-    // Early-out for non-water pixels (most of the frame). Writes zero rather than discarding, since
-    // this target ping-pongs and a discard would keep the value from two frames ago.
+    // Early out for non-water pixels, most of the frame. Writes zero rather than discarding: this
+    // target ping-pongs, and a discard would keep the value from two frames back.
     float centerDepth = texture(u_Input2, texCoord).r;
     if (centerDepth <= 0.0) {
         fragColor = vec4(0.0);
@@ -111,7 +134,7 @@ void main() {
         fragColor = vec4(0.0);
         return;
     }
-    vec4 raw = texture(u_Input0, texCoord);
+    vec4 raw = plagueWaterRaw(texCoord);
     vec4 resolved = raw;
 
     float normalizedRoughness = clamp(
@@ -128,7 +151,7 @@ void main() {
         vec2 sampleUv = clamp(
                 texCoord + PLAGUE_WATER_FILTER_OFFSETS[tap] * texelSize * radiusPx,
                 texelSize * 0.5, vec2(1.0) - texelSize * 0.5);
-        vec4 sampleValue = texture(u_Input0, sampleUv);
+        vec4 sampleValue = plagueWaterRaw(sampleUv);
         float confidence = clamp(sampleValue.a, 0.0, 1.0);
         float agreement = plagueWaterSurfaceAgreement(
                 sampleUv, centerDepth, centerNormal);
@@ -138,9 +161,9 @@ void main() {
         filterWeight += weight;
         coverageWeight += agreement * PLAGUE_WATER_FILTER_WEIGHTS[tap];
     }
-    // A miss is filled only when it is a pinhole inside a hit region. Filling at the region's edge
-    // bleeds the hit outward as a halo over water that correctly missed. Half: a pinhole has hits
-    // all round, an edge has hits on one side.
+    // A miss is filled only when it is a pinhole inside a hit region. Filling at the edge bleeds
+    // the hit outward as a halo over water that rightly missed. Half: a pinhole has hits all round,
+    // an edge has hits on one side.
     bool fillableMiss = raw.a > 0.0 || filterWeight >= 0.5 * coverageWeight;
     if (filterWeight > 1e-5 && fillableMiss) {
         float confidence = filteredConfidence / filterWeight;
@@ -150,13 +173,13 @@ void main() {
         resolved = vec4(filteredColour / filterWeight, clamp(confidence, 0.0, 1.0));
     }
 
-    // u_InvProjModelView is the jittered inverse deliberately: it must agree with the rasterized
-    // waterDepth it's inverting.
+    // u_InvProjModelView is the jittered inverse on purpose: it must match the drawn waterDepth
+    // it inverts.
     vec4 world = u_InvProjModelView * vec4(texCoord * 2.0 - 1.0, centerDepth, 1.0);
     vec3 posNow = world.xyz / world.w;
 
-    // + u_CameraDelta reprojects into the previous frame's camera space, the pairing terrain.vsh gets
-    // for free from u_PrevRegionOffset.
+    // + u_CameraDelta reprojects into the previous frame's camera space, the pairing terrain.vsh
+    // gets free from u_PrevRegionOffset.
     vec4 prevClip = u_PrevProjectionMatrix * u_PrevModelViewMatrix
             * vec4(posNow + u_CameraDelta.xyz, 1.0);
 
@@ -173,8 +196,8 @@ void main() {
     }
     if (validHistory) {
         float prevDepth = texture(u_Input2, previousUv).r;
-        // No water at the reprojected pixel means history there is a hard zero (early-out above);
-        // blending it would drag a real reflection toward black.
+        // No water at the reprojected pixel means history there is a hard zero, from the early
+        // out above. Blending it would drag a real reflection toward black.
         validHistory = prevDepth > 0.0
                 && abs(centerDepth - prevDepth)
                         <= SSR_WATER_DISOCCLUSION_RATIO * max(centerDepth, prevDepth)
@@ -182,15 +205,15 @@ void main() {
     }
 
     if (validHistory) {
-        // Misses excluded from the clip box deliberately: a miss writes vec4(0), which would drop
-        // every lower bound to zero and let any stale-dark value through unclamped.
+        // Misses are kept out of the clip box on purpose: a miss writes vec4(0), which would drop
+        // every lower bound to zero and let any stale dark value through unclamped.
         vec4 lo = vec4(1e30);
         vec4 hi = vec4(-1e30);
         bool haveBounds = false;
         for (int y = -1; y <= 1; y++) {
             for (int x = -1; x <= 1; x++) {
                 vec2 sampleUv = texCoord + vec2(float(x), float(y)) * texelSize;
-                vec4 n = texture(u_Input0, sampleUv);
+                vec4 n = plagueWaterRaw(sampleUv);
                 if (n.a <= 0.0 || plagueWaterSurfaceAgreement(
                         sampleUv, centerDepth, centerNormal) <= 0.25) {
                     continue;
