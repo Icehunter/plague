@@ -11,6 +11,7 @@
 #moj_import <fornax_runtime:light_and_ambient_colors.glsl>
 #moj_import <fornax_runtime:light_options.glsl>
 #moj_import <fornax_runtime:sky.glsl>
+#moj_import <fornax_runtime:cloud_history.glsl>
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
@@ -30,6 +31,14 @@ layout(rgba16f, set = 0, binding = 5) uniform readonly image2D u_SkyView;
 layout(rgba16f, set = 0, binding = 6) uniform readonly image2D u_Transmittance;
 layout(rgba16f, set = 0, binding = 7) uniform writeonly image2D u_OutClouds;
 layout(r32f, set = 0, binding = 8) uniform writeonly image2D u_OutCloudDistance;
+
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+// Raw history writers append outputs, leaving all original bindings intact.
+layout(rgba16f, set = 0, binding = 9) uniform writeonly image2D u_OutCloudHistory;
+layout(r32f, set = 0, binding = 10) uniform writeonly image2D u_OutCloudHistoryData;
+layout(r32f, set = 0, binding = 11) uniform writeonly image2D u_OutCloudHistoryDistance;
+layout(r32f, set = 0, binding = 12) uniform writeonly image2D u_OutCloudHistoryState;
+#endif
 
 #define PLAGUE_CLOUD_NOISE_3D(uvw) texture(u_CloudBaseShapeVolume, uvw)
 #define PLAGUE_CLOUD_DETAIL_3D(uvw) texture(u_CloudDetailShapeVolume, uvw)
@@ -155,6 +164,60 @@ void plaguePrepareCloudWorkgroup() {
 }
 #endif
 
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+#define PLAGUE_CLOUD_HISTORY_WRITE_STATE
+#moj_import <fornax_runtime:cloud_history_state.glsl>
+
+void plagueStoreCloudHistoryState(int row, vec4 value) {
+    for (int lane = 0; lane < 4; lane++) {
+        imageStore(u_OutCloudHistoryState, ivec2(row, lane), vec4(value[lane]));
+    }
+}
+
+void plagueWriteCloudHistoryState(ivec2 size) {
+    plagueStoreCloudHistoryState(0,
+               vec4(u_FrameState.x + 1.0, u_SkyState.w, vec2(size)));
+    plagueStoreCloudHistoryState(1, u_WorldBounds);
+    plagueStoreCloudHistoryState(2, u_WorldClock);
+    plagueStoreCloudHistoryState(3,
+               vec4(u_SkyState.x, u_FrameState.zw, u_SkyState.z));
+    plagueStoreCloudHistoryState(4,
+               vec4(u_ProjectionMatrix[0][0], u_ProjectionMatrix[1][1],
+                    u_ProjectionMatrix[2][2], u_ProjectionMatrix[3][2]));
+    plagueStoreCloudHistoryState(5,
+               vec4(u_ScreenBrightness, u_RenderFog.y, u_CameraSkyLight.yw));
+    for (int i = PLAGUE_CLOUD_HISTORY_DECK_ROW; i < PLAGUE_CLOUD_HISTORY_OPTION_ROW; i++) {
+        plagueStoreCloudHistoryState(i, vec4(0.0));
+    }
+#if CLOUDS_VOLUMETRIC
+    if (u_SkyState.z > 0.5) {
+        PlagueCloudDeck decks[PLAGUE_CLOUD_LAYERS] = PlagueCloudDeck[PLAGUE_CLOUD_LAYERS](
+            convectiveDeck, sheetDeck, stratiformDeck, rollDeck,
+            altocumulusDeck, cirrocumulusDeck, cirrusDeck);
+        for (int i = 0; i < PLAGUE_CLOUD_LAYERS; i++) {
+            plagueStoreCloudHistoryState(PLAGUE_CLOUD_HISTORY_DECK_ROW + i,
+                       vec4(decks[i].cell, decks[i].shear, decks[i].axisSwing,
+                            PLAGUE_CLOUD_WIND_SPEED * max(u_CloudSpeed, 0.0)
+                            / (max(decks[i].cell, 1e-3) * PLAGUE_CLOUD_WIND_LENGTH)));
+        }
+    }
+#endif
+    plagueStoreCloudHistoryState(PLAGUE_CLOUD_HISTORY_WIND_ROW,
+                                vec4(PLAGUE_CLOUD_WIND, PLAGUE_CLOUD_DRIFT_WRAP, 0.0));
+    for (int i = PLAGUE_CLOUD_HISTORY_OPTION_ROW; i < PLAGUE_CLOUD_HISTORY_STATE_ROWS; i++) {
+        plagueStoreCloudHistoryState(i,
+                   plagueCloudHistoryOptions(i - PLAGUE_CLOUD_HISTORY_OPTION_ROW));
+    }
+}
+
+void plagueWriteCloudHistory(ivec2 pixel, vec4 colour, float distance, uint mask) {
+    imageStore(u_OutCloudHistory, pixel, colour);
+    // A per-pixel source stamp prevents cleared/reallocated or skipped images masquerading as history.
+    imageStore(u_OutCloudHistoryData, pixel, vec4(plagueCloudHistoryPack(mask, u_FrameState.x + 1.0)));
+    imageStore(u_OutCloudHistoryDistance, pixel, vec4(distance));
+}
+#endif
+
 void main() {
 #if CLOUDS_VOLUMETRIC
     if (gl_LocalInvocationIndex == 0u && u_SkyState.z > 0.5) {
@@ -168,12 +231,20 @@ void main() {
     if (any(greaterThanEqual(texelCoord, outSize))) {
         return;
     }
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+    if (all(equal(texelCoord, ivec2(0)))) {
+        plagueWriteCloudHistoryState(outSize);
+    }
+#endif
 #if CLOUDS_VOLUMETRIC
     vec2 texCoord = (vec2(texelCoord) + 0.5) / vec2(outSize);
 
     if (u_SkyState.z <= 0.5) {
         imageStore(u_OutClouds, texelCoord, vec4(0.0));
         imageStore(u_OutCloudDistance, texelCoord, vec4(0.0));
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+        plagueWriteCloudHistory(texelCoord, vec4(0.0), 0.0, 0u);
+#endif
         return;
     }
 
@@ -246,6 +317,13 @@ void main() {
                                    renderDistance, front[6]);
     }
 
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+    uint contributor[PLAGUE_CLOUD_LAYERS];
+    for (int i = 0; i < PLAGUE_CLOUD_LAYERS; i++) {
+        contributor[i] = 1u << uint(i);
+    }
+#endif
+
     // Sorted by where the ray first meets material. A missed deck reports front 0 and zero alpha;
     // treating 0 as infinitely far sorts it last, where zero alpha changes nothing.
     for (int i = 0; i < PLAGUE_CLOUD_LAYERS - 1; i++) {
@@ -259,6 +337,11 @@ void main() {
                 float swapFront = front[j];
                 front[j] = front[j + 1];
                 front[j + 1] = swapFront;
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+                uint swapContributor = contributor[j];
+                contributor[j] = contributor[j + 1];
+                contributor[j + 1] = swapContributor;
+#endif
             }
         }
     }
@@ -272,13 +355,21 @@ void main() {
     // reports a front distance until its alpha reaches zero, so the nearest JUMPS to the next layer
     // when the near one drops out; the composite gates the whole union on this against terrain
     // depth, so that jump deletes every layer at once. Weighting retires a fading layer's distance
-    // continuously, and gives the mean distance of the drawn mass.
+    // continuously. This is a weighted mean of sampled fronts, not a material surface or centroid.
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+    uint contributorMask = 0u;
+#endif
     float frontTransmittance = 1.0;
     float frontWeight = 0.0;
     float cloudFrontDistance = 0.0;
     for (int i = 0; i < PLAGUE_CLOUD_LAYERS; i++) {
         float contribution = layer[i].a * frontTransmittance;
         frontTransmittance *= 1.0 - layer[i].a;
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+        if (contribution > 0.0) {
+            contributorMask |= contributor[i];
+        }
+#endif
         if (front[i] > 0.0) {
             cloudFrontDistance += front[i] * contribution;
             frontWeight += contribution;
@@ -288,8 +379,14 @@ void main() {
 
     imageStore(u_OutClouds, texelCoord, clouds);
     imageStore(u_OutCloudDistance, texelCoord, vec4(cloudFrontDistance));
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+    plagueWriteCloudHistory(texelCoord, clouds, cloudFrontDistance, contributorMask);
+#endif
 #else
     imageStore(u_OutClouds, texelCoord, vec4(0.0));
     imageStore(u_OutCloudDistance, texelCoord, vec4(0.0));
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+    plagueWriteCloudHistory(texelCoord, vec4(0.0), 0.0, 0u);
+#endif
 #endif
 }

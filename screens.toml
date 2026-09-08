@@ -730,6 +730,8 @@ elements = [
     "PLAGUE_DEBUG_VIEWS",
 
     "<group:Clouds>",
+    "PLAGUE_CLOUD_HISTORY_DEBUG|requires:CLOUDS_VOLUMETRIC",
+    "PLAGUE_CLOUD_TEMPORAL|requires:CLOUDS_VOLUMETRIC",
     "u_CloudFormHold|requires:CLOUDS_VOLUMETRIC",
     "u_CloudMoisture|requires:CLOUDS_VOLUMETRIC",
     "u_CloudStability|requires:CLOUDS_VOLUMETRIC",
@@ -753,6 +755,23 @@ pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "occlusion
 
 # Prose shown in each option's tooltip, above the mechanical Default/Range/Applies lines.
 [descriptions]
+PLAGUE_CLOUD_HISTORY_DEBUG = """
+Compares raw previous clouds against a complete fresh march in a corner panel, independently of Cloud Temporal Blend.
+Candidates: green = single-layer match (not blend acceptance); yellow = overlapping layers; magenta = moving cirrus;
+blue = frame/state reset; red = outside history; cyan = source/layer mismatch; black = empty.
+Error: candidate pixels show relative colour error in red, opacity error in green and depth-proxy error in blue.
+Rejected pixels keep their marker colours. Dark candidate pixels are closer to the fresh result.
+Pan, move, change time/weather and resize to inspect correspondence. Temporarily adds history memory and work.
+The panel can appear in reflections or AA history while enabled. Off removes it.
+No cloud rays are skipped in either mode."""
+
+PLAGUE_CLOUD_TEMPORAL = """
+Blends two fresh cloud frames where motion, layer identity and local colour/depth bounds agree.
+Keeps the complete fresh march every frame and at least half of the current colour; uncertain pixels stay fresh.
+Previous history is never the blended result. Cloud distance remains fresh.
+This validation stage adds memory, reads and a copy; it does not reduce cloud work or improve FPS yet.
+Compare Off/On while stationary, panning and changing time/weather. Leave Cloud History Off for an unobstructed view."""
+
 PLAGUE_VOXEL_REFLECTIONS = """
 Recovers missing water reflections from nearby world geometry, including terrain outside the screen.
 Needs Water Surface set to Reflective and Reflections set to Fancy or Fast.

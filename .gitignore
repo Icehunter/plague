@@ -14,3 +14,5 @@ tools/captures/
 
 # glslangValidator writes <stage>.spv into the working directory when -V is passed with no -o.
 *.spv
+# This source generator is part of the shader metadata contract, not local-only tooling.
+!tools/derive_cloud_history_state.py

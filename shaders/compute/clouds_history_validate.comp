@@ -1,0 +1,43 @@
+#version 450
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:cloud_history.glsl>
+#moj_import <fornax_runtime:cloud_history_state.glsl>
+#moj_import <fornax_runtime:cloud_history_read.glsl>
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+layout(rgba16f, set = 0, binding = 10) uniform writeonly image2D u_HistoryProbe;
+
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0
+vec3 plagueCloudHistoryMarker(int reason) {
+    // Categorical display: RGB primaries and their sums, not cloud-lighting constants.
+    if (reason == 0) return vec3(0, 1, 0); // candidate, not proof of reusable radiance
+    if (reason == 1) return vec3(0, 0, 1); // frame/state reset
+    if (reason == 2) return vec3(0);       // empty
+    if (reason == 3) return vec3(1, 1, 0); // overlapping contributors
+    if (reason == 4) return vec3(1, 0, 1); // non-rigid wind
+    if (reason == 5) return vec3(1, 0, 0); // outside history footprint
+    return vec3(0, 1, 1);                 // source/deck mismatch
+}
+#endif
+
+void main() {
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0
+    if (gl_LocalInvocationIndex == 0u) plagueCloudHistoryCheckFrame();
+    barrier();
+#endif
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, imageSize(u_HistoryProbe)))) return;
+    vec3 colour = vec3(0.0);
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0
+    vec3 error;
+    PlagueCloudHistorySample historySample;
+    int reason = plagueCloudHistoryCandidate(pixel, error, historySample);
+    colour = plagueCloudHistoryMarker(reason);
+#if PLAGUE_CLOUD_HISTORY_DEBUG == 2
+    if (reason == 0) colour = clamp(error, 0.0, 1.0);
+#endif
+#endif
+    imageStore(u_HistoryProbe, pixel, vec4(colour, 1.0));
+}
