@@ -756,21 +756,23 @@ pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "occlusion
 # Prose shown in each option's tooltip, above the mechanical Default/Range/Applies lines.
 [descriptions]
 PLAGUE_CLOUD_HISTORY_DEBUG = """
-Compares raw previous clouds against a complete fresh march in a corner panel, independently of Cloud Temporal Blend.
+Compares raw previous clouds against the fresh march at the selected temporal sample budget in a corner panel.
 Candidates: green = single-layer match (not blend acceptance); yellow = overlapping layers; magenta = moving cirrus;
 blue = frame/state reset; red = outside history; cyan = source/layer mismatch; black = empty.
 Error: candidate pixels show relative colour error in red, opacity error in green and depth-proxy error in blue.
 Rejected pixels keep their marker colours. Dark candidate pixels are closer to the fresh result.
 Pan, move, change time/weather and resize to inspect correspondence. Temporarily adds history memory and work.
 The panel can appear in reflections or AA history while enabled. Off removes it.
-No cloud rays are skipped in either mode."""
+No cloud pixels are skipped in either mode."""
 
 PLAGUE_CLOUD_TEMPORAL = """
 Blends two fresh cloud frames where motion, layer identity and local colour/depth bounds agree.
-Keeps the complete fresh march every frame and at least half of the current colour; uncertain pixels stay fresh.
+Full samples uses the normal march budget. Half samples halves the slab and grazing-ray budgets above their existing minimums.
+Every pixel is freshly marched, with at least half of its current colour retained; uncertain pixels use only that fresh result.
+In Half mode this fallback is also half-budget, not a second full-quality march. Thin detail and motion can become noisier.
 Previous history is never the blended result. Cloud distance remains fresh.
-This validation stage adds memory, reads and a copy; it does not reduce cloud work or improve FPS yet.
-Compare Off/On while stationary, panning and changing time/weather. Leave Cloud History Off for an unobstructed view."""
+History adds memory and filtering work. Minimum sample counts and early exits mean Half does not guarantee half the cost.
+Compare Full/Half while stationary, panning and changing time/weather, including water reflections. Leave Cloud History Off to compare."""
 
 PLAGUE_VOXEL_REFLECTIONS = """
 Recovers missing water reflections from nearby world geometry, including terrain outside the screen.

@@ -45,6 +45,9 @@ layout(r32f, set = 0, binding = 12) uniform writeonly image2D u_OutCloudHistoryS
 #define PLAGUE_PRECIP_CLIPMAP(slot) precipCoarseClipmap.words[slot]
 #define PLAGUE_ATMO_READS_SKYVIEW
 #define PLAGUE_ATMO_READS_TRANSMITTANCE
+#if PLAGUE_CLOUD_TEMPORAL == 2
+#define PLAGUE_CLOUD_REDUCED_MARCH
+#endif
 #moj_import <fornax_runtime:clouds.glsl>
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
@@ -203,7 +206,8 @@ void plagueWriteCloudHistoryState(ivec2 size) {
     }
 #endif
     plagueStoreCloudHistoryState(PLAGUE_CLOUD_HISTORY_WIND_ROW,
-                                vec4(PLAGUE_CLOUD_WIND, PLAGUE_CLOUD_DRIFT_WRAP, 0.0));
+                                // Include the sample mode in frame compatibility, even if storage survives a reload.
+                                vec4(PLAGUE_CLOUD_WIND, PLAGUE_CLOUD_DRIFT_WRAP, float(PLAGUE_CLOUD_TEMPORAL)));
     for (int i = PLAGUE_CLOUD_HISTORY_OPTION_ROW; i < PLAGUE_CLOUD_HISTORY_STATE_ROWS; i++) {
         plagueStoreCloudHistoryState(i,
                    plagueCloudHistoryOptions(i - PLAGUE_CLOUD_HISTORY_OPTION_ROW));

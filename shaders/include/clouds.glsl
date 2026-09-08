@@ -557,6 +557,10 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // The player's budget for this deck's group. The floors below keep the lowest setting a
     // coarser deck rather than a missing one.
     slabSteps *= deckQuality;
+#ifdef PLAGUE_CLOUD_REDUCED_MARCH
+    // Half mode divides the per-frame budget by two; the existing spatial floors still apply.
+    slabSteps *= 0.5;
+#endif
     slabSteps = max(slabSteps, PLAGUE_CLOUD_MIN_SLAB_STEPS);
     float stepLen = deck.depth / slabSteps;
     // The cap, not the slab budget, is what a long ray actually spends: a shallow ray reaches it
@@ -570,7 +574,12 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // less resolution has to be told so here or it pays full price on every ray to the horizon. The
     // floor still keeps the lowest setting a coarser deck rather than a missing one.
     int stepCap = max(int(plagueCloudTierStepCap(deck.tier) * deckQuality
-                              * clamp(deck.stepScale, 0.05, 1.0) + dither),
+                              * clamp(deck.stepScale, 0.05, 1.0)
+#ifdef PLAGUE_CLOUD_REDUCED_MARCH
+                              // Reduce the grazing-ray budget too, before rounding and the floor.
+                              * 0.5
+#endif
+                              + dither),
                       int(PLAGUE_CLOUD_MIN_SLAB_STEPS) * 2);
 
     int steps = max(int(ceil(span / stepLen)), 1);
