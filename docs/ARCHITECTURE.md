@@ -244,6 +244,18 @@ measurement, or the render it was tuned against.
 
 ### Voxel water reflection recovery
 
+`voxel_water_reflection_pass.glsl` holds the shared fullscreen implementation. The Debug option
+`PLAGUE_VOXEL_PROFILE` adds five timing draws: primary trace including alpha, surface
+decode, direct lighting including shadows, the full reflection without segment fog, and the full
+reflection again. Their half-size `voxelReflectionProbe` scratch target is never consumed by water
+composition. Off removes the target and all five draws. The normal draw's shader body is unchanged
+by this option.
+Prefix outputs retain intermediate fields to prevent unused-result elimination; their timing
+differences include those output sinks, compiler choices and cache/order effects. Full minus
+no-fog estimates segment fog cost; no-fog minus direct estimates secondary reflection cost. Both
+are marginal draw differences, not exact timings inside the normal shader, and enabled-mode FPS
+is not a gameplay benchmark.
+
 `PLAGUE_VOXEL_REFLECTIONS` defaults On under Reflections and runs `voxel_water_reflection` between
 the water SSR trace and the blur, at half size. It needs reflective water and SSR on. Screen-space
 geometry stays the detailed source; this fills in where SSR found nothing. With the option on, SSR

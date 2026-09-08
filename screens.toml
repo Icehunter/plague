@@ -737,6 +737,7 @@ elements = [
     "<group:Water>",
     "PLAGUE_WATER_REFLECTION_DEBUG",
     "PLAGUE_VOXEL_COVERAGE",
+    "PLAGUE_VOXEL_PROFILE",
     "PLAGUE_SHORE_DEBUG",
 
     "<group:Parallax>",
@@ -757,6 +758,12 @@ Recovers missing water reflections from nearby world geometry, including terrain
 Needs Water Surface set to Reflective and Reflections set to Fancy or Fast.
 Voxel Reach and loaded terrain limit coverage; fine geometry and shading can differ from the visible scene.
 Works above water with both still water and waves."""
+PLAGUE_VOXEL_PROFILE = """
+Adds five timed diagnostic draws without replacing the visible water reflection.
+F10 logs show primary trace (including alpha), material decode, direct lighting, all reflected rays without segment fog, and a full repeat.
+Temporarily lowers FPS. Hold the same view until timings settle, capture the log, then turn Off.
+Full minus no-fog estimates fog cost; no-fog minus direct estimates secondary reflection cost. These are marginal draw differences, not exact timings inside the normal shader.
+Requires Voxel SSR Recovery and reflective water with Fancy or Fast reflections."""
 PLAGUE_VOXEL_COVERAGE = """
 Test overlay on water, not a reflection.
 Green: hit a solid block. Magenta: cutout or cross block, alpha not tested.

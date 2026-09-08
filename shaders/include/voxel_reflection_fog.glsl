@@ -67,7 +67,8 @@ float plagueVoxelFogNearTransmittance(vec3 origin, vec3 dir, PlagueAtmoAir air, 
 // chunk cylinder, whatever the ray's length.
 vec3 plagueVoxelReflectionFog(vec3 radiance, vec3 origin, vec3 hit, float skyLight,
         PlagueLighting lighting, vec3 atmColorMult, vec3 sunDirTrue, float renderDistance) {
-#if PLAGUE_FOG
+// Stage 5 measures the same reflected rays with segment fog omitted; its output is scratch only.
+#if PLAGUE_FOG && PLAGUE_VOXEL_PROFILE_STAGE != 5
     vec3 segment = hit - origin;
     float distanceBlocks = length(segment);
     if (distanceBlocks < 1e-4) return radiance;

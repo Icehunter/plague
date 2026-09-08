@@ -848,6 +848,75 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
 outputs = ["voxelWaterReflection"]
 
+# Prefix timings are separate draws and include output sinks and cache/order effects.
+# Only the normal reflection target reaches water composition; these overwrite private scratch.
+[targets.voxelReflectionProbe]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+enabled_if = "PLAGUE_VOXEL_PROFILE != 0 && PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+
+[[pass]]
+name = "voxel_water_reflection_probe_trace"
+type = "fullscreen"
+shader = "shaders/post/voxel_water_reflection_probe_trace.fsh"
+enabled_if = "PLAGUE_VOXEL_PROFILE != 0 && PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
+          "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
+          "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+outputs = ["voxelReflectionProbe"]
+
+[[pass]]
+name = "voxel_water_reflection_probe_surface"
+type = "fullscreen"
+shader = "shaders/post/voxel_water_reflection_probe_surface.fsh"
+enabled_if = "PLAGUE_VOXEL_PROFILE != 0 && PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
+          "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
+          "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+outputs = ["voxelReflectionProbe"]
+
+[[pass]]
+name = "voxel_water_reflection_probe_direct"
+type = "fullscreen"
+shader = "shaders/post/voxel_water_reflection_probe_direct.fsh"
+enabled_if = "PLAGUE_VOXEL_PROFILE != 0 && PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
+          "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
+          "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+outputs = ["voxelReflectionProbe"]
+
+[[pass]]
+name = "voxel_water_reflection_probe_no_fog"
+type = "fullscreen"
+shader = "shaders/post/voxel_water_reflection_probe_no_fog.fsh"
+enabled_if = "PLAGUE_VOXEL_PROFILE != 0 && PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
+          "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
+          "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+outputs = ["voxelReflectionProbe"]
+
+[[pass]]
+name = "voxel_water_reflection_probe_full"
+type = "fullscreen"
+shader = "shaders/post/voxel_water_reflection_probe_full.fsh"
+enabled_if = "PLAGUE_VOXEL_PROFILE != 0 && PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
+          "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
+          "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+outputs = ["voxelReflectionProbe"]
+
+
 [[pass]]
 name = "ssr_blur_water"
 type = "fullscreen"
