@@ -153,10 +153,6 @@ const float PLAGUE_CLOUD_DETAIL_FADE_MIN = 8.0;
 const float PLAGUE_CLOUD_DETAIL_FADE_OFF = 128.0;
 const float PLAGUE_CLOUD_BLOCKS_PER_CHUNK = 16.0;
 
-// Last-to-first step ratio once the budget stops covering the span. 16 holds the first step under a
-// uniform slab crossing on every tier at the 4000-block worst case: 22.7/38.4, 11.4/12.8, 5.8/6.4.
-const float PLAGUE_CLOUD_STEP_RANGE = 16.0;
-
 // ------------------------------------------------------------------------------------------------
 // Constants
 // ------------------------------------------------------------------------------------------------
@@ -584,18 +580,15 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
 
     int steps = max(int(ceil(span / stepLen)), 1);
 
-    // When the cap binds the step grows rather than the ray truncating, since the cap is a function
-    // of ray direction and truncating would draw a hard moving edge at its bind distance. Growth is
-    // geometric, not one stretched uniform step: a camera inside the slab puts tNear at 0, so one
-    // ray carries both a near cloud and the horizon band, and a uniform step across that applies a
-    // whole step of extinction at one sample's density. Front-loading keeps the near field at the
-    // slab's own resolution and spends the coarseness on distance.
-    float stepGrowth = 1.0;
+    // Keep the first step at the slab's resolution and grow later steps to cover a capped ray.
+    // Sum of N arithmetic widths: span = N*stepLen + increment*N*(N-1)/2. The increment tends to
+    // zero as the cap starts binding. Switching straight to a fixed geometric ratio instead moves
+    // every sample at that boundary and draws a brightness ring even through a smooth cloud slab.
+    float stepIncrement = 0.0;
     if (steps > stepCap) {
         steps = stepCap;
-        stepGrowth = pow(PLAGUE_CLOUD_STEP_RANGE, 1.0 / float(steps - 1));
-        // Normalised so the series sums to the span exactly.
-        stepLen = span * (stepGrowth - 1.0) / (pow(stepGrowth, float(steps)) - 1.0);
+        float count = float(steps);
+        stepIncrement = 2.0 * max(span - count * stepLen, 0.0) / (count * (count - 1.0));
     }
 
     // --- Per-ray constants ----------------------------------------------------------------------
@@ -812,7 +805,7 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
         }
 
         t += stepLen;
-        stepLen *= stepGrowth;
+        stepLen += stepIncrement;
     }
 
     float alpha = 1.0 - transmittance;
