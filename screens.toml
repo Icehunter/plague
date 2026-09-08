@@ -345,6 +345,7 @@ elements = [
     "u_CloudWeatherResponse",
     "<group:Quality|requires:CLOUDS_VOLUMETRIC>",
     "CLOUD_RESOLUTION",
+    "PLAGUE_CLOUD_TEMPORAL",
     "u_CloudTierCumulus",
     "u_CloudTierStratus",
     "u_CloudTierNimbostratus",
@@ -731,7 +732,6 @@ elements = [
 
     "<group:Clouds>",
     "PLAGUE_CLOUD_HISTORY_DEBUG|requires:CLOUDS_VOLUMETRIC",
-    "PLAGUE_CLOUD_TEMPORAL|requires:CLOUDS_VOLUMETRIC",
     "u_CloudFormHold|requires:CLOUDS_VOLUMETRIC",
     "u_CloudMoisture|requires:CLOUDS_VOLUMETRIC",
     "u_CloudStability|requires:CLOUDS_VOLUMETRIC",
@@ -766,13 +766,10 @@ The panel can appear in reflections or AA history while enabled. Off removes it.
 No cloud pixels are skipped in either mode."""
 
 PLAGUE_CLOUD_TEMPORAL = """
-Blends two fresh cloud frames where motion, layer identity and local colour/depth bounds agree.
-Full samples uses the normal march budget. Half samples halves the slab and grazing-ray budgets above their existing minimums.
-Every pixel is freshly marched, with at least half of its current colour retained; uncertain pixels use only that fresh result.
-In Half mode this fallback is also half-budget, not a second full-quality march. Thin detail and motion can become noisier.
-Previous history is never the blended result. Cloud distance remains fresh.
-History adds memory and filtering work. Minimum sample counts and early exits mean Half does not guarantee half the cost.
-Compare Full/Half while stationary, panning and changing time/weather, including water reflections. Leave Cloud History Off to compare."""
+Smooths clouds using the previous frame where it still matches the current view.
+Off uses full cloud detail without temporal smoothing. Fancy keeps full detail with smoothing.
+Fast uses fewer samples with smoothing to reduce rendering cost; fine detail may look softer or noisier.
+Fancy and Fast use additional history memory. The performance gain in Fast depends on the scene."""
 
 PLAGUE_VOXEL_REFLECTIONS = """
 Recovers missing water reflections from nearby world geometry, including terrain outside the screen.

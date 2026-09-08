@@ -1,9 +1,9 @@
 #ifndef PLAGUE_CLOUD_HISTORY
 #define PLAGUE_CLOUD_HISTORY
 
-// Every mode refreshes every pixel; Half reduces march samples before the existing blend.
+// Every mode refreshes every pixel; Fast reduces march samples before the existing blend.
 #define PLAGUE_CLOUD_HISTORY_DEBUG 0 //[0 1 2] compile "Cloud History" {0="Off" 1="Candidates" 2="Error"}
-#define PLAGUE_CLOUD_TEMPORAL 0 //[0 1 2] compile "Cloud Temporal" {0="Off" 1="Full samples" 2="Half samples"}
+#define PLAGUE_CLOUD_TEMPORAL 0 //[0 1 2] compile "Cloud Temporal" {0="Off" 1="Fancy" 2="Fast"}
 
 #if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
 // R32F carries 7 contributor bits and a 20-bit source stamp. The fixed exponent tag
