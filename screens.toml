@@ -742,6 +742,9 @@ elements = [
     "PLAGUE_VOXEL_PROFILE",
     "PLAGUE_SHORE_DEBUG",
 
+    "<group:Local Lighting>",
+    "PLAGUE_SOURCE_DIAGNOSTIC",
+
     "<group:Parallax>",
     "u_PomDebug",
     "u_AlbedoIdentityDebug",
@@ -782,6 +785,14 @@ F10 logs show primary trace (including alpha), material decode, direct lighting,
 Temporarily lowers FPS. Hold the same view until timings settle, capture the log, then turn Off.
 Full minus no-fog estimates fog cost; no-fog minus direct estimates secondary reflection cost. These are marginal draw differences, not exact timings inside the normal shader.
 Requires Voxel SSR Recovery and reflective water with Fancy or Fast reflections."""
+PLAGUE_SOURCE_DIAGNOSTIC = """
+Section overlay, not coloured light or a reflection view. Reads terrain depth, including terrain behind water.
+Sources: red = a light source; green = a glowing material the pack supports; yellow = both; grey = no known source.
+Purple stripes = a material or shape the pack can't read; solid purple = old or missing material data.
+Freshness: green = section has data; cyan = section is empty but current.
+Both views: solid red = section not ready or is being reused; amber = outside the voxel window; white = data missing or mismatched.
+F10 records source counts and upload work. Counts include hidden faces, not what's visible or how bright it is.
+Animated, cropped, layered and other unsupported models stay unknown. Off removes the overlay; voxel reflections still build their own grid."""
 PLAGUE_VOXEL_COVERAGE = """
 Test overlay on water, not a reflection.
 Green: hit a solid block. Magenta: cutout or cross block, alpha not tested.

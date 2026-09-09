@@ -1626,6 +1626,45 @@ blend = "translucent"
 inputs = ["voxelCoverage"]
 outputs = ["builtin.output"]
 
+# These buffers hold debug data only, not light. Turning this on runs voxel harvesting
+# even when water and reflections are off.
+[targets.voxelSectionState]
+kind = "buffer"
+enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC != 0"
+
+[targets.voxelSourceSummary]
+kind = "buffer"
+enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC != 0"
+
+# 256x256 covers the largest window: 33^3 = 35937 sections. Compute writes this image;
+# the existing semaphore chain hands it to graphics and waits for readers before the next write.
+[targets.voxelSourceStatus]
+format = "rgba16f"
+width = 256
+height = 256
+storage = true
+filter = "nearest"
+enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC != 0"
+
+[[pass]]
+name = "voxel_source_status"
+type = "compute"
+shader = "shaders/compute/voxel_source_status.comp"
+enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC != 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "voxelSectionState", "voxelSourceSummary"]
+outputs = ["voxelSourceStatus"]
+
+[[pass]]
+name = "voxel_source_diagnostic"
+type = "fullscreen"
+shader = "shaders/post/voxel_source_diagnostic.fsh"
+enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC != 0"
+blend = "translucent"
+inputs = ["builtin.depth", "voxelSourceStatus"]
+outputs = ["builtin.output"]
+
 [[pass]]
 name = "clouds_history_overlay_quarter"
 type = "fullscreen"

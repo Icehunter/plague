@@ -298,3 +298,25 @@ same walk. Voxel Reach is a slider under Reflections, 1 to 16 chunks in one-chun
 Limits: finite grid, stand-in leaf shapes, no vertex shading, SSAO, POM, weather layering or Nether
 noise, nothing past the second bounce. Cost is unmeasured; no compile check or fixture says how it
 looks or how fast it runs.
+
+### Source inventory diagnostic
+
+`PLAGUE_SOURCE_DIAGNOSTIC` is a Debug test control, default Off. Sources marks which sections hold
+a light source or a supported glowing material; Freshness shows whether a section's GPU copy
+matches the current window and material set. Counts include hidden faces and say nothing about how
+much light is given off. Materials the pack cannot read stay unknown. Neither view changes normal
+lighting or adds light bounces.
+
+Turning it on adds two GPU buffers, `voxelSectionState` and `voxelSourceSummary`, even with water
+reflections off. Each section takes 32 bytes in each buffer; the source buffer also has a 32-byte
+header. A compute pass, `voxel_source_status`, checks these records and writes a 256×256 RGBA16F
+status image. A final pass, `voxel_source_diagnostic`, draws that image over the normal scene
+depth. Graphics code never reads the raw buffers; Fornax's compute/graphics sync hands off the
+image instead. A stored alpha of zero marks an image not yet written. Off removes both passes and
+all three targets.
+
+At a 25-section window, this adds about 1.45 MiB of GPU memory, including the 512 KiB status image,
+on top of the existing voxel grid. Material data is read once, at load and section-build time; each
+diagnostic frame only reads the small per-section summary. The overlay, the F10 counters, the
+shader compile check and the offline address checks do not prove how much light a source gives off,
+prove the GPU output is correct, or measure cost.

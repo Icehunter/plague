@@ -40,6 +40,9 @@ covers what the pack does, not the engine under it.
 
 ## Lighting
 
+- *Test feature, default Off:* Debug → Voxel Source Inventory shows which sections hold a light
+  source and whether each section's data is current. F10 records the counts. This is a first step
+  toward coloured local lighting; it adds no light and still needs checking in game.
 - Two light models to pick from. **Physical** works sunlight colour out from air mass and torchlight
   from blackbody temperature; **Custom** is a hand-written day/sunset/night colour table, editable
   per arm. Physical is the default, picked in game knowing a physical sunset is the dimmer of the

@@ -191,7 +191,10 @@ vec3 plagueShadeMoonSphere(vec3 normal, float rim, vec2 uv, vec3 poleAxis, vec3 
     vec3 tangent = normalize(cross(poleAxis, normal));
     vec3 bitangent = cross(normal, tangent);
     vec3 relief = texture(normalMap, uv).rgb * 2.0 - 1.0;
-    relief.xy *= max(u_MoonRelief, 0.0);
+    // Flipped: tangent/bitangent here point opposite the +u/+v axes moon_normal.png was made
+    // with (generate_moon_maps.py takes height differences along +column/+row). Without the
+    // flip, every crater wall tilts the wrong way.
+    relief.xy *= -max(u_MoonRelief, 0.0);
     vec3 shaded = normalize(tangent * relief.x + bitangent * relief.y + normal * relief.z);
 
     float mu0 = max(dot(shaded, lightDir), 0.0);

@@ -1,0 +1,56 @@
+#version 450
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+
+// Default Off keeps the normal graph unchanged. Both views only read data; they add no light.
+#define PLAGUE_SOURCE_DIAGNOSTIC 0 //[0 1 2] compile "Voxel Source Inventory" {0="Off" 1="Sources" 2="Freshness"}
+
+// One run per section, not per voxel. Scalar uint arrays keep the 32-byte slot layout.
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+layout(std430, set = 0, binding = 1) readonly buffer SectionState { uint stateWords[]; };
+layout(std430, set = 0, binding = 2) readonly buffer SourceSummary { uint sourceWords[]; };
+layout(rgba16f, set = 0, binding = 3) uniform writeonly image2D u_SourceStatus;
+
+int plagueSourceMod(int a, int d) { return ((a % d) + d) % d; }
+
+vec4 plagueSourceStatus(int slot) {
+    // RGB is a status color, not light. Alpha: 0=current, 1=unknown coverage, 2=unavailable.
+    int d = u_VoxelWindow.w;
+    if (d <= 0 || d > 33 || stateWords.length() != d*d*d*8
+            || sourceWords.length() != (d*d*d+1)*8 || sourceWords[2] != 1u)
+        return vec4(1.0, 1.0, 1.0, 2.0);
+    if (slot >= d*d*d) return vec4(1.0, 1.0, 1.0, 2.0);
+    int stateBase = slot * 8;
+    ivec3 first = u_VoxelWindow.xyz - ivec3((d - 1) / 2);
+    ivec3 residue = ivec3(slot % d, slot / (d*d), (slot / d) % d);
+    ivec3 expected;
+    for (int k = 0; k < 3; k++) expected[k] = first[k] + plagueSourceMod(residue[k] - first[k], d);
+    ivec3 owner = ivec3(stateWords[stateBase], stateWords[stateBase+1], stateWords[stateBase+2]);
+    if (stateWords[stateBase + 6] != 1u || stateWords[stateBase+3] == 0u
+            || any(notEqual(owner, expected))) return vec4(1.0, 0.0, 0.0, 2.0);
+    int sourceBase = (slot + 1) * 8;
+    if (sourceWords[sourceBase] != sourceWords[0] || sourceWords[sourceBase+1] != sourceWords[1])
+        return vec4(1.0, 0.0, 1.0, 2.0);
+#if PLAGUE_SOURCE_DIAGNOSTIC == 2
+    return sourceWords[sourceBase+7] == 0u ? vec4(0.0, 1.0, 1.0, 0.0) : vec4(0.0, 1.0, 0.0, 0.0);
+#else
+    if (sourceWords[sourceBase + 6] != 0u) return vec4(1.0, 0.0, 1.0, 2.0);
+    bool intrinsic = sourceWords[sourceBase+2] != 0u;
+    bool authored = sourceWords[sourceBase+3] != 0u;
+    bool unknown = sourceWords[sourceBase+5] != 0u;
+    // Quarter grey marks a supported material with no known source. It is a color code, not a light value.
+    vec3 marker = intrinsic || authored ? vec3(float(intrinsic), float(authored), 0.0) : vec3(0.25);
+    return vec4(marker, float(unknown));
+#endif
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(u_SourceStatus);
+    if (any(greaterThanEqual(pixel, size))) return;
+    vec4 status = plagueSourceStatus(pixel.y * size.x + pixel.x);
+    // Stored alpha zero is reserved for an image not yet written; real statuses use 1..3.
+    status.a += 1.0;
+    imageStore(u_SourceStatus, pixel, status);
+}
