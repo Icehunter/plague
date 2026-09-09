@@ -408,6 +408,7 @@ float plagueWaterRefractiveFocus(
 }
 
 float plagueWaterShadowVisibility(
+        sampler2DShadow shadowTexture,
         vec3 interfacePosition,
         vec3 airLightDirection) {
 #ifdef SHADOWS
@@ -435,7 +436,8 @@ float plagueWaterShadowVisibility(
     }
     // Compared against the writer's plain [0,1] light-clip depth. Outside its covered volume
     // there is no evidence of direct illumination, so the edge fades to dark—not lit.
-    float sampledVisibility = texture(u_Input1, vec3(shadowUv, lightNdc.z));
+    // The shadow target has one mip; explicit LOD also works in sparse recovery branches.
+    float sampledVisibility = textureLod(shadowTexture, vec3(shadowUv, lightNdc.z), 0.0);
     return sampledVisibility * coverage;
 #else
     return 1.0;
@@ -443,6 +445,7 @@ float plagueWaterShadowVisibility(
 }
 
 vec3 plagueWaterDirectSource(
+        sampler2DShadow shadowTexture,
         vec3 samplePosition,
         vec3 interfacePosition,
         vec3 viewDirection,
@@ -463,9 +466,9 @@ vec3 plagueWaterDirectSource(
     // conservative intersection preserves every existing air-side blocker while adding the missing
     // submerged blocker—neither term can manufacture light.
     float interfaceVisibility = plagueWaterShadowVisibility(
-            interfacePosition, airLightDirection);
+            shadowTexture, interfacePosition, airLightDirection);
     float submergedGeometryVisibility = plagueWaterShadowVisibility(
-            samplePosition, airLightDirection);
+            shadowTexture, samplePosition, airLightDirection);
     shadowVisibility = min(interfaceVisibility, submergedGeometryVisibility);
     return phase * max(lightRadiance, vec3(0.0))
             * max(lightTransmittance, vec3(0.0))

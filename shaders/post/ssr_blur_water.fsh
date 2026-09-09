@@ -67,23 +67,33 @@ const float SSR_WATER_DISOCCLUSION_RATIO = 0.25;
 in vec2 texCoord;
 out vec4 fragColor;
 
-// Keep the full-size SSR donors. Only weak rays look at the half-size fallback.
+// Keep full-size SSR colour; geometry confidence must meet the producer's existing work cutoff.
 vec4 plagueWaterRaw(vec2 uv) {
     vec4 screen = texture(u_Input0, uv);
 #if PLAGUE_VOXEL_REFLECTIONS != 0
     if (u_WaterState.x > 0.5) { screen.a = abs(screen.a); return screen; }
-    // A trusted surface is geometry, even where its confidence has faded toward sky.
-    if (screen.a > 0.5) return vec4(screen.rgb, 1.0);
-    if (screen.a <= 0.5) {
-        vec4 fallback = texture(u_Input4, uv);
-        // Empty fallback pixels are zero. Divide the coverage back out at the half-size edge.
-        if (fallback.a > 0.5) {
-            // Fade at the trusted-donor edge rather than switching colour outright.
-            // Negative confidence means sky, and must never tint a known geometry hit.
-            float screenWeight = smoothstep(0.0, 0.5, max(screen.a, 0.0));
-            return vec4(mix(fallback.rgb / fallback.a, screen.rgb, screenWeight), 1.0);
-        }
+    // The producer stops tracing above 0.5. Reuse its existing handoff curve so geometry reaches
+    // full confidence continuously there; sky keeps its magnitude and never becomes geometry.
+    float screenConfidence = screen.a > 0.0
+            ? smoothstep(0.0, 0.5, screen.a) : abs(screen.a);
+    if (screen.a >= 0.5) return vec4(screen.rgb, 1.0);
+    vec4 fallback = texture(u_Input4, uv);
+    // A valid voxel hit writes alpha one, a miss zero: linear filtering premultiplies its RGB
+    // by fractional coverage. Thresholding that coverage creates a seam at its filtered edge.
+    float voxelCoverage = clamp(fallback.a, 0.0, 1.0);
+    if (voxelCoverage > 0.0) {
+        // Preserve the existing full-coverage handoff. Negative SSR confidence means sky, which
+        // cannot replace known voxel geometry; its magnitude remains valid in uncovered areas.
+        float screenWeight = smoothstep(0.0, 0.5, max(screen.a, 0.0));
+        float uncoveredScreenConfidence = screenConfidence * (1.0 - voxelCoverage);
+        float confidence = uncoveredScreenConfidence + voxelCoverage;
+        vec3 coveredColour = mix(fallback.rgb, screen.rgb * voxelCoverage, screenWeight);
+        // Weighted coverage identity: zero voxels gives remapped SSR, complete voxels give the
+        // existing handoff, and partial coverage interpolates premultiplied colour continuously.
+        return vec4((screen.rgb * uncoveredScreenConfidence + coveredColour) / confidence,
+                confidence);
     }
+    screen.a = screenConfidence;
 #endif
     screen.a = abs(screen.a); // Put sky confidence back when no geometry was found.
     return screen;

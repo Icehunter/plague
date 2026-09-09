@@ -45,18 +45,55 @@ float plagueMaterialLod(vec2 ddx, vec2 ddy) {
     return floor(0.5 * log2(max(rhoSq, 1.0)) + 0.5);
 }
 
-// Paged twin of the LOD fetch above: overflow layers share the atlas's scale and mip count (engine
-// guarantee), so plagueMaterialLod's rho carries over; only the gradients scale by the ghost factor.
-vec4 plaguePagedMaterialLod(vec2 uv, vec2 gradX, vec2 gradY) {
+// Match MaterialMapAtlasReloadListener: round in block-atlas space before scaling the sidecar rect.
+// Fractional ghost padding makes a direct round/floor in sidecar space select a different texel.
+ivec2 plagueMaterialTexel(vec2 uv, vec4 bounds, bool haveBounds, ivec2 texels, inout int lod) {
+    if (!haveBounds) {
+        // Without ownership metadata only level zero is usable; this cannot repair a bad base atlas.
+        lod = 0;
+        return clamp(ivec2(uv * vec2(texels)), ivec2(0), texels - ivec2(1));
+    }
+    vec2 blockSize = vec2(textureSize(u_BlockTex, 0));
+    vec2 scale = vec2(texels) / blockSize;
+    ivec2 origin = ivec2(floor(floor(bounds.xy * blockSize + 0.5) * scale));
+    ivec2 extent = max(ivec2(1), ivec2(floor(
+            floor((bounds.zw - bounds.xy) * blockSize + 0.5) * scale)));
+    lod = min(lod, int(floor(log2(float(min(extent.x, extent.y))))));
+
+    // Per-sprite mip reduction can collide with a neighbour on a misaligned leading row/column.
+    // Exclude that edge and the UV overhang past the engine's floored rectangle, at every LOD.
+    ivec2 lo = (origin + ivec2((1 << lod) - 1)) >> lod;
+    ivec2 hi = (origin >> lod) + (extent >> lod);
+    if (lod > 0 && any(lessThanEqual(hi, lo))) {
+        // One level finer has at least two texels per axis; removing at most one leaves an interior.
+        lod--;
+        lo = (origin + ivec2((1 << lod) - 1)) >> lod;
+        hi = (origin >> lod) + (extent >> lod);
+    }
+    ivec2 mipSize = max(texels >> lod, ivec2(1));
+    return clamp(ivec2(uv * vec2(mipSize)), lo, hi - ivec2(1));
+}
+
+// Overflow layers share the atlas's scale and mip count. Remap both bounds with the selected cell,
+// including a far edge exactly on the next cell boundary, before deriving the material rectangle.
+vec4 plaguePagedMaterialLod(vec2 uv, vec2 gradX, vec2 gradY, vec4 bounds, bool haveBounds) {
 #if FORNAX_ATLAS_OVERFLOW_PAGES > 0
     if (fornax_isOverflowGhostUv(uv)) {
         float layer;
         vec2 pageUv = fornax_overflowPageUv(uv, layer);
-        return textureLod(u_MaterialPagesTex, vec3(pageUv, layer),
-                plagueMaterialLod(gradX * 4.0, gradY * 4.0));
+        vec2 offset = vec2(layer * 0.25, 0.75);
+        vec4 pageBounds = (bounds - offset.xyxy) * 4.0;
+        int lod = int(plagueMaterialLod(gradX * 4.0, gradY * 4.0));
+        ivec3 pageSize = textureSize(u_MaterialPagesTex, 0);
+        ivec2 texel = plagueMaterialTexel(pageUv, pageBounds, haveBounds, pageSize.xy, lod);
+        // Fornax binds a single neutral layer when material pages are absent.
+        int materialLayer = clamp(int(layer), 0, pageSize.z - 1);
+        return texelFetch(u_MaterialPagesTex, ivec3(texel, materialLayer), lod);
     }
 #endif
-    return textureLod(u_MaterialTex, uv, plagueMaterialLod(gradX, gradY));
+    int lod = int(plagueMaterialLod(gradX, gradY));
+    ivec2 texel = plagueMaterialTexel(uv, bounds, haveBounds, textureSize(u_MaterialTex, 0), lod);
+    return texelFetch(u_MaterialTex, texel, lod);
 }
 
 // Debug-only ramp for POM magnitude views: piecewise-linear so a value reads off a screenshot, and

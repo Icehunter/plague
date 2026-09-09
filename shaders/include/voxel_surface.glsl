@@ -50,10 +50,8 @@ bool plagueVoxelSurfaceAt(vec3 point, vec3 faceNormal, uint colour, int entry, v
     surface.material = plagueDecodeMaterial(material.r,material.g,material.b);
     // Palette word15 holds the block's own glow. Block light falling on a surface is not glow.
     float intrinsic = float(texelFetch(u_Input5,entry*16+15).r & 255u)/255.0;
-    bool unauthored = material.a >= 254.5/255.0;
-    float authored = unauthored ? 0.0 : min(material.a*(255.0/254.0),1.0);
-    surface.emission = max(plagueEmitterLuminance(surface.albedo)*intrinsic
-            * (unauthored ? 1.0 : material.a), authored*u_AuthoredEmission);
+    surface.emission = plagueSourceLuminance(surface.albedo, intrinsic, material.a,
+            u_AuthoredEmission);
     return true;
 }
 

@@ -43,6 +43,10 @@ covers what the pack does, not the engine under it.
 - *Test feature, default Off:* Debug → Voxel Source Inventory shows which sections hold a light
   source and whether each section's data is current. F10 records the counts. This is a first step
   toward coloured local lighting; it adds no light and still needs checking in game.
+- *Test feature, default Off:* Debug → Source Colour Preview shows terrain emission alone, or
+  compares existing emission on the left with a material-only source rule on the right. Both use
+  the same fixed display mapping. It adds no surrounding light; the candidate needs owner review
+  before it becomes a normal lighting rule.
 - Two light models to pick from. **Physical** works sunlight colour out from air mass and torchlight
   from blackbody temperature; **Custom** is a hand-written day/sunset/night colour table, editable
   per arm. Physical is the default, picked in game knowing a physical sunset is the dimmer of the

@@ -56,6 +56,15 @@ resolve.
 
 `shadow_entities` writes the shadow map, which is depth-only.
 
+The terrain position decoder matches Fornax's fixed-point vertex codes: 2048 steps per block,
+offset by -8. It recovers the integer from UNORM before scaling, so adjacent section origins
+preserve shared edges. Encoder and decoder updates require rebuilding meshes and shaders together.
+
+Terrain material reads use exact texels at whole mip levels inside the owning sprite. Bounds follow
+Fornax's integer sidecar rectangles; misaligned leading edges are excluded where neighbouring sprites
+can overlap during mip reduction. This keeps emission and metal codes from crossing sprite boundaries.
+Missing bounds use level zero; missing overflow material pages use the engine's neutral layer.
+
 ### 2. Screen-space occlusion and reflection: 9 passes
 
 `ssao_raw` → `ssao_blur`, then `hiz` (a mip chain over depth), then the reflection tier:
@@ -178,6 +187,12 @@ so the chain stays valid.
 output when volumetrics are on), `water_volume_composite_submerged`, then a separated blur:
 `underwater_blur_h` → `underwater_blur_v`.
 
+The submerged shaft resolver accepts only interval-compatible half-resolution donors. When a valid
+full-resolution ray has none, it runs the same 8/12-cell integrator as the raw shaft pass on that ray.
+This covers thin surfaces and gaps absent from the half-resolution field without borrowing light
+across depth boundaries. A compatible donor with zero radiance remains zero. Shadow and noise
+inputs are appended to the resolver; its sparse integration keeps the half-resolution footprint.
+
 ### 8. Surface simulation: 8 compute passes
 
 `water_prepare`, then `water_step_a`/`water_step_b` and `water_shore` in a quality or performance
@@ -259,9 +274,13 @@ is not a gameplay benchmark.
 `PLAGUE_VOXEL_REFLECTIONS` defaults On under Reflections and runs `voxel_water_reflection` between
 the water SSR trace and the blur, at half size. It needs reflective water and SSR on. Screen-space
 geometry stays the detailed source; this fills in where SSR found nothing. With the option on, SSR
-flags its sky guesses with negative confidence so the voxel pass can tell sky from a real hit, and
-the blur puts the sign back when there is no voxel hit. The
-target is allocated next to water SSR so the blur's appended input binds even with the option Off,
+flags its sky guesses with negative confidence so the voxel pass can tell sky from a real hit.
+The blur preserves sky confidence magnitude and smoothly maps positive geometry confidence to one
+at the producer's existing 0.5 tracing cutoff. This narrows the geometry fade while keeping the
+voxel work budget and avoiding a confidence jump where the producer stops. Fractional voxel
+coverage blends confidence and premultiplied colour continuously; complete coverage retains the
+geometry-priority handoff. Underwater bypasses this mapping and voxel recovery.
+The target is allocated next to water SSR so the blur's appended input binds even with the option Off,
 which draws and reads nothing.
 
 A hit carries the shape crossing, face normal, local position and material entry. Mapped faces read
@@ -320,3 +339,18 @@ on top of the existing voxel grid. Material data is read once, at load and secti
 diagnostic frame only reads the small per-section summary. The overlay, the F10 counters, the
 shader compile check and the offline address checks do not prove how much light a source gives off,
 prove the GPU output is correct, or measure cost.
+
+### Source colour preview
+
+`PLAGUE_SOURCE_RADIANCE`, default Off under Debug, compares emitted colour before local-light
+transport is added. Source Colour uses unshaded texture and biome tint with intrinsic and authored
+emission. Compare Emission shows the existing terrain rule on the left and that candidate on the
+right. The existing rule includes baked shade/AO and excludes coal's authored emission; normal
+terrain and voxel shading retain their respective policies.
+
+While enabled, deferred terrain stores the two colours in `gAlbedo.rgb` and `gMaterial.rgb`, using
+the same fixed `Le/(1+Le)` compression and sRGB transfer. The normal intermediate lighting is then
+unsuitable for display. The last fullscreen pass, `source_radiance_preview`, reads exact texels from
+`consolidatedGbuf` and depth and replaces the image; sky and nonterrain classes are black. Forward
+surfaces and held items can still draw afterward. This uses no extra target and runs no preview
+pass when Off. The display encoding is diagnostic only, not a source-energy storage format.

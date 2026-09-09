@@ -11,10 +11,31 @@ uniform sampler2D u_Input2; // waterVolumeInterval
 uniform sampler2D u_Input3; // builtin.depth
 uniform sampler2D u_Input4; // builtin.waterDepth
 uniform sampler2D u_Input5; // builtin.waterNormal
+uniform sampler2DShadow u_Input6; // sunShadowMap
+uniform sampler2D u_Input7; // builtin.noise
 
 #define PLAGUE_UNDERWATER 1 //[0 1] compile "Underwater Effects" {0="Off" 1="On"}
 #define WATER_SCATTERING_QUALITY 1 //[0 1 2] compile "Underwater Light Shafts" {0="Off" 1="Balanced" 2="High"}
 #moj_import <fornax_runtime:water_options.glsl>
+#moj_import <fornax_runtime:light_and_ambient_colors.glsl>
+#moj_import <fornax_runtime:light_options.glsl>
+#moj_import <fornax_runtime:shadow_options.glsl>
+#moj_import <fornax_runtime:atmosphere.glsl>
+#moj_import <fornax_runtime:main_lighting.glsl>
+// Sparse recovery has no implicit derivatives. Noise owns a single mip in this pipeline.
+#define PLAGUE_WAVE_NOISE(tex, uv) textureLod(tex, uv, 0.0)
+#moj_import <fornax_runtime:water_waves.glsl>
+#define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Mesh Displacement" {0="Off" 1="Standard"}
+#define WATER_ABSORPTION_TINT 1 //[0 1] compile "Underwater Tint" {0="Off" 1="On"}
+#moj_import <fornax_runtime:water_volume_source.glsl>
+
+layout(std140) uniform u_PassParams {
+    vec2 u_PassTexelSize;
+    float u_Param2;
+    float u_Param3;
+    vec4 u_SunDirection;
+};
+#moj_import <fornax_runtime:water_volume_integrate.glsl>
 
 in vec2 texCoord;
 out vec4 fragColor;
@@ -191,8 +212,17 @@ void main() {
     }
 
     vec3 scatter;
-    if (!plagueWaterSubmergedUpsample(fullInterval, scatter)
-            || !plagueWaterVolumeFinite(scatter)) {
+    if (!plagueWaterSubmergedUpsample(fullInterval, scatter)) {
+        // A thin surface may be absent from every half-resolution donor. Integrate its own valid
+        // interval instead of treating missing samples as evidence of zero illumination.
+        vec2 halfSize = vec2(textureSize(u_Input2, 0));
+        vec3 diagnostics;
+        if (!plagueWaterIntegrate(fullInterval, texCoord, texCoord * halfSize,
+                vec2(1.0) / halfSize, u_Input7, u_Input6, scatter, diagnostics)) {
+            return;
+        }
+    }
+    if (!plagueWaterVolumeFinite(scatter)) {
         return;
     }
 

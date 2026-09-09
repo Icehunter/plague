@@ -59,6 +59,10 @@ const float PLAGUE_ATLAS_GHOST_DIST = 32.0;
 // washing. Separates every way the chain can produce nothing, in one frame.
 #define PLAGUE_SHORE_DEBUG 0 //[0 1] compile "Shore Spill Debug" {0="Off" 1="Stage Codes"}
 
+// Owner-reviewed diagnostic states: normal output, source colour, and an equal-half comparison.
+// Byte-identical in source_radiance_preview.fsh; only deferred terrain repurposes its G-buffer.
+#define PLAGUE_SOURCE_RADIANCE 0 //[0 1 2] compile "Source Colour Preview" {0="Off" 1="Source Colour" 2="Compare Emission"}
+
 // DEFAULT OFF: repaints a large fraction of every snowy biome, so the user opts in knowingly.
 // Do not write the bracket-annotation syntax out in this comment as prose — OptionAnnotation
 // hard-errors on any line containing it, even in comments.
@@ -468,6 +472,10 @@ void main() {
     // (v_RawTint.a, already linear) in linear space, then re-encode: multiplying in display space
     // first would raise the linear shade/AO factor to decode's ~2.4 power, over-darkening every
     // non-top face. v_RawTint.rgb is the pure tint; v_RawTint.a is Sodium's separate shade*AO scalar.
+#if PLAGUE_SOURCE_RADIANCE > 0
+    // Source colour excludes incident shade/AO and later debug, snow and wetness repaints.
+    vec3 sourceAlbedoLinear = plagueSrgbToLinear(albedo.rgb) * plagueSrgbToLinear(v_RawTint.rgb);
+#endif
     vec3 rawAlbedo = plagueLinearToSrgb(
             plagueSrgbToLinear(albedo.rgb) * plagueSrgbToLinear(v_RawTint.rgb) * v_RawTint.a);
 
@@ -518,9 +526,8 @@ void main() {
     // up-vector: a guessed frame is rotated/mirrored on most face directions, lighting bumps wrong.
     vec3 worldNormal = normalize(tangent * tangentXY.x + bitangent * tangentXY.y + faceNormal * tangentZ);
 
-    // textureLod at a WHOLE level, not textureGrad: labPBR `_s` is four categorical/split lanes and
-    // every hardware interpolation of it invents a material. See plagueMaterialLod.
-    vec4 materialSample = plaguePagedMaterialLod(uv, ddx, ddy);
+    // Exact texels at a whole level within the owning sprite: interpolating `_s` invents materials.
+    vec4 materialSample = plaguePagedMaterialLod(uv, ddx, ddy, spriteBounds, haveBounds);
 
     // --- Does this quad's normal actually describe this quad? ------------------------------------
     // v_FaceNormal is snapped to the dominant cardinal axis, which is 45 degrees off the true normal
@@ -562,15 +569,13 @@ void main() {
     // only; the block lane is unscaled (glowstone/lanterns are tuned to read correctly unscaled).
     // The emitter-luminance curve (emission.glsl) applies to the block lane only, here in the
     // geometry stage, because gAo.g is one channel and the two lanes must stay separable before max.
-    bool unauthoredSprite = materialSample.a >= (254.5 / 255.0);
-    float emissionShape = unauthoredSprite ? 1.0 : materialSample.a;
-    // Authored scale is 0..254 (255 is the ignored sentinel); rescale so byte 254 reads exactly 1.0.
-    float emissionAuthored = unauthoredSprite ? 0.0
-            : min(materialSample.a * (255.0 / 254.0), 1.0);
-    float emission = max(plagueEmitterLuminance(plagueSrgbToLinear(rawAlbedo))
-                             * v_LightEmission * emissionShape,
-                         emissionAuthored * u_AuthoredEmission
-                             * (v_CoalClass > 0.5 ? 0.0 : 1.0));
+    float emission = plagueSourceLuminance(plagueSrgbToLinear(rawAlbedo), v_LightEmission,
+            materialSample.a, u_AuthoredEmission * (v_CoalClass > 0.5 ? 0.0 : 1.0));
+#if PLAGUE_SOURCE_RADIANCE > 0
+    // Diagnostic candidate only: the material rule has neither an identity exclusion nor baked shade.
+    float sourceEmission = plagueSourceLuminance(sourceAlbedoLinear, v_LightEmission,
+            materialSample.a, u_AuthoredEmission);
+#endif
 
     // --- Puddles -----------------------------------------------------------------------------
     // Applied HERE, not in the resolve: placement needs the height map (only available in this
@@ -755,6 +760,16 @@ void main() {
     gAoOut       = vec4(bakedAo, emission, pomShadow, 1.0);
 #endif
     gMotionOut   = v_MotionVector;
+#if PLAGUE_SOURCE_RADIANCE > 0
+    // Preview deliberately invalidates normal albedo/material RGB for intermediate lighting passes;
+    // source_radiance_preview replaces their final output. Keep alpha and the surface class intact.
+    vec3 existingSourceRadiance = plagueEmittedRadiance(plagueSrgbToLinear(rawAlbedo), emission);
+    vec3 canonicalSourceRadiance = plagueEmittedRadiance(sourceAlbedoLinear, sourceEmission);
+    // Reinhard et al. (2002), fixed unit-exposure compression Le/(1+Le), then the existing sRGB
+    // transfer. Both lanes use this RGBA8 display mapping without lighting, bloom or grading.
+    gAlbedoOut.rgb = plagueLinearToSrgb(existingSourceRadiance / (vec3(1.0) + existingSourceRadiance));
+    gMaterialOut.rgb = plagueLinearToSrgb(canonicalSourceRadiance / (vec3(1.0) + canonicalSourceRadiance));
+#endif
 // Must mirror the output declaration's three-way chain: testing only USE_DEFERRED would compile the
 // forward arm under USE_WATER_PREPASS too, where fragColor doesn't exist (an early return doesn't excuse it from compiling).
 #elif !defined(USE_WATER_PREPASS)
@@ -791,7 +806,7 @@ void main() {
     vec4 forwardNormalSample = plaguePagedNormalGrad(uv, ddx, ddy);
     // Whole-level selection is required for `_s`: green contains categorical metal codes and blue
     // is split between porosity and SSS. Inter-level filtering would invent a third material.
-    vec4 forwardMaterialSample = plaguePagedMaterialLod(uv, ddx, ddy);
+    vec4 forwardMaterialSample = plaguePagedMaterialLod(uv, ddx, ddy, spriteBounds, haveBounds);
 
     bool forwardNormalSignal = any(greaterThan(
             abs(forwardNormalSample - FORWARD_NORMAL_FALLBACK),

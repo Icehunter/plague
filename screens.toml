@@ -744,6 +744,7 @@ elements = [
 
     "<group:Local Lighting>",
     "PLAGUE_SOURCE_DIAGNOSTIC",
+    "PLAGUE_SOURCE_RADIANCE",
 
     "<group:Parallax>",
     "u_PomDebug",
@@ -793,6 +794,13 @@ Freshness: green = section has data; cyan = section is empty but current.
 Both views: solid red = section not ready or is being reused; amber = outside the voxel window; white = data missing or mismatched.
 F10 records source counts and upload work. Counts include hidden faces, not what's visible or how bright it is.
 Animated, cropped, layered and other unsupported models stay unknown. Off removes the overlay; voxel reflections still build their own grid."""
+PLAGUE_SOURCE_RADIANCE = """
+Shows the emitted colour of visible solid and cutout terrain. It does not light nearby surfaces.
+Source Colour uses texture and biome tint, intrinsic emission and authored material glow, without baked shade or block exclusions.
+Compare Emission shows the existing emission rule on the left and this material-based rule on the right.
+Black means no emission, sky, or a surface outside this terrain preview. Terrain behind water is still terrain; water, glass and held items may draw over the view.
+Both sides use the same fixed brightness mapping, without exposure, bloom or colour grading.
+This view takes priority over other diagnostic overlays. Turn Off to restore normal lighting."""
 PLAGUE_VOXEL_COVERAGE = """
 Test overlay on water, not a reflection.
 Green: hit a solid block. Magenta: cutout or cross block, alpha not tested.

@@ -1,5 +1,5 @@
-// Owns per-texel luminance shaping and coloured-radiance construction only; combining the
-// engine/authored emission lanes and the sentinel/scale logic live upstream in terrain.fsh.
+// Owns per-texel luminance shaping, scalar source construction and coloured emitted radiance.
+// Callers supply the albedo and authored scale so existing surface policies remain explicit.
 //
 // Hue is the direction of linear albedo, decoupled from magnitude (the luminance argument), so a
 // neutral-grey material can't blow out to full-strength white the way max-channel normalization would.
@@ -31,6 +31,17 @@ float plagueEmitterLuminance(vec3 albedoLinear) {
     float compressed = mix(shapeFromMax, sqrt(safeMx), mx);
 
     return clamp(compressed, 0.0, 1.0);
+}
+
+// Material alpha byte 255 is the atlas's unauthored sentinel; authored bytes 0..254 span 0..1.
+// Preserve the existing terrain/voxel max of independent intrinsic and authored emission lanes.
+float plagueSourceLuminance(vec3 albedoLinear, float intrinsicEmission, float materialAlpha,
+        float authoredScale) {
+    bool unauthored = materialAlpha >= (254.5 / 255.0);
+    float intrinsicShape = unauthored ? 1.0 : materialAlpha;
+    float authored = unauthored ? 0.0 : min(materialAlpha * (255.0 / 254.0), 1.0);
+    return max(plagueEmitterLuminance(albedoLinear) * intrinsicEmission * intrinsicShape,
+            authored * authoredScale);
 }
 
 // Called with either magnitude lane already reduced to a single 0..1 luminance.

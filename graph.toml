@@ -1331,7 +1331,7 @@ name = "water_volume_composite_submerged"
 type = "fullscreen"
 shader = "shaders/post/water_volume_composite_submerged.fsh"
 enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
-inputs = ["sceneHdrRefracted", "waterVolumeScatter", "waterVolumeInterval", "builtin.depth", "builtin.waterDepth", "builtin.waterNormal"]
+inputs = ["sceneHdrRefracted", "waterVolumeScatter", "waterVolumeInterval", "builtin.depth", "builtin.waterDepth", "builtin.waterNormal", "sunShadowMap", "builtin.noise"]
 outputs = ["waterVolumeShaftsResolved"]
 
 # Refraction must run first: the blur consumes sceneHdrRefracted. Tonemap reconstructs the half-res
@@ -1690,6 +1690,18 @@ shader = "shaders/post/clouds_history_overlay.fsh"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && PLAGUE_CLOUD_HISTORY_DEBUG != 0"
 blend = "translucent"
 inputs = ["cloudHistoryProbeFull"]
+outputs = ["builtin.output"]
+
+# Terrain's source preview reuses the consolidated G-buffer RGB lanes only while enabled. Normal
+# intermediate lighting is invalid in that mode, so this opaque pass runs after every other overlay
+# and replaces the final image. No voxel data or extra target is needed; later forward draws remain
+# outside the deferred preview.
+[[pass]]
+name = "source_radiance_preview"
+type = "fullscreen"
+shader = "shaders/post/source_radiance_preview.fsh"
+enabled_if = "PLAGUE_SOURCE_RADIANCE != 0"
+inputs = ["consolidatedGbuf", "builtin.depth"]
 outputs = ["builtin.output"]
 
 # Restores depth for vanilla translucents and first-person rendering, which draw after the graph.

@@ -15,10 +15,10 @@ vec3 _vert_face_normal;
 uint _material_id;
 float _precipitates;
 
-// Covers a 16-block chunk section plus shared-edge overhang (-8..+24 per axis) while still fitting
-// a 16-bit fixed-point channel with useful precision.
+// 65536 position codes across 32 blocks give 2048 steps per block. Integer section translations
+// then preserve shared edges exactly; the upper endpoint saturates at 24 - 1/2048.
 const float FORNAX_MODEL_MIN = -8.0;
-const float FORNAX_MODEL_SIZE = 32.0;
+const float FORNAX_POSITION_SCALE = 2048.0;
 
 const vec3 FORNAX_FACE_NORMALS[6] = vec3[](
     vec3(0.0, -1.0, 0.0),
@@ -33,7 +33,7 @@ const vec3 FORNAX_FACE_NORMALS[6] = vec3[](
 // are spare. See Fornax's BlockClasses.java.
 const uint FORNAX_BLOCK_CLASS_COAL = 1u;
 
-in vec4 a_Position;        // RGBA16_UNORM: xyz = normalized [0,1] position, w = packed 16-bit code:
+in vec4 a_Position;        // RGBA16_UNORM: xyz = fixed-point codes delivered as code/65535, w = packed 16-bit code:
                            // Block.getLightEmission() level 0-15 in bits 0-3, BlockClasses flags in 4-15
 in vec4 a_Color;           // RGBA8_UNORM: rgb = biome TINT (Sodium's vertex.color, unmultiplied),
                            // a = per-face directional SHADE times AO (Sodium's vertex.ao). NOT a
@@ -45,7 +45,8 @@ in uvec4 a_Normal;         // RGBA8_UINT: x=face index (0-5), yz=u16 material id
                            // biome precipitation TYPE (0 none, 1 rain, 2 snow)
 
 void _vert_init() {
-    _vert_position = a_Position.xyz * FORNAX_MODEL_SIZE + FORNAX_MODEL_MIN;
+    vec3 positionCode = floor(a_Position.xyz * 65535.0 + 0.5);
+    _vert_position = positionCode / FORNAX_POSITION_SCALE + FORNAX_MODEL_MIN;
     // Per-BLOCK light emission (Block.getLightEmission() 0-15 -> 0..1), from the engine because
     // it's the only signal answering "is this a light source at all" — the pack's labPBR `_s`
     // alpha is per-TEXEL and answers a different question. terrain.fsh takes the MAX of the two
