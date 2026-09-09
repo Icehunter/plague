@@ -1704,6 +1704,39 @@ enabled_if = "PLAGUE_SOURCE_RADIANCE != 0"
 inputs = ["consolidatedGbuf", "builtin.depth"]
 outputs = ["builtin.output"]
 
+# Bounded candidate thumbnails, not a light list. Compute is the only raw-buffer consumer.
+[targets.voxelEmitterPool]
+kind = "buffer"
+enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC == 3"
+
+[targets.voxelSourceFaces]
+format = "rgba16f"
+width = 256
+height = 256
+storage = true
+filter = "nearest"
+enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC == 3"
+
+[[pass]]
+name = "voxel_source_faces"
+type = "compute"
+shader = "shaders/compute/voxel_source_faces.comp"
+enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC == 3"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "voxelEmitterPool", "voxelSectionState", "voxelSourceSummary",
+          "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["voxelSourceFaces"]
+
+[[pass]]
+name = "voxel_source_faces_overlay"
+type = "fullscreen"
+shader = "shaders/post/voxel_source_faces.fsh"
+enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC == 3"
+blend = "translucent"
+inputs = ["voxelSourceFaces"]
+outputs = ["builtin.output"]
+
 # Restores depth for vanilla translucents and first-person rendering, which draw after the graph.
 [[pass]]
 name = "depth_copyback"

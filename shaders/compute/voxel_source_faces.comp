@@ -1,0 +1,100 @@
+#version 450
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:color.glsl>
+#moj_import <fornax_runtime:emission.glsl>
+
+#define PLAGUE_SOURCE_DIAGNOSTIC 0 //[0 1 2 3] compile "Voxel Source Inventory" {0="Off" 1="Sources" 2="Freshness" 3="Face Colours"}
+#define u_AuthoredEmission 1.0 //[0.0..1.0 step 0.05] runtime "Glowing Texture Strength"
+
+// Four midpoint samples per axis show texture variation at a bounded 65536 samples per frame.
+// These thumbnails are sparse radiance samples, not face integrals or a complete source set.
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+// Binding 1 is the engine-injected packOptions block.
+layout(std430, set = 0, binding = 2) readonly buffer EmitterPool { uint poolWords[]; };
+layout(std430, set = 0, binding = 3) readonly buffer SectionState { uint stateWords[]; };
+layout(std430, set = 0, binding = 4) readonly buffer SourceSummary { uint sourceWords[]; };
+layout(set = 0, binding = 5) uniform sampler2D u_BlockAtlas;
+layout(set = 0, binding = 6) uniform sampler2D u_MaterialAtlas;
+layout(rgba16f, set = 0, binding = 7) uniform writeonly image2D u_SourceFaces;
+
+int plagueFaceMod(int a, int d) { return ((a % d) + d) % d; }
+
+bool plagueFaceCurrent(int base) {
+    int d = u_VoxelWindow.w;
+    if (d < 3 || d > 33 || stateWords.length() != d*d*d*8
+            || sourceWords.length() != (d*d*d+1)*8 || sourceWords[2] != 1u) return false;
+    ivec3 owner = ivec3(poolWords[base], poolWords[base+1], poolWords[base+2]);
+    ivec3 localOwner = owner - (u_VoxelWindow.xyz - ivec3((d-1)/2));
+    if (any(lessThan(localOwner, ivec3(0))) || any(greaterThanEqual(localOwner, ivec3(d)))) return false;
+    int slot = (plagueFaceMod(owner.y,d)*d + plagueFaceMod(owner.z,d))*d + plagueFaceMod(owner.x,d);
+    int s = slot*8;
+    int m = (slot+1)*8;
+    return all(equal(ivec3(stateWords[s], stateWords[s+1], stateWords[s+2]), owner))
+        && stateWords[s+6] == 1u && poolWords[base+3] != 0u
+        && stateWords[s+3] == poolWords[base+3] && poolWords[14] == poolWords[base+3]
+        && stateWords[s+4] == poolWords[base+4]
+        && poolWords[base+5] == sourceWords[0] && poolWords[base+6] == sourceWords[1]
+        && poolWords[12] == sourceWords[0] && poolWords[13] == sourceWords[1]
+        && sourceWords[m] == sourceWords[0] && sourceWords[m+1] == sourceWords[1]
+        && sourceWords[m+6] == 0u && poolWords[base+7] < 4096u*6u;
+}
+
+vec4 plagueFaceSample(int base, vec2 st) {
+    uint flags = poolWords[base+9] >> 24;
+    if ((flags & 1u) == 0u) return vec4(0.0,0.0,0.0,-1.0);
+    vec2 uv0 = vec2(uintBitsToFloat(poolWords[base+10]), uintBitsToFloat(poolWords[base+11]));
+    vec2 ds = vec2(uintBitsToFloat(poolWords[base+12]), uintBitsToFloat(poolWords[base+13]));
+    vec2 dt = vec2(uintBitsToFloat(poolWords[base+14]), uintBitsToFloat(poolWords[base+15]));
+    vec2 lo = min(min(uv0,uv0+ds),min(uv0+dt,uv0+ds+dt));
+    vec2 hi = max(max(uv0,uv0+ds),max(uv0+dt,uv0+ds+dt));
+    if (any(isnan(lo)) || any(isnan(hi)) || any(isinf(lo)) || any(isinf(hi))
+            || any(lessThan(lo,vec2(0.0))) || any(greaterThan(hi,vec2(1.0)))
+            || any(lessThanEqual(hi,lo))) return vec4(0.0,0.0,0.0,-1.0);
+    vec2 uv = uv0 + st.x*ds + st.y*dt;
+    ivec2 blockSize = textureSize(u_BlockAtlas,0);
+    ivec2 origin = ivec2(floor(lo*vec2(blockSize)+0.5));
+    ivec2 extent = ivec2(floor((hi-lo)*vec2(blockSize)+0.5));
+    if (any(lessThan(extent,ivec2(1))) || any(greaterThan(origin+extent,blockSize)))
+        return vec4(0.0,0.0,0.0,-1.0);
+    ivec2 texel = clamp(ivec2(uv*vec2(blockSize)),origin,origin+extent-1);
+    vec4 albedo = texelFetch(u_BlockAtlas,texel,0);
+    // Match voxel alpha coverage: solid faces ignore alpha, cutout faces reject below one half.
+    if ((flags & 2u) != 0u && albedo.a < 0.5) return vec4(0.0,0.0,0.0,1.0);
+    float materialAlpha = 1.0; // Known missing map is labPBR's unprovided byte 255.
+    if ((poolWords[base+8] & 16u) == 0u) {
+        ivec2 materialSize = textureSize(u_MaterialAtlas,0);
+        vec2 scale = vec2(materialSize)/vec2(blockSize);
+        // Match the sidecar atlas rectangle: round in block space, then floor the scaled rectangle.
+        ivec2 materialOrigin = ivec2(floor(vec2(origin)*scale));
+        ivec2 materialExtent = max(ivec2(1),ivec2(floor(vec2(extent)*scale)));
+        if (any(greaterThan(materialOrigin+materialExtent,materialSize))) return vec4(0.0,0.0,0.0,-1.0);
+        ivec2 materialTexel = clamp(ivec2(uv*vec2(materialSize)),materialOrigin,materialOrigin+materialExtent-1);
+        // Filtering sentinel255 with authored0 invents emission, so read the exact alpha byte.
+        materialAlpha = texelFetch(u_MaterialAtlas,materialTexel,0).a;
+    }
+    uint tintWord = poolWords[base+9];
+    vec3 tint = vec3((tintWord>>16)&255u,(tintWord>>8)&255u,tintWord&255u)/255.0;
+    vec3 linearAlbedo = plagueSrgbToLinear(albedo.rgb)*plagueSrgbToLinear(tint);
+    float intrinsic = float(poolWords[base+8]&15u)/15.0; // Raw Minecraft emission range.
+    float luminance = plagueSourceLuminance(linearAlbedo,intrinsic,materialAlpha,u_AuthoredEmission);
+    return vec4(plagueEmittedRadiance(linearAlbedo,luminance),1.0);
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel,imageSize(u_SourceFaces)))) return;
+    vec4 result = vec4(0.0);
+#if PLAGUE_SOURCE_DIAGNOSTIC == 3
+    int index = (pixel.y/4)*64 + pixel.x/4;
+    if (poolWords.length() != 16+4096*16 || poolWords[0] != 1u
+            || poolWords[1] != 4096u || poolWords[2] > 4096u) result.a = -1.0;
+    else if (index < int(poolWords[2])) {
+        int base = 16+index*16;
+        result = plagueFaceCurrent(base) ? plagueFaceSample(base,(vec2(pixel%4)+0.5)/4.0)
+                                        : vec4(0.0,0.0,0.0,-1.0);
+    }
+#endif
+    imageStore(u_SourceFaces,pixel,result);
+}

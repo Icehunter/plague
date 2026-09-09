@@ -3,8 +3,8 @@
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
 
-// Default Off keeps the normal graph unchanged. Both views only read data; they add no light.
-#define PLAGUE_SOURCE_DIAGNOSTIC 0 //[0 1 2] compile "Voxel Source Inventory" {0="Off" 1="Sources" 2="Freshness"}
+// Default Off keeps the normal graph unchanged. These views only read data; they add no light.
+#define PLAGUE_SOURCE_DIAGNOSTIC 0 //[0 1 2 3] compile "Voxel Source Inventory" {0="Off" 1="Sources" 2="Freshness" 3="Face Colours"}
 
 // One run per section, not per voxel. Scalar uint arrays keep the 32-byte slot layout.
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;

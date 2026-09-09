@@ -792,8 +792,11 @@ Sources: red = a light source; green = a glowing material the pack supports; yel
 Purple stripes = a material or shape the pack can't read; solid purple = old or missing material data.
 Freshness: green = section has data; cyan = section is empty but current.
 Both views: solid red = section not ready or is being reused; amber = outside the voxel window; white = data missing or mismatched.
-F10 records source counts and upload work. Counts include hidden faces, not what's visible or how bright it is.
-Animated, cropped, layered and other unsupported models stay unknown. Off removes the overlay; voxel reflections still build their own grid."""
+Face Colours: corner panel of up to 4096 admitted faces, with 4x4 texture samples per face. It adds no scene light.
+Black = valid non-emitting sample or cutout gap; grey = unused pool entry; magenta = rejected/stale data.
+These sparse samples can miss tiny glowing texels. The pool includes hidden faces and is not a complete or nearest-source list.
+F10 records source counts, deferred faces and upload work. Deferred faces are not represented by the pool.
+Animated, cropped, layered, overflow-atlas and other unsupported models stay unknown. Off removes the overlay; voxel reflections still build their own grid."""
 PLAGUE_SOURCE_RADIANCE = """
 Shows the emitted colour of visible solid and cutout terrain. It does not light nearby surfaces.
 Source Colour uses texture and biome tint, intrinsic emission and authored material glow, without baked shade or block exclusions.

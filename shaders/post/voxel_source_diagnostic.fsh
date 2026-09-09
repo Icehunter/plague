@@ -1,8 +1,8 @@
 #version 330
 #moj_import <fornax:globals.glsl>
 
-// Default Off keeps the normal graph unchanged. Both views only read data; they add no light.
-#define PLAGUE_SOURCE_DIAGNOSTIC 0 //[0 1 2] compile "Voxel Source Inventory" {0="Off" 1="Sources" 2="Freshness"}
+// Default Off keeps the normal graph unchanged. These views only read data; they add no light.
+#define PLAGUE_SOURCE_DIAGNOSTIC 0 //[0 1 2 3] compile "Voxel Source Inventory" {0="Off" 1="Sources" 2="Freshness" 3="Face Colours"}
 
 uniform sampler2D u_Input0; // opaque depth: sections behind water are terrain, not reflected hits
 uniform sampler2D u_Input1; // section status written by the compute pass, not the raw voxel data
@@ -13,7 +13,7 @@ int plagueSourceMod(int a, int d) { return ((a % d) + d) % d; }
 
 void main() {
     fragColor = vec4(0.0);
-#if PLAGUE_SOURCE_DIAGNOSTIC != 0
+#if PLAGUE_SOURCE_DIAGNOSTIC == 1 || PLAGUE_SOURCE_DIAGNOSTIC == 2
     float depth = texture(u_Input0, texCoord).r;
     if (depth <= 0.0) return;
     // These bright marker colors are status codes, not real light color or strength.

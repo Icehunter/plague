@@ -340,6 +340,22 @@ diagnostic frame only reads the small per-section summary. The overlay, the F10 
 shader compile check and the offline address checks do not prove how much light a source gives off,
 prove the GPU output is correct, or measure cost.
 
+Face Colours adds a bounded `voxelEmitterPool` buffer (64-byte header plus 4096 64-byte records)
+and a 256×256 RGBA16F thumbnail image, another 768 KiB plus 64 bytes. Fornax admits faces from
+committed section snapshots with resumable, bounded CPU enumeration; it republishes the compact pool
+only when changed. This is an admission subset, not a complete or nearest-source list. Deferred and
+unsupported face counts remain separate; lightmap-only refreshes preserve the geometry keys.
+
+`voxel_source_faces` checks section ownership, geometry/storage revisions and atlas generation,
+then evaluates sixteen texture samples per admitted face using raw intrinsic emission, labPBR alpha
+and unshaded albedo/tint. Known missing material maps use the unprovided-alpha sentinel. Cutout gaps
+emit zero. Overflow atlas pages remain unsupported until this path can address their real textures.
+The samples are sparse radiance, not integrated face energy; small glowing texels can be missed.
+`voxel_source_faces_overlay` displays them in a corner panel after the other diagnostics. Grey means
+unused, magenta means rejected, and black means a valid non-emitting sample. No transport or normal
+lighting changes. Both extra passes and targets exist only in Face Colours mode. The panel enters
+the engine's final-image history, as other diagnostic overlays do, so it can appear in reflections.
+
 ### Source colour preview
 
 `PLAGUE_SOURCE_RADIANCE`, default Off under Debug, compares emitted colour before local-light
@@ -350,7 +366,7 @@ terrain and voxel shading retain their respective policies.
 
 While enabled, deferred terrain stores the two colours in `gAlbedo.rgb` and `gMaterial.rgb`, using
 the same fixed `Le/(1+Le)` compression and sRGB transfer. The normal intermediate lighting is then
-unsuitable for display. The last fullscreen pass, `source_radiance_preview`, reads exact texels from
+unsuitable for display. The fullscreen pass `source_radiance_preview` reads exact texels from
 `consolidatedGbuf` and depth and replaces the image; sky and nonterrain classes are black. Forward
 surfaces and held items can still draw afterward. This uses no extra target and runs no preview
 pass when Off. The display encoding is diagnostic only, not a source-energy storage format.
