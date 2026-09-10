@@ -26,6 +26,8 @@
 #moj_import <fornax_runtime:end_sky.glsl>
 #moj_import <fornax_runtime:surface_lighting.glsl>
 
+#define PLAGUE_LOCAL_LIGHTING 0 //[0 1] compile "Local Coloured Light" {0="Off" 1="Experimental"}
+
 // Draws fog strength instead of the world, to check against tools/plague_atmo_lut.py. Declared
 // here, not in fog_options.glsl: terrain.fsh imports that and is built with no options block.
 #define u_FogOpacityView 0 //[0 1] runtime "Fog Opacity View" {0="Off" 1="On"}
@@ -74,7 +76,8 @@ uniform sampler2D u_Input13; // moonAlbedo, equirectangular, near side centred
 #define MOON_ALBEDO u_Input13
 uniform sampler2D u_Input14; // moonNormal, tangent-space relief for the same projection
 #define MOON_NORMAL u_Input14
-// cloudShadowMask, quarter scale. How much sun gets past the cloud: 1.0 full sun, less is shaded.
+// voxelLocalDirect: RGB is local direct radiance; alpha is the cloud shadow mask.
+// Sharing this binding keeps the debug arms inside Metal's sixteen-sampler limit.
 uniform sampler2D u_Input15;
 #define CLOUD_SHADOW_MASK u_Input15
 uniform sampler2D u_Input16; // atmoSkyView, the marched dome (atmo_lut.glsl)
@@ -893,7 +896,7 @@ int debugView = int(u_Param3 + 0.5);
     // scale, since it has no detail finer than a cloud cell and cost hundreds of hashes here.
     float cloudShadow = 1.0;
 #if CLOUD_SHADOWS && CLOUDS_VOLUMETRIC
-    cloudShadow = clamp(texture(CLOUD_SHADOW_MASK, texCoord).r, 0.0, 1.0);
+    cloudShadow = clamp(texture(CLOUD_SHADOW_MASK, texCoord).a, 0.0, 1.0);
 #endif
     shadow *= cloudShadow;
 
@@ -1058,6 +1061,12 @@ int debugView = int(u_Param3 + 0.5);
     // worldPos is camera-relative, so the direction back to the eye is its negation.
     vec3 viewDir = normalize(-worldPos);
 
+    vec3 localRadiance = vec3(0.0);
+    float localBlockLight = blockLight;
+#if PLAGUE_LOCAL_LIGHTING != 0
+    localRadiance=texture(CLOUD_SHADOW_MASK,texCoord).rgb;
+#endif
+
     PlagueBrdf brdf = plagueEvaluateBrdf(mat, albedo, normal, viewDir, sunDir);
 
     // --- One labPBR surface response, shared by the diffuse and the reflection ---------------------
@@ -1185,7 +1194,7 @@ int debugView = int(u_Param3 + 0.5);
     PlagueLitResult litResult = plagueDoLighting(
             sunColour, ambientColour,
             normal, sunDir,
-            shadow, blockLight, skyLight,
+            shadow, localBlockLight, skyLight,
             ao, emitterLum, albedo, specular, blockLightColour,
             lighting.noonFactor, lighting.sunVisibility2, lighting.rainFactor,
             u_ScreenBrightness, moonPhaseInf, lightColorMult, uwSunGate, uwAmbientFloor);
@@ -1224,7 +1233,7 @@ int debugView = int(u_Param3 + 0.5);
              + litResult.highlight * shadowFade
              // Moon phase enters the highlight twice, an authored falloff: a thin crescent should
              // keep faint diffuse moonlight but lose the glint first.
-             * moonPhaseInf * moonPhaseInf;
+             * moonPhaseInf * moonPhaseInf + localRadiance;
 
     // Vanilla sets ambient_light 0.25 in the End (the_end.json), so nothing there is fully dark.
     // This pack never reads vanilla's lightmap, so it loses that floor, and with no sun either a
@@ -1330,7 +1339,7 @@ int debugView = int(u_Param3 + 0.5);
     float hereLight = dot(ambientColour * plagueSmoothstep1(skyLight)
                               + sunColour * shadow * skyLight
                               + blockLightColour
-                                    * plagueBlockLightCurve(blockLight, u_ScreenBrightness)
+                                    * plagueBlockLightCurve(localBlockLight, u_ScreenBrightness)
                               + heldLight,
                           vec3(0.2126, 0.7152, 0.0722));
     // AO is a diffuse answer and this is a specular question, see plagueSpecularOcclusion for the
@@ -1406,7 +1415,7 @@ int debugView = int(u_Param3 + 0.5);
     // surroundings fill, a solid angle, not a brightness (distance falloff is in the lightmap
     // curve). Laddered on the lantern-on-iron scene in tools/out/labpbr_unified.png.
     const float PLAGUE_ENV_BLOCK = 0.25;
-    vec3 blockRadiance = blockLightColour * plagueBlockLightCurve(blockLight, u_ScreenBrightness)
+    vec3 blockRadiance = blockLightColour * plagueBlockLightCurve(localBlockLight, u_ScreenBrightness)
                        + heldLight;
 
     // Shared with reflSkyVis above rather than a second, independently-drifting expression.

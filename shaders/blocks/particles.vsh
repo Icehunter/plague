@@ -7,6 +7,7 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <minecraft:projection.glsl>
 #moj_import <minecraft:sample_lightmap.glsl>
+#moj_import <fornax_runtime:local_light_mode.glsl>
 
 // Narrowest vertex format in the pack: no normal, no overlay, no tangent (a particle is a
 // camera-facing quad and vanilla gives nothing else).
@@ -30,7 +31,7 @@ void main() {
     // Lightmap folded into the tint, matching entities.vsh/block_entities.vsh (terrain instead
     // writes true light levels to the G-buffer and is lit by the resolve) so a particle shades like
     // the mob it drifts past.
-    vertexColor = Color * sample_lightmap(Sampler2, UV2);
+    vertexColor = Color * sample_lightmap(Sampler2, plagueLightingPackedCoord(UV2));
 
     // Camera-relative world position, the convention terrain.vsh sets and the resolve reads.
     vec3 worldPos = (inverse(u_ModelViewMatrix) * viewPos).xyz;

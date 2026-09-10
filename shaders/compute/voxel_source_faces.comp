@@ -17,7 +17,11 @@ layout(std430, set = 0, binding = 3) readonly buffer SectionState { uint stateWo
 layout(std430, set = 0, binding = 4) readonly buffer SourceSummary { uint sourceWords[]; };
 layout(set = 0, binding = 5) uniform sampler2D u_BlockAtlas;
 layout(set = 0, binding = 6) uniform sampler2D u_MaterialAtlas;
-layout(rgba16f, set = 0, binding = 7) uniform writeonly image2D u_SourceFaces;
+layout(set = 0, binding = 7) uniform sampler2DArray u_BlockAtlasPages;
+layout(set = 0, binding = 8) uniform sampler2DArray u_MaterialAtlasPages;
+layout(rgba16f, set = 0, binding = 9) uniform writeonly image2D u_SourceFaces;
+
+#moj_import <fornax_runtime:voxel_atlas_pages.glsl>
 
 int plagueFaceMod(int a, int d) { return ((a % d) + d) % d; }
 
@@ -47,24 +51,27 @@ vec4 plagueFaceSample(int base, vec2 st) {
     vec2 uv0 = vec2(uintBitsToFloat(poolWords[base+10]), uintBitsToFloat(poolWords[base+11]));
     vec2 ds = vec2(uintBitsToFloat(poolWords[base+12]), uintBitsToFloat(poolWords[base+13]));
     vec2 dt = vec2(uintBitsToFloat(poolWords[base+14]), uintBitsToFloat(poolWords[base+15]));
+    bool missingMap = (poolWords[base+8] & 16u) != 0u;
+    int page;
+    if (!plagueSourceAtlasPage(flags, missingMap, uv0, ds, dt, page)) return vec4(0.0,0.0,0.0,-1.0);
     vec2 lo = min(min(uv0,uv0+ds),min(uv0+dt,uv0+ds+dt));
     vec2 hi = max(max(uv0,uv0+ds),max(uv0+dt,uv0+ds+dt));
     if (any(isnan(lo)) || any(isnan(hi)) || any(isinf(lo)) || any(isinf(hi))
             || any(lessThan(lo,vec2(0.0))) || any(greaterThan(hi,vec2(1.0)))
             || any(lessThanEqual(hi,lo))) return vec4(0.0,0.0,0.0,-1.0);
     vec2 uv = uv0 + st.x*ds + st.y*dt;
-    ivec2 blockSize = textureSize(u_BlockAtlas,0);
+    ivec2 blockSize = plagueSourceBlockSize(page);
     ivec2 origin = ivec2(floor(lo*vec2(blockSize)+0.5));
     ivec2 extent = ivec2(floor((hi-lo)*vec2(blockSize)+0.5));
     if (any(lessThan(extent,ivec2(1))) || any(greaterThan(origin+extent,blockSize)))
         return vec4(0.0,0.0,0.0,-1.0);
     ivec2 texel = clamp(ivec2(uv*vec2(blockSize)),origin,origin+extent-1);
-    vec4 albedo = texelFetch(u_BlockAtlas,texel,0);
+    vec4 albedo = plagueSourceBlockTexel(page,texel);
     // Match voxel alpha coverage: solid faces ignore alpha, cutout faces reject below one half.
     if ((flags & 2u) != 0u && albedo.a < 0.5) return vec4(0.0,0.0,0.0,1.0);
     float materialAlpha = 1.0; // Known missing map is labPBR's unprovided byte 255.
     if ((poolWords[base+8] & 16u) == 0u) {
-        ivec2 materialSize = textureSize(u_MaterialAtlas,0);
+        ivec2 materialSize = plagueSourceMaterialSize(page);
         vec2 scale = vec2(materialSize)/vec2(blockSize);
         // Match the sidecar atlas rectangle: round in block space, then floor the scaled rectangle.
         ivec2 materialOrigin = ivec2(floor(vec2(origin)*scale));
@@ -72,7 +79,7 @@ vec4 plagueFaceSample(int base, vec2 st) {
         if (any(greaterThan(materialOrigin+materialExtent,materialSize))) return vec4(0.0,0.0,0.0,-1.0);
         ivec2 materialTexel = clamp(ivec2(uv*vec2(materialSize)),materialOrigin,materialOrigin+materialExtent-1);
         // Filtering sentinel255 with authored0 invents emission, so read the exact alpha byte.
-        materialAlpha = texelFetch(u_MaterialAtlas,materialTexel,0).a;
+        materialAlpha = plagueSourceMaterialTexel(page,materialTexel).a;
     }
     uint tintWord = poolWords[base+9];
     vec3 tint = vec3((tintWord>>16)&255u,(tintWord>>8)&255u,tintWord&255u)/255.0;

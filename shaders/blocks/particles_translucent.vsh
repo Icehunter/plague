@@ -18,6 +18,7 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <minecraft:projection.glsl>
 #moj_import <minecraft:sample_lightmap.glsl>
+#moj_import <fornax_runtime:local_light_mode.glsl>
 
 // DefaultVertexFormat.PARTICLE, the narrowest format in the pack: no normal, no overlay, no tangent.
 in vec3 Position;
@@ -41,7 +42,7 @@ void main() {
     texCoord0 = UV0;
     // Vanilla's own line: forward draw compositing into an already-lit frame, so this is the
     // lighting, unchanged.
-    vertexColor = Color * sample_lightmap(Sampler2, UV2);
+    vertexColor = Color * sample_lightmap(Sampler2, plagueLightingPackedCoord(UV2));
 
     // Same construction particles.vsh/entities.vsh/banner_patterns.vsh use, rather than a private
     // shortcut, so any convention bug shows consistently instead of only here.

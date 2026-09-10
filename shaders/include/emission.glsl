@@ -7,6 +7,8 @@
 #ifndef PLAGUE_EMISSION_INCLUDE
 #define PLAGUE_EMISSION_INCLUDE
 
+#moj_import <fornax_runtime:local_light_mode.glsl>
+
 // Engine-driven lane only: reconstructs per-texel shape from a block's flat emission level (never
 // applied to the authored per-texel lane, which already has real artist-drawn shape).
 
@@ -56,6 +58,10 @@ const float PLAGUE_EMISSION_HUE_FLOOR = 0.001;
 // Overall emission brightness scale. Fit jointly with the floor above, same script: RMS 5.8e-9.
 const float PLAGUE_EMISSION_MAGNITUDE = 3.0;
 
+// tools/derive_local_emission.py: a white unit face one block from a neutral rough wall matches
+// the legacy block-14 reference luminance. These scene units apply to source and receiver alike.
+const float PLAGUE_LOCAL_EMISSION_MAGNITUDE = 15.638055;
+
 vec3 plagueEmittedRadiance(vec3 albedoLinear, float emitterLum) {
     // Explicit early return rather than relying on arithmetic to fall out to zero: sqrt()-involving
     // identities aren't guaranteed bit-exact on a GPU, and a non-emissive fragment must be
@@ -75,7 +81,11 @@ vec3 plagueEmittedRadiance(vec3 albedoLinear, float emitterLum) {
     float lumSqrt = sqrt(lum);
     vec3 blendedHue = mix(squaredHue, hue, lumSqrt);
 
+#if PLAGUE_LOCAL_LIGHTING != 0
+    return blendedHue * lum * PLAGUE_LOCAL_EMISSION_MAGNITUDE;
+#else
     return blendedHue * lum * PLAGUE_EMISSION_MAGNITUDE;
+#endif
 }
 
 #endif // PLAGUE_EMISSION_INCLUDE

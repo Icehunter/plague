@@ -138,10 +138,7 @@ const vec3 PLAGUE_END_STORM_HIGH = vec3(0.90, 0.38, 0.62);   // H-alpha, the hot
 // the cloud with it instead of only the brightness.
 #define u_EndBreath 0.35 //[0.00..0.50 step 0.01] runtime "Sky Breathing"
 
-// How much of the world outline is kept in the End. The line adds a set amount of light on top of
-// whatever is under it, sized so an unlit surface in a dark room still shows its edges. In the End
-// nothing is brightly lit, so every surface counts as that dark surface and the lines take over the
-// whole frame instead of rescuing a few shadowed faces.
+// How much of the world outline is kept in the End, on top of its surface-lighting response.
 #define u_EndOutline 0.35 //[0.00..1.00 step 0.05] runtime "End Outline Strength"
 
 // How strong the fill light is in the End. The place has no sun, so this is the only thing lighting

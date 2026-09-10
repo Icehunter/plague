@@ -48,6 +48,11 @@ const float PLAGUE_BLOCKLIGHT_WEIGHT_TRADE = 0.8175;
 const float PLAGUE_BLOCKLIGHT_GAIN = 48.2418;
 
 float plagueBlockLightCurve(float blockLight, float vsBrightness) {
+#if PLAGUE_LOCAL_LIGHTING != 0
+    // This is the common placed-light path for all deferred surfaces and reflection proxies.
+    // Never restore vanilla on a cache miss: that would move false shadows with the camera.
+    return 0.0;
+#else
     float bl = clamp(blockLight, 0.0, 1.0);
     float vsb = clamp(vsBrightness, 0.0, 1.0);
     float steep = pow(bl, PLAGUE_BLOCKLIGHT_STEEP_POWER);
@@ -59,6 +64,7 @@ float plagueBlockLightCurve(float blockLight, float vsBrightness) {
     // lower guard only matters for a stray negative outside the clamped domain — pow() with a
     // negative base and non-integer exponent is undefined in GLSL.
     return pow(max(combined, 0.0), PLAGUE_BLOCKLIGHT_RESHAPE) * PLAGUE_BLOCKLIGHT_GAIN;
+#endif
 }
 
 // -------------------------------------------------------------------------------------------------

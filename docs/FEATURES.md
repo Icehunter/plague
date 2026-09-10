@@ -40,6 +40,19 @@ covers what the pack does, not the engine under it.
 
 ## Lighting
 
+- *Experiment, default Off:* Debug → Local Coloured Light replaces vanilla placed block light
+  on every surface with voxel direct lighting. There is no vanilla fallback for missing data or
+  unsupported lamps. Sun/sky, held light and self-emission remain. Sources opt in through
+  `lighting.voxel` in `blocks.toml`; their emission and textures determine colour and intensity.
+  Mapped full source faces light actual visible surfaces, including grass and foliage. Visibility
+  uses geometry and cutout alpha. The 12-block source range is independent of camera distance;
+  adding lamps does not invalidate the existing lights. Known thin subsurface cutouts can transmit
+  light; opaque grass backing cannot. This is not bounced GI, and partial lamps remain unsupported.
+  Full opaque alcove walls clip the visible source area continuously. Other silhouettes retain
+  four shadow samples per face. Static light textures work on overflow atlas pages as well as
+  the base page; animated overflow sprites remain unsupported.
+  Visible emission and received light share the calibrated scale; Off keeps the legacy lighting.
+  The owner has checked the direct-light appearance in game; its GPU cost remains high.
 - *Test feature, default Off:* Debug → Voxel Source Inventory shows which sections hold a light
   source and whether each section's data is current. F10 records the counts. This is a first step
   toward coloured local lighting; it adds no light and still needs checking in game.
@@ -152,7 +165,8 @@ covers what the pack does, not the engine under it.
   nothing else. A flat surface at any angle and distance answers with algebraic zero, so a floor seen
   at a grazing angle stays clean by construction rather than by a tuned threshold.
 - Convex and concave edges have separate strengths, both swinging through zero, so either channel
-  draws a white line or an ink one. Thickness only widens: what counts as an edge is an angle,
+  brightens or darkens the surface's own colour. The lift scales with the lit surface down to black;
+  no neutral brightness floor reveals unlit edges. Thickness only widens: what counts as an edge is an angle,
   free of tap radius, resolution and field of view.
 - Leaves, grass and fences are skipped by default, read off the G-buffer surface class. Every leaf
   gap is a real depth break, so foliage otherwise draws as a mass of lines.

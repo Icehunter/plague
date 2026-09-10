@@ -501,8 +501,7 @@ void main() {
     //
     // The lines are not touched by the grading sliders, and they do not bloom: bloomFinal is mixed in
     // upstream.
-    // Held back in the End, where the line's own floor is brighter than the surface under it; see
-    // u_EndOutline.
+    // Keep the owner's separate End outline strength; the same light-aware composite applies.
     float outlineScale = u_WorldBounds.w == 3.0 ? max(u_EndOutline, 0.0) : 1.0;
     display = plagueApplyOutline(display,
             plagueOutlineAmount(u_Input1, u_Input8, u_Input3, frameUv, u_PassTexelSize)

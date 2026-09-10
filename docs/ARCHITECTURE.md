@@ -209,7 +209,8 @@ anything drawn afterwards.
 `tonemap` also owns the world outline, which is why it reads `builtin.gAo`, appended at input 8. The
 detector runs there rather than in its own pass because it must sit after `temporal_accumulate` (a
 one-pixel line is the outlier a neighbourhood clamp rejects) and needs the finished colour to
-composite against. `tonemap` is the only pass after the accumulator holding both.
+composite against. `tonemap` is the only pass after the accumulator holding both. The outline adds
+proportional contrast to that finished colour, with no additive floor, so unlit surfaces stay unlit.
 
 ## Where the shaders live
 
@@ -332,7 +333,7 @@ header. A compute pass, `voxel_source_status`, checks these records and writes a
 status image. A final pass, `voxel_source_diagnostic`, draws that image over the normal scene
 depth. Graphics code never reads the raw buffers; Fornax's compute/graphics sync hands off the
 image instead. A stored alpha of zero marks an image not yet written. Off removes both passes and
-all three targets.
+their targets, except section state when local coloured lighting also uses it.
 
 At a 25-section window, this adds about 1.45 MiB of GPU memory, including the 512 KiB status image,
 on top of the existing voxel grid. Material data is read once, at load and section-build time; each
@@ -370,3 +371,86 @@ unsuitable for display. The fullscreen pass `source_radiance_preview` reads exac
 `consolidatedGbuf` and depth and replaces the image; sky and nonterrain classes are black. Forward
 surfaces and held items can still draw afterward. This uses no extra target and runs no preview
 pass when Off. The display encoding is diagnostic only, not a source-energy storage format.
+
+### Experimental local coloured lighting
+
+`PLAGUE_LOCAL_LIGHTING`, default Off under Debug, replaces vanilla placed block light on every
+surface. Missing source data and unsupported lamps have no vanilla fallback. Sun/sky, held light
+and visible emission remain separate. The shared block-light curve returns zero; forward geometry
+samples the zero-block-light column of the vanilla LUT. Raw light values remain available as world
+data. A merged lightmap cannot subtract one selected lamp, so replacement is global.
+
+`blocks.toml` opts casting sources in with root `[lighting] voxel = false` and per-category
+`lighting.voxel = true`. The engine resolves membership at harvest. Unselected blocks remain
+occluders and retain visible self-emission. Reloading source policy rebuilds publications. Opting
+in a shape does not manufacture missing face mappings: currently only mapped full unit source
+faces are sampled, so partial lamps such as torches and lanterns remain unsupported.
+
+The engine's `voxelSourceWindow` ABI2 is a sparse inventory over committed voxel sections, with
+per-section ranges and capacity for 4096 emitting cells. Admitted world identities persist as the
+eye moves; capacity overflow withholds new cells instead of dropping admitted lamps. Pending
+sections hide their own records while retaining admission. Unknown cells are counted separately.
+The header's published/overflow/unknown counts describe committed data, not unloaded world space.
+A source's validity is checked against its section owner, storage and geometry revision. A pending
+or unsupported source contributes nothing; it does not cancel other known sources.
+
+Static source sprites on overflow pages retain their existing seven-word face mapping, with the
+engine's 1-based page encoded in header bits 27..28. `voxel_local_sources` and the face-colour
+diagnostic append `builtin.blockAtlasPages` and `builtin.materialAtlasPages` as array samplers;
+shared page sampling remaps ghost UVs to the original layer before fetching either lane. The
+1x1x1 retirement fallback and missing layers are unavailable sources. Animated ghosts without a
+full-copy layer remain unsupported. Material alpha still distinguishes authored zero from the
+unprovided sentinel on every page; neither source eligibility nor emission changes with resolution.
+
+`voxel_local_sources` evaluates sixteen midpoint atlas samples per eligible face and reduces them
+to four quarter-face radiances. `voxel_local_direct` integrates those area samples from the actual
+visible surface, using emitter cosine, inverse-square transport and the material BRDF. Candidate
+section ranges come from the receiver's 27 neighbouring sections. The authored finite domain is
+12 blocks from each source, with a smooth taper only from 9 to 12 blocks. There is no camera-range
+fade and no limit of three contributing faces. Adding known lamps adds their contributions.
+
+Full opaque cubes beside a source's forward cell clip its visible face area analytically when
+the receiver lies within the other tangent slab. The clipping uses the same snapped and biased
+endpoints as shadow traversal. Each quarter keeps its radiance, weights by its surviving area,
+and traces from that area's centroid. This avoids whole-quarter visibility steps at certified
+alcove side walls without adding rays. Unknown, partial, cutout and unsupported silhouettes retain
+ordinary quadrature. Every surviving sample still traces the complete shadow segment.
+
+Visibility follows finite voxel segments from source toward receiver, rejecting nearby source-side
+blockers early, with opaque blocks, partial boxes and atlas-alpha
+cutouts. It asks whether geometry blocks the segment, independently of whether a hit has a usable
+reflection colour. Missing or pending segment data fails closed for that sample. Rendered opaque
+backing is a separate face-metadata bit from a usable atlas mapping; grass overlays therefore
+cannot turn their opaque cube backing transparent. Terrain carries the primitive's geometric
+normal in `gNormal.a`, encoded for the target's actual SNORM16 format; exact axis codes preserve
+cube faces. Normal maps affect the BRDF, not which side the shadow ray starts on. Geometry stages
+without this payload use their shading normal as a fallback.
+
+Grass and foliage use actual visible points rather than a cube-face receiver cache. Known thin
+cutouts with labPBR subsurface response split diffuse energy between reflection and transmission,
+up to half in each hemisphere. This is an authored thin-sheet approximation, not volume scattering;
+opaque-backed grass faces do not transmit. Cutout occluders still use the harvested model's
+approximation (two crossed planes for CROSS) and atlas alpha. Outside the certified aperture case,
+four area samples can leave visible steps in a penumbra. Quarter radiance and centroid integration
+do not resolve arbitrarily small emissive details or exact specular area-light response.
+
+Primary lighting has a separate HDR target so its cost and output can be measured. RGB holds local
+radiance; alpha carries the cloud-shadow mask. Resolve reads both through its existing input 15,
+keeping the Metal sampler budget the same. With local lighting Off,
+`voxel_local_off` copies only the cloud mask into the same target. The source producer does not run.
+Secondary voxel surfaces use the same direct-light transport, without a primary screen cache.
+This is direct lighting, not bounced GI; reflected hits have no per-hit fluid classification and
+the local transport does not integrate water absorption along a segment.
+
+Visible emission and received source radiance share the scale derived by
+`tools/derive_local_emission.py`: a white unit face one block from a neutral rough wall matches the
+legacy block-14 reference luminance at the documented fixed settings. This establishes relative
+scene units, not measured lumens. Off keeps the legacy emission scale.
+
+The radiance buffer occupies 1,991,496 bytes and remains allocated for fixed bindings while Off.
+The engine sparse source inventory adds 418,632 bytes while enabled. Section state adds 32 bytes
+per voxel section when not already allocated. The full-resolution RGBA16F direct target consumes
+8 bytes per pixel. Geometry buffers are shared with reflection tracing. Fornax synchronizes compute
+writes before graphics reads, and previous graphics reads before subsequent compute writes.
+Native shader fixtures verify transport and ABI cases; they do not establish the installed resource
+pack's appearance or live Vulkan frame cost. Owner validation remains required.

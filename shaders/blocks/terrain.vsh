@@ -6,6 +6,7 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:chunk_vertex.glsl>
 #moj_import <fornax_runtime:materials.glsl>
+#moj_import <fornax_runtime:local_light_mode.glsl>
 #moj_import <fornax_runtime:water_waves.glsl>
 #moj_import <fornax_runtime:water_interaction.glsl>
 
@@ -40,8 +41,8 @@ out vec3 v_Clip;
 flat out vec3 v_CameraAbs;
 flat out float v_Wetness;
 
-// Decoded from a_Normal.yz in chunk_vertex.glsl; see blocks.toml for why this pack declares only
-// one category. flat is mandatory, not stylistic: interpolating an id across a quad would produce
+// Decoded from a_Normal.yz in chunk_vertex.glsl; used here for water routing.
+// flat is mandatory, not stylistic: interpolating an id across a quad would produce
 // meaningless in-between values off-vertex.
 flat out uint v_MaterialId;
 
@@ -176,7 +177,7 @@ void main() {
     vec2 previousNdc = (previousClipPosition.xy / previousClipPosition.w) - u_PrevJitterOffset;
     v_MotionVector = (currentNdc * 0.5 + 0.5) - (previousNdc * 0.5 + 0.5);
 
-    v_Color      = _vert_color * texture(u_LightTex, _vert_tex_light_coord);
+    v_Color      = _vert_color * texture(u_LightTex, plagueLightingTexCoord(_vert_tex_light_coord));
     v_RawTint    = _vert_color;
     v_WorldPos   = worldPosition;
     v_WaterBasePos = waterBasePosition;

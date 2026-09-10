@@ -2,10 +2,12 @@
 #define PLAGUE_VOXEL_COVERAGE_TRACE
 
 // BrickGridUpload ABI: 128 occupancy, 1024 payload, 96*16 palette words per 16^3-cell section.
+#ifndef PLAGUE_VOXEL_EXTERNAL_BUFFERS
 uniform usamplerBuffer u_Input3;
 uniform usamplerBuffer u_Input4;
 uniform usamplerBuffer u_Input5;
 uniform usamplerBuffer u_Input6;
+#endif
 
 // Diagnostic codes: solid, cutout candidate, outside, pending, clear-to-boundary, invalid ABI.
 // Clear to the edge means the grid ran out, never that the ray reached the sky.
@@ -68,7 +70,9 @@ vec3 plagueVoxelHitNormal(vec3 point, vec3 lo, vec3 hi, vec3 dir) {
 }
 
 #ifdef PLAGUE_VOXEL_ALPHA_CUTOUTS
+#ifndef PLAGUE_VOXEL_EXTERNAL_BUFFERS
 uniform sampler2D u_Input9; // builtin.blockAtlas; appended after the existing reflection inputs
+#endif
 #ifdef PLAGUE_VOXEL_TEXTURED_FACES
 #moj_import <fornax_runtime:voxel_face_texture.glsl>
 #endif
@@ -143,7 +147,8 @@ bool plagueVoxelCutoutHit(vec3 o, vec3 dir, ivec3 cell, int base, uint flags,
             bool solid;
 #ifdef PLAGUE_VOXEL_TEXTURED_FACES
             vec4 mapped;
-            if (plagueVoxelFaceSample(base / 16, point, n, mapped))
+            if (plagueVoxelOpaqueFace(base / 16,n)) solid=true;
+            else if (plagueVoxelFaceSample(base / 16, point, n, mapped))
                 solid = mapped.a >= 0.5; // Same half cutoff as the stand-in sprite path.
             else
 #endif
@@ -161,7 +166,7 @@ bool plagueVoxelCutoutHit(vec3 o, vec3 dir, ivec3 cell, int base, uint flags,
 }
 #endif
 
-float plagueVoxelTraceMaterial(vec3 originRel, vec3 dir, out vec3 hitPosition,
+float plagueVoxelTraceMaterialBounded(vec3 originRel, vec3 dir, float maxDistance, int maxSteps, out vec3 hitPosition,
                        out vec3 hitNormal, out uint hitColour, out int hitEntry, out vec3 hitLocal) {
     hitEntry = -1;
     hitLocal = vec3(0.0);
@@ -181,6 +186,7 @@ float plagueVoxelTraceMaterial(vec3 originRel, vec3 dir, out vec3 hitPosition,
     if (any(lessThan(o, vec3(0.0))) || any(greaterThanEqual(o, vec3(extent)))) return 3.0;
     float enter, leave;
     if (!plagueCoverageInterval(o, dir, vec3(0.0), vec3(extent), enter, leave)) return 5.0;
+    leave = min(leave, maxDistance);
     float t = enter + PLAGUE_COVERAGE_EPSILON;
     ivec3 cell = ivec3(floor(o + dir * t));
     ivec3 stepDir = ivec3(sign(dir));
@@ -197,7 +203,7 @@ float plagueVoxelTraceMaterial(vec3 originRel, vec3 dir, out vec3 hitPosition,
     int occupancyAddress = -1;
     uint occupancyWord = 0u;
     // A straight line crosses at most one window extent on each axis.
-    for (int i = 0; i < d * 16 * 3 + 3 && t < leave; i++) {
+    for (int i = 0; i < maxSteps && t < leave; i++) {
         if (any(lessThan(cell, ivec3(0))) || any(greaterThanEqual(cell, ivec3(d * 16)))) return 5.0;
         ivec3 localSection = cell >> 4;
         if (any(notEqual(localSection, cachedSection))) {
@@ -232,7 +238,8 @@ float plagueVoxelTraceMaterial(vec3 originRel, vec3 dir, out vec3 hitPosition,
                     float alphaHit;
                     bool unavailable;
                     vec3 alphaNormal;
-                    if (plagueVoxelCutoutHit(o, dir, cell, base, flags, t, alphaHit, alphaNormal, unavailable)) {
+                    if (plagueVoxelCutoutHit(o, dir, cell, base, flags, t, alphaHit, alphaNormal, unavailable)
+                            && alphaHit < leave) {
                         hitEntry = slot * 96 + entry;
                         hitLocal = o + dir * alphaHit - vec3(cell);
                         hitPosition = originRel + dir * alphaHit;
@@ -285,7 +292,7 @@ float plagueVoxelTraceMaterial(vec3 originRel, vec3 dir, out vec3 hitPosition,
                                     vec3(cell) + lo, vec3(cell) + hi, dir);
                         }
                     }
-                    if (nearest < 1e30) {
+                    if (nearest < leave) {
                         hitEntry = slot * 96 + entry;
                         hitLocal = o + dir * nearest - vec3(cell);
                         hitPosition = originRel + dir * nearest;
@@ -307,7 +314,12 @@ float plagueVoxelTraceMaterial(vec3 originRel, vec3 dir, out vec3 hitPosition,
         }
         t = crossing;
     }
-    return 5.0;
+    return t >= leave ? 5.0 : 6.0; // Exhausted work is unknown, never an unobstructed segment.
+}
+float plagueVoxelTraceMaterial(vec3 originRel, vec3 dir, out vec3 hitPosition,
+                       out vec3 hitNormal, out uint hitColour, out int hitEntry, out vec3 hitLocal) {
+    return plagueVoxelTraceMaterialBounded(originRel, dir, 1e30, u_VoxelWindow.w * 16 * 3 + 3,
+            hitPosition, hitNormal, hitColour, hitEntry, hitLocal);
 }
 // Most callers want the surface only, not the extra material data.
 float plagueVoxelTrace(vec3 originRel, vec3 dir, out vec3 hitPosition,

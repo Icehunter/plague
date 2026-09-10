@@ -743,6 +743,7 @@ elements = [
     "PLAGUE_SHORE_DEBUG",
 
     "<group:Local Lighting>",
+    "PLAGUE_LOCAL_LIGHTING",
     "PLAGUE_SOURCE_DIAGNOSTIC",
     "PLAGUE_SOURCE_RADIANCE",
 
@@ -786,6 +787,15 @@ F10 logs show primary trace (including alpha), material decode, direct lighting,
 Temporarily lowers FPS. Hold the same view until timings settle, capture the log, then turn Off.
 Full minus no-fog estimates fog cost; no-fog minus direct estimates secondary reflection cost. These are marginal draw differences, not exact timings inside the normal shader.
 Requires Voxel SSR Recovery and reflective water with Fancy or Fast reflections."""
+PLAGUE_LOCAL_LIGHTING = """
+Experimental voxel block lighting. Disables vanilla block light on every surface, including
+unsupported surfaces and missing voxel data. Sun, sky, held light and glowing surfaces remain.
+Light sources opt in through lighting.voxel in blocks.toml. Supported full block faces light
+nearby opaque cube faces within four blocks. Unsupported shapes, crowded source sets and
+distant terrain can remain dark.
+The small camera-local cache and half-block shadow samples are unfinished quality limits.
+This is direct light, not bounced GI.
+"""
 PLAGUE_SOURCE_DIAGNOSTIC = """
 Section overlay, not coloured light or a reflection view. Reads terrain depth, including terrain behind water.
 Sources: red = a light source; green = a glowing material the pack supports; yellow = both; grey = no known source.
@@ -827,7 +837,8 @@ Lines along the world's geometric edges.
 It draws where surfaces fold, or where one thing stands in front of another, so a block corner and \
 a rooftop against the sky both get a line. A flat wall of a hundred blocks gets one outline around \
 the wall, not a grid. Water, glass and the item in your hand are never outlined, and nothing under \
-water is. Costs a handful of depth reads per pixel."""
+water is. Lines follow the surface's lighting and colour and disappear with it in darkness. \
+Costs a handful of depth reads per pixel."""
 
 u_OutlineConvex = """
 Strength of outside edges: corners pointing toward you, and anything silhouetted against what is \
@@ -1957,9 +1968,8 @@ enough to reflect at all."""
 u_EndOutline = """
 How much of the world outline is kept in the End.
 
-The line adds a set amount of light on top of whatever is under it, enough that an unlit surface \
-still shows its edges. Nothing in the End is brightly lit, so at full strength the lines take over \
-the whole frame. Zero turns them off there and leaves every other place alone."""
+Lines follow the surface's lighting here too. This scales their strength separately for the End. \
+Zero turns them off there and leaves every other place alone."""
 
 u_EndAmbient = """
 How strong the fill light is in the End.

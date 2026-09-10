@@ -6,6 +6,14 @@
 #moj_import <fornax_runtime:material_options.glsl>
 #moj_import <fornax_runtime:voxel_lightmap.glsl>
 
+#define PLAGUE_LOCAL_LIGHTING 0 //[0 1] compile "Local Coloured Light" {0="Off" 1="Experimental"}
+#if PLAGUE_LOCAL_LIGHTING != 0
+uniform usamplerBuffer u_Input17;
+uint plagueLocalSourceWord(int word) { return texelFetch(u_Input17,word).r; }
+int plagueLocalSourceSize() { return textureSize(u_Input17); }
+#moj_import <fornax_runtime:voxel_local_light.glsl>
+#endif
+
 struct PlagueVoxelSurface {
     vec3 position;
     vec3 normal;
@@ -93,14 +101,24 @@ vec3 plagueVoxelSurfaceDirect(PlagueVoxelSurface surface, vec3 viewDir, vec3 sun
 #endif
     float moon = plagueMoonPhaseInfluence(u_SkyCelestial.w,lighting.sunVisibility2);
     vec3 specular = brdf.specular*shadow*surface.light.y*colours.sunColour;
+    float blockLight = surface.light.x;
+    vec3 localRadiance = vec3(0.0);
+    float localBlockLight = blockLight;
+#if PLAGUE_LOCAL_LIGHTING != 0
+    // The camera-column water height cannot classify a reflected surface (dry caves may be below
+    // zero). Water reflection recovery already bypasses wet eyes; keep that same boundary here.
+    if (u_WaterState.x >= 0.5
+            || !plagueLocalLight(surface.position,surface.geometricNormal,surface.normal,viewDir,
+                    surface.material,surface.albedo,localRadiance)) localRadiance=vec3(0.0);
+#endif
     PlagueLitResult lit = plagueDoLighting(colours.sunColour,colours.ambientColour,
-            surface.normal,sunDir,shadow,surface.light.x,surface.light.y,surface.ao,surface.emission,
+            surface.normal,sunDir,shadow,localBlockLight,surface.light.y,surface.ao,surface.emission,
             surface.albedo,specular,colours.blockLightColour,lighting.noonFactor,lighting.sunVisibility2,
             lighting.rainFactor,u_ScreenBrightness,moon,lightMult,-1.0,vec3(0));
     vec3 held = plagueHeldLighting(surface.position,u_HeldLight.x,u_HeldLight.y,colours.blockLightColour);
     vec3 diffuse = kD*surface.albedo*sqrt(max(lit.diffuse*lit.diffuse+held*held,vec3(0)));
     return (surface.emission>0.0 ? sqrt(max(diffuse*diffuse+lit.emitted*lit.emitted,vec3(0))) : diffuse)
-            + lit.highlight*moon*moon;
+            + lit.highlight*moon*moon + localRadiance;
 }
 
 // One extra bounce, so metals are not painted as diffuse. Four GGX samples is the work budget:

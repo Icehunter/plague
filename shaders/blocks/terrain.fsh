@@ -1,4 +1,5 @@
 #version 330 core
+#moj_import <fornax_runtime:geometric_normal.glsl>
 
 // Three output shapes selected by the engine's defines: USE_DEFERRED (G-buffer, SOLID/CUTOUT),
 // USE_WATER_PREPASS (single wave-normal target), neither (forward colour, TRANSLUCENT). One
@@ -312,6 +313,19 @@ void main() {
     vec3 dPosY = dFdy(v_WorldPos);
     vec2 dUvX  = dFdx(v_TexCoord);
     vec2 dUvY  = dFdy(v_TexCoord);
+    vec3 geoNormal = cross(dPosX, dPosY);
+    float geoLen = length(geoNormal);
+    float geoSine = geoLen / max(length(dPosX) * length(dPosY), 1e-20);
+#if PLAGUE_LOCAL_LIGHTING != 0 && defined(USE_DEFERRED) && defined(ALPHA_CUTOUT)
+    // The mesher supplies a cardinal face normal even for diagonal grass quads. Build their
+    // tangent frame against the actual primitive plane: otherwise a lamp in the real front
+    // hemisphere can still land behind the snapped BRDF normal. Use the same derivative
+    // degeneracy guard as the legacy normal-trust check below. Off retains the existing look.
+    if(geoSine > 0.05) {
+        faceNormal=geoNormal/geoLen;
+        if(dot(faceNormal,-v_WorldPos)<0.0) faceNormal=-faceNormal;
+    }
+#endif
 
     float det = dUvX.x * dUvY.y - dUvY.x * dUvX.y;
     vec3 tangent;
@@ -532,14 +546,12 @@ void main() {
     // --- Does this quad's normal actually describe this quad? ------------------------------------
     // v_FaceNormal is snapped to the dominant cardinal axis, which is 45 degrees off the true normal
     // on cross-plates (grass, flowers) and biases the reflection term toward the sky. Suppresses
-    // smoothness instead of fixing the normal (a true normal needs SSS to avoid a dark backlit tuft),
+    // smoothness in the legacy arm. Local lighting corrects the cutout frame above and supplies
+    // thin-sheet transmission, so corrected quads keep their authored smoothness. The clamp is
     // gated by dot(faceNormal, geoNormal) so only the mis-snapped quads lose reflection; not gated on
     // ALPHA_CUTOUT since axis-aligned cutout geometry (doors, rails) would lose reflections for nothing.
-    vec3 geoNormal = cross(dPosX, dPosY);
-    float geoLen = length(geoNormal);
     // |sin| between the derivative vectors; near zero only where the quad is edge-on. Guards against
     // normalizing a near-zero cross product at grazing angles, which would report a random direction.
-    float geoSine = geoLen / max(length(dPosX) * length(dPosY), 1e-20);
     // cos(45deg)/cos(22.5deg): 0.7071 is exactly where a cross plate lands; the upper edge is half
     // that angle, so a quad tilted less than halfway toward the cross case keeps full smoothness.
     const float PLAGUE_NORMAL_TRUST_LO = 0.70710678;
@@ -718,7 +730,11 @@ void main() {
     }
 #endif
 
-    gNormalOut   = vec4(worldNormal, 1.0);
+    // Geometry derivatives here stay within this primitive, including helper lanes. Deferred
+    // depth derivatives would instead cross unrelated surfaces at silhouettes.
+    vec3 lightingGeometry=geoLen>0.0 ? geoNormal/geoLen : faceNormal;
+    lightingGeometry*=dot(lightingGeometry,viewWorld)<0.0 ? -1.0 : 1.0;
+    gNormalOut=vec4(worldNormal,plagueEncodeGeometricNormal(lightingGeometry));
     // Decode audit instrument, NOT a shading change (rawAlbedo/materialSample/bakedAo above are
     // computed identically either way). Gated on u_AlbedoIdentityDebug, not the engine's debugView
     // uniform, which a DEFERRED program never receives. Overrides gAlbedoOut last, after snow and

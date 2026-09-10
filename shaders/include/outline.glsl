@@ -22,7 +22,7 @@
 #define OUTLINE_FOLIAGE 0 //[0 1] compile "Outline Foliage" {0="Skip" 1="Include"}
 
 // Both strengths swing through zero. Positive lifts the surface along the edge, negative darkens it
-// under the same law, so either channel draws a white line or an ink one.
+// under the same law, with both following the surface's own light and colour.
 #define u_OutlineConvex 0.50 //[-2.00..2.00 step 0.05] runtime "Outline Convex Strength"
 #define u_OutlineConcave 0.00 //[-2.00..2.00 step 0.05] runtime "Outline Concave Strength"
 #define u_OutlineThickness 1 //[1..4 step 1] runtime "Outline Thickness"
@@ -67,16 +67,12 @@ const float PLAGUE_OUTLINE_OCCLUDE_LO = 0.03;
 const float PLAGUE_OUTLINE_OCCLUDE_HI = 0.06;
 
 // --- Compositing --------------------------------------------------------------------------------------
-// Display-referred sRGB. Authored: an edge reads as one third of a stop of extra light. A linear gain
-// k scales (display + 0.055), so the increment is (display + 0.055)*(k^(1/2.4) - 1); 2^(1/3) gives
-// 0.1011.
+// Authored contrast gain: one third of a stop through sRGB's power exponent gives
+// 2^((1/3)/2.4)-1. Apply it proportionally, without an offset: an unlit edge emits nothing.
 const float PLAGUE_OUTLINE_LIFT_GAIN = 0.10105680;
-// Authored: a line on an unlit surface lands at CIE L* = 5, legible in a dark room and invisible
-// against a lit one. L* 5 -> Y 0.005535 -> sRGB 0.0660.
-const float PLAGUE_OUTLINE_LIFT_FLOOR = 0.06603007;
 // Stops growing above a three-quarter-bright surface so a sunlit face grows no clipped streak. Being
 // a per-channel min, the brightest channel binds first and the line desaturates slightly.
-const float PLAGUE_OUTLINE_LIFT_CAP = 0.14182267; // FLOOR + GAIN * 0.75
+const float PLAGUE_OUTLINE_LIFT_CAP = 0.07579260; // GAIN * 0.75; existing highlight limit.
 
 // gAo.a is quarter-step spaced (terrain.fsh:686) in an RGBA8_UNORM lane. A quarter of the gap is
 // about 15 quanta wide.
@@ -219,12 +215,10 @@ float plagueOutlineAmount(sampler2D depthTex, sampler2D aoTex, sampler2D waterDe
 
 /** Composite the line onto a display-referred colour.
  *
- *  A lift proportional to the surface's own brightness, so the line reads as the surface lit harder
- *  along its edge and hue is preserved; plus a small neutral floor so an unlit surface still shows
- *  its edges; capped so a sunlit face grows no clipped streak. Signed amount, so a negative strength
- *  darkens under the same law. */
+ *  Proportional contrast follows the surface lighting down to black and adds no neutral tint.
+ *  Signed amount darkens under the same law; the cap limits the lift on bright surfaces. */
 vec3 plagueApplyOutline(vec3 display, float amount) {
-    vec3 lift = min(display * PLAGUE_OUTLINE_LIFT_GAIN + PLAGUE_OUTLINE_LIFT_FLOOR,
+    vec3 lift = min(display * PLAGUE_OUTLINE_LIFT_GAIN,
                     vec3(PLAGUE_OUTLINE_LIFT_CAP));
     return clamp(display + lift * amount, vec3(0.0), vec3(1.0));
 }

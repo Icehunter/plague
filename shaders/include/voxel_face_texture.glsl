@@ -1,7 +1,17 @@
 #ifndef PLAGUE_VOXEL_FACE_TEXTURE
 #define PLAGUE_VOXEL_FACE_TEXTURE
 
+#ifndef PLAGUE_VOXEL_EXTERNAL_BUFFERS
 uniform usamplerBuffer u_Input10; // optional voxelFaceTexture buffer; the palette's own stride stays 16
+#endif
+
+// Rendered opaque backing is independent of atlas UV mapping (a grass overlay has multiple quads).
+bool plagueVoxelOpaqueFace(int entry,vec3 normal) {
+    int d=u_VoxelWindow.w;
+    if(d<1 || d>33 || textureSize(u_Input10)!=d*d*d*96*42 || entry<0 || entry>=d*d*d*96) return false;
+    int face=normal.y!=0.0 ? (normal.y>0.0?1:0) : normal.z!=0.0 ? (normal.z>0.0?3:2) : (normal.x>0.0?5:4);
+    return (texelFetch(u_Input10,entry*42+face*7).r & 0x04000000u)!=0u;
+}
 
 bool plagueVoxelFaceMapping(int entry, vec3 local, vec3 normal, out vec2 atlasUV,
         out vec3 tintColour, out vec3 tangent, out vec3 bitangent) {

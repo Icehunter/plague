@@ -1,0 +1,86 @@
+#version 450
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+
+#define u_AuthoredEmission 1.0 //[0.0..1.0 step 0.05] runtime "Glowing Texture Strength"
+
+// One invocation per admitted source cell, six faces and sixteen samples per face.
+// Four quarter-face averages preserve coarse emission colour without sampling atlases per receiver.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+// Binding 1 is the engine-injected packOptions block; remaining bindings follow graph input order.
+layout(std430, set = 0, binding = 2) readonly buffer SourceWindow { uint sourceWindowWords[]; };
+layout(std430, set = 0, binding = 3) readonly buffer SectionState { uint sectionStateWords[]; };
+layout(std430, set = 0, binding = 4) readonly buffer FaceTexture { uint faceTextureWords[]; };
+layout(set = 0, binding = 5) uniform sampler2D u_BlockAtlas;
+layout(set = 0, binding = 6) uniform sampler2D u_MaterialAtlas;
+layout(set = 0, binding = 7) uniform sampler2DArray u_BlockAtlasPages;
+layout(set = 0, binding = 8) uniform sampler2DArray u_MaterialAtlasPages;
+layout(std430, set = 0, binding = 9) writeonly buffer LocalRadiance { uint localRadianceWords[]; };
+
+#moj_import <fornax_runtime:voxel_local_source_sampling.glsl>
+
+#moj_import <fornax_runtime:voxel_local_layout.glsl>
+
+int plagueLocalSourceMod(int a,int b) { return ((a%b)+b)%b; }
+bool plagueLocalSourceHeaderCurrent() {
+    int d=u_VoxelWindow.w;
+    return d>0 && d<=33 && sourceWindowWords.length()==PLAGUE_LOCAL_RAW_WORDS
+        && localRadianceWords.length()==PLAGUE_LOCAL_SOURCE_WORDS
+        && sourceWindowWords[0]==2u && sourceWindowWords[1]==uint(PLAGUE_LOCAL_CAPACITY)
+        && sourceWindowWords[2]<=uint(PLAGUE_LOCAL_CAPACITY) && sourceWindowWords[3]!=0u
+        && sectionStateWords.length()==d*d*d*8 && faceTextureWords.length()==d*d*d*96*42;
+}
+bool plagueLocalSourceCellCurrent(int raw,out int entry,out uint facts) {
+    entry=int(sourceWindowWords[raw+3]); facts=sourceWindowWords[raw+4];
+    int d=u_VoxelWindow.w;
+    if(sourceWindowWords[raw+6]!=1u || entry<0 || entry>=d*d*d*96) return false;
+    ivec3 cell=ivec3(sourceWindowWords[raw],sourceWindowWords[raw+1],sourceWindowWords[raw+2]);
+    ivec3 owner=cell>>4, first=u_VoxelWindow.xyz-ivec3((d-1)/2);
+    if(any(lessThan(owner,first)) || any(greaterThanEqual(owner,first+ivec3(d)))) return false;
+    int slot=(plagueLocalSourceMod(owner.y,d)*d+plagueLocalSourceMod(owner.z,d))*d
+        +plagueLocalSourceMod(owner.x,d), state=slot*8;
+    return entry/96==slot && sectionStateWords[state+6]==1u
+        && all(equal(ivec3(sectionStateWords[state],sectionStateWords[state+1],sectionStateWords[state+2]),owner))
+        && sectionStateWords[state+3]==sourceWindowWords[3]
+        && sectionStateWords[state+4]==sourceWindowWords[raw+5];
+}
+void main() {
+    int index=int(gl_GlobalInvocationID.x);
+    bool current=plagueLocalSourceHeaderCurrent();
+    if(localRadianceWords.length()!=PLAGUE_LOCAL_SOURCE_WORDS) return;
+    // Copy all section ranges independently of source count. The next graph pass executes only
+    // after this dispatch completes; no cross-workgroup header publication is needed.
+    for(int word=index;word<PLAGUE_LOCAL_RECORDS;word+=PLAGUE_LOCAL_CAPACITY)
+        localRadianceWords[word]=current?sourceWindowWords[word]:0u;
+    if(!current || index>=int(sourceWindowWords[2])) return;
+    int raw=PLAGUE_LOCAL_RECORDS+index*8;
+    int base=PLAGUE_LOCAL_RECORDS+index*PLAGUE_LOCAL_RECORD_WORDS;
+    for(int word=0;word<8;word++) localRadianceWords[base+word]=sourceWindowWords[raw+word];
+    localRadianceWords[base+6]=0u; localRadianceWords[base+7]=0u;
+    int entry; uint facts;
+    if(!plagueLocalSourceCellCurrent(raw,entry,facts) || (facts&64u)!=0u) return;
+    for(int face=0;face<6;face++) if((facts&(1u<<face))!=0u) {
+        PlagueLocalSourceFace mapping;
+        if(!plagueLocalSourceFace(entry,face,facts,mapping)) return;
+    }
+    for(int face=0;face<6;face++) {
+        if((facts&(1u<<face))==0u) continue;
+        PlagueLocalSourceFace mapping;
+        plagueLocalSourceFace(entry,face,facts,mapping);
+        for(int quarter=0;quarter<4;quarter++) {
+            vec3 sum=vec3(0.0);
+            ivec2 first=ivec2(quarter&1,quarter>>1)*2;
+            for(int y=0;y<2;y++) for(int x=0;x<2;x++)
+                sum+=plagueLocalSourceSample(mapping,(vec2(first+ivec2(x,y))+0.5)/4.0);
+            sum*=0.25; // Arithmetic mean of the four midpoint texels, separate from geometric area.
+            int sampleBase=base+8+face*16+quarter*4;
+            localRadianceWords[sampleBase]=floatBitsToUint(sum.x);
+            localRadianceWords[sampleBase+1]=floatBitsToUint(sum.y);
+            localRadianceWords[sampleBase+2]=floatBitsToUint(sum.z);
+            localRadianceWords[sampleBase+3]=floatBitsToUint(1.0);
+        }
+    }
+    localRadianceWords[base+7]=facts&63u;
+    localRadianceWords[base+6]=1u; // Bad material data skips only its own lamp, never neighbouring lamps.
+}

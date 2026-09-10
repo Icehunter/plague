@@ -509,6 +509,51 @@ type = "consolidate"
 inputs = ["builtin.gAlbedo", "builtin.gMaterial", "builtin.gAo"]
 outputs = ["consolidatedGbuf"]
 
+# Sparse source radiance is shared by primary and voxel-reflected lighting. The fixed resolve
+# input 15 carries direct RGB and cloud-shadow alpha, avoiding an extra live Metal sampler.
+# Direct/off are mutually exclusive writers; Off copies the cloud mask without tracing lights.
+[targets.voxelSourceWindow]
+kind = "buffer"
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
+
+[targets.voxelLocalRadiance]
+kind = "buffer"
+stride_bytes = 4
+count = 497874 # ABI2 header/ranges 71890 + 4096 cells * 104 words
+
+[targets.voxelLocalDirect]
+format = "rgba16f"
+scale = 1.0
+filter = "nearest"
+
+[[pass]]
+name = "voxel_local_sources"
+type = "compute"
+shader = "shaders/compute/voxel_local_sources.comp"
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
+dispatch = [64, 1, 1]
+inputs = ["globals", "packOptions", "voxelSourceWindow", "voxelSectionState", "voxelFaceTexture",
+          "builtin.blockAtlas", "builtin.materialAtlas", "builtin.blockAtlasPages", "builtin.materialAtlasPages"]
+outputs = ["voxelLocalRadiance"]
+
+[[pass]]
+name = "voxel_local_direct"
+type = "fullscreen"
+shader = "shaders/post/voxel_local_direct.fsh"
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
+inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "voxelOccupancy",
+          "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelLocalRadiance",
+          "builtin.gMotion", "builtin.blockAtlas", "voxelFaceTexture", "cloudShadowMask"]
+outputs = ["voxelLocalDirect"]
+
+[[pass]]
+name = "voxel_local_off"
+type = "fullscreen"
+shader = "shaders/post/voxel_local_off.fsh"
+enabled_if = "PLAGUE_LOCAL_LIGHTING == 0"
+inputs = ["cloudShadowMask"]
+outputs = ["voxelLocalDirect"]
+
 [[pass]]
 name = "resolve"
 type = "fullscreen"
@@ -519,7 +564,7 @@ shader = "shaders/post/gbuffer_resolve.fsh"
 # shader uniform and its graph.toml binding are one atomic contract — never remove one side alone.
 # consolidatedGbuf (u_Input1) is gbuf_consolidate's output, not a [targets.*] entry. See that
 # pass's own comment.
-inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "cloudShadowMask", "atmoSkyView", "atmoAerial"]
+inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial", "voxelLocalRadiance"]
 outputs = ["sceneHdr"]
 
 # Tileable grayscale focusing pattern, sampled by two rotated flowing layers with mirror-repeat UVs.
@@ -1109,7 +1154,7 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
           "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
-          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance"]
 outputs = ["voxelWaterReflection"]
 
 # Prefix timings are separate draws and include output sinks and cache/order effects.
@@ -1129,7 +1174,7 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
           "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
-          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance"]
 outputs = ["voxelReflectionProbe"]
 
 [[pass]]
@@ -1141,7 +1186,7 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
           "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
-          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance"]
 outputs = ["voxelReflectionProbe"]
 
 [[pass]]
@@ -1153,7 +1198,7 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
           "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
-          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance"]
 outputs = ["voxelReflectionProbe"]
 
 [[pass]]
@@ -1165,7 +1210,7 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
           "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
-          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance"]
 outputs = ["voxelReflectionProbe"]
 
 [[pass]]
@@ -1177,7 +1222,7 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
           "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
-          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView"]
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance"]
 outputs = ["voxelReflectionProbe"]
 
 
@@ -1583,24 +1628,25 @@ outputs = ["builtin.output"]
 # Shared geometry buffers for water reflection recovery and the separate coverage overlay.
 [targets.voxelOccupancy]
 kind = "buffer"
-enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0"
 
 [targets.voxelPayload]
 kind = "buffer"
-enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0"
 
 [targets.voxelPalette]
 kind = "buffer"
-enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0"
 
 # Optional baked face UV and tint buffer for water reflection recovery.
+
 [targets.voxelFaceTexture]
 kind = "buffer"
-enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0"
+enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0"
 
 [targets.voxelBrickSummary]
 kind = "buffer"
-enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0"
 
 [targets.voxelCoverage]
 format = "rgba8"
@@ -1630,7 +1676,7 @@ outputs = ["builtin.output"]
 # even when water and reflections are off.
 [targets.voxelSectionState]
 kind = "buffer"
-enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC != 0"
+enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC != 0 || PLAGUE_LOCAL_LIGHTING != 0"
 
 [targets.voxelSourceSummary]
 kind = "buffer"
@@ -1725,7 +1771,7 @@ enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC == 3"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "voxelEmitterPool", "voxelSectionState", "voxelSourceSummary",
-          "builtin.blockAtlas", "builtin.materialAtlas"]
+          "builtin.blockAtlas", "builtin.materialAtlas", "builtin.blockAtlasPages", "builtin.materialAtlasPages"]
 outputs = ["voxelSourceFaces"]
 
 [[pass]]

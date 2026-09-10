@@ -128,3 +128,15 @@ notes; what is here is what a reader needs to know the limit exists.
 
 - **Water scenes run around 55 FPS** against 75 to 110 elsewhere. A long-standing cost rather than a
   recent regression, and not yet measured per-feature.
+
+- Experimental local lighting supports mapped full source faces, not partial lamps. It has a finite
+  12-block source range, four area samples per face and a 4096-cell admitted-source capacity;
+  pending/unknown data contributes no light. Thin-sheet transmission and harvested cutout geometry
+  are approximations. The owner accepted the direct-light appearance but reported fence shadow
+  omissions and high cost: supplied overlays show roughly 4.8–7.1 ms in the earlier outdoor scenes
+  and 40–42 ms in the later multi-light corridor. Those samples are not a controlled benchmark.
+  Source-side traversal and certified full-cube aperture clipping reduced native synthetic alcove
+  dispatch time by 27.6%; this does not predict live frame time. Other silhouettes still use four
+  area samples and can retain stepped penumbrae. Static overflow source pages are supported;
+  animated sprites without a full-copy page remain unsupported. Cost scales with receivers and sources
+  (`shaders/include/voxel_local_light.glsl`, `shaders/post/voxel_local_direct.fsh`).

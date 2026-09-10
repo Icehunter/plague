@@ -21,6 +21,7 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <minecraft:projection.glsl>
 #moj_import <minecraft:sample_lightmap.glsl>
+#moj_import <fornax_runtime:local_light_mode.glsl>
 
 in vec3 Position;
 in vec4 Color;
@@ -81,7 +82,7 @@ void main() {
 #endif
 
 #ifndef EMISSIVE
-    lightMapColor = sample_lightmap(Sampler2, UV2);
+    lightMapColor = sample_lightmap(Sampler2, plagueLightingPackedCoord(UV2));
 #endif
 
 #ifndef NO_OVERLAY

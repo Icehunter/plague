@@ -1,29 +1,25 @@
-# Plague material categories.
-#
-# ONE CATEGORY, AND IT IS DELIBERATELY THE MINIMUM. Plague's standing rule is no IPBR: material
-# properties come from labPBR channels or from the albedo, never from a per-block table, and no
-# engine work is done to carry block identity into the fragment stage on the pack's behalf.
-#
-# Water is the one thing that rule cannot express. There is no labPBR channel meaning "I am water",
-# and the deferred water chain is built on a pre-pass that MUST discard every non-water translucent
-# fragment -- glass, stained glass, leaves all draw in the same TRANSLUCENT sub-draw. Without a real
-# discriminator the pre-pass would either write wave normals onto every window in the world or write
-# nothing at all.
-#
-# Why this does not reopen IPBR:
-#
-#   * It carries NO material properties. No smoothness, no F0, no emissive, no GLSL snippet -- just
-#     an identity so `v_MaterialId == MAT_WATER` can be asked. The thing being avoided is a
-#     manifest where categories set smoothness curves and F0 modes per block.
-#   * It needs NO engine change. Fornax already decodes a material id into every terrain vertex
-#     (shaders/include/chunk_vertex.glsl), and already generates the MAT_* table from this file.
-#     Plague was simply throwing the id away.
-#   * "This fragment is water" is a physical class, not a look. It is the same kind of fact labPBR
-#     itself publishes, rather than one pack's opinion about which stone should be mossy.
-#
-# If a second category is ever added here, that reasoning has to be made again from scratch. The
-# rule is not "one category is fine" -- it is that identity buys nothing unless the alternative is
-# impossible, and for water it genuinely is.
+# Material categories and voxel-light source selection.
+# Water identity routes the dedicated water passes. lighting.voxel only selects placed light
+# sources; it does not change a block's material, self-emission, or ability to block a light ray.
+# Source colour and intensity still come from the intrinsic emission and labPBR texture data.
+
+[lighting]
+voxel = false # Unlisted blocks do not contribute to the voxel light field.
 
 [categories.water]
 blocks = ["minecraft:water"]
+
+# Add/remove block IDs here, or declare another category with lighting.voxel = true.
+# Current transport supports mapped full block faces. Opting in a torch or another unsupported
+# shape does not supply its missing geometry; it cannot yet cast light through this path.
+[categories.voxel_lamps]
+blocks = [
+    "minecraft:glowstone",
+    "minecraft:sea_lantern",
+    "minecraft:shroomlight",
+    "minecraft:ochre_froglight",
+    "minecraft:verdant_froglight",
+    "minecraft:pearlescent_froglight",
+    "minecraft:redstone_lamp",
+]
+lighting.voxel = true
