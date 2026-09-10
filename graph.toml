@@ -564,7 +564,10 @@ shader = "shaders/post/gbuffer_resolve.fsh"
 # shader uniform and its graph.toml binding are one atomic contract — never remove one side alone.
 # consolidatedGbuf (u_Input1) is gbuf_consolidate's output, not a [targets.*] entry. See that
 # pass's own comment.
-inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial", "voxelLocalRadiance"]
+# voxelLocalRadiance is left out here: gbuffer_resolve.fsh has no u_Input18, so listing it would
+# name a texture nothing reads. It is the last entry, so leaving it out does not shift the numbers
+# before it. The target itself stays live; other passes still read it.
+inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial"]
 outputs = ["sceneHdr"]
 
 # Tileable grayscale focusing pattern, sampled by two rotated flowing layers with mirror-repeat UVs.
@@ -1381,6 +1384,11 @@ outputs = ["waterVolumeShaftsResolved"]
 
 # Refraction must run first: the blur consumes sceneHdrRefracted. Tonemap reconstructs the half-res
 # blur against full-resolution depth so silhouettes stay sealed.
+#
+# These two targets have no enabled_if: tonemap.fsh always binds underwaterBlurred, even though its
+# own read is gated in the shader (`#if PLAGUE_UNDERWATER && WATER_BLUR`), so the texture must exist
+# in every arm. Only the two passes below are gated: each shader already turns into a plain copy
+# when its option is off, so skipping the pass saves the draw without breaking that binding.
 [targets.underwaterBlurH]
 format = "rgba16f"
 scale = 0.5
@@ -1395,6 +1403,7 @@ filter = "linear"
 name = "underwater_blur_h"
 type = "fullscreen"
 shader = "shaders/post/underwater_blur_h.fsh"
+enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_BLUR != 0"
 inputs = ["sceneHdrRefracted", "builtin.depth", "builtin.waterDepth"]
 outputs = ["underwaterBlurH"]
 
@@ -1402,6 +1411,7 @@ outputs = ["underwaterBlurH"]
 name = "underwater_blur_v"
 type = "fullscreen"
 shader = "shaders/post/underwater_blur_v.fsh"
+enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_BLUR != 0"
 inputs = ["underwaterBlurH", "builtin.depth", "builtin.waterDepth"]
 outputs = ["underwaterBlurred"]
 
