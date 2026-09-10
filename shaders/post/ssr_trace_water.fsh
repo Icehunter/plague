@@ -58,7 +58,11 @@ float hash12(vec2 p) {
 
 // Distance behind the opaque scene in blocks; positive means crossed. Off-screen returns a big
 // negative value so a clamped edge texel can never read as a crossing.
-float behindAt(vec3 screen, out vec3 scenePos) {
+//
+// `rayWorldPos` is the 3D point the caller turned into `screen`. It is passed in as is,
+// instead of turned back into a 3D point with worldPosAt(screen.xy, screen.z). That would
+// do the same math again on a value the caller already has.
+float behindAt(vec3 screen, vec3 rayWorldPos, out vec3 scenePos) {
     scenePos = vec3(0.0);
     if (screen.x <= 0.0 || screen.x >= 1.0 || screen.y <= 0.0 || screen.y >= 1.0) {
         return -1e9;
@@ -68,7 +72,7 @@ float behindAt(vec3 screen, out vec3 scenePos) {
         return -1e9; // sky: nothing to hit
     }
     scenePos = worldPosAt(screen.xy, sceneDepth);
-    return length(worldPosAt(screen.xy, screen.z)) - length(scenePos);
+    return length(rayWorldPos) - length(scenePos);
 }
 
 void main() {
@@ -126,7 +130,7 @@ void main() {
         vec3 samplePos = rayPos + travelled;
         vec3 screen = projectToScreen(samplePos);
         vec3 scenePos;
-        float behind = behindAt(screen, scenePos);
+        float behind = behindAt(screen, samplePos, scenePos);
 
         if (behind <= 0.0) {
             continue;
@@ -138,18 +142,20 @@ void main() {
         vec3 back = travelled;
         for (int r = 0; r < WATER_MARCH_REFINEMENTS; r++) {
             vec3 mid = 0.5 * (front + back);
-            vec3 midScreen = projectToScreen(rayPos + mid);
+            vec3 midWorld = rayPos + mid;
+            vec3 midScreen = projectToScreen(midWorld);
             vec3 midScene;
-            if (behindAt(midScreen, midScene) > 0.0) {
+            if (behindAt(midScreen, midWorld, midScene) > 0.0) {
                 back = mid;
             } else {
                 front = mid;
             }
         }
 
-        vec3 finalScreen = projectToScreen(rayPos + back);
+        vec3 finalWorld = rayPos + back;
+        vec3 finalScreen = projectToScreen(finalWorld);
         vec3 finalScene;
-        float finalBehind = behindAt(finalScreen, finalScene);
+        float finalBehind = behindAt(finalScreen, finalWorld, finalScene);
 
         // Thickness grows with distance: one pixel at 100 blocks is metres wide in world terms,
         // so a fixed window rejects every far hit.

@@ -166,9 +166,15 @@ float plaguePomDistanceFade(float cameraDistance, float fadeDistance) {
 // interpolated-crossing refinement so the reported depth doesn't overstate the fall by up to a
 // whole step (which parallaxSelfShadow's overshoot correction would otherwise apply to a wrong
 // number).
+// `hitHeight` and `crossedOut` give back the last height value read in the loop. A caller that
+// needs the height at the landed spot (where the shadow ray starts) can use this value again
+// instead of reading it once more. On the `!crossed` path, the UV sent back is that same last
+// spot, so reading it again would give the same number. On the `crossed` path, the UV sent back
+// sits between two read spots and was never read itself, so `hitHeight` does not apply there.
+// A caller must check `crossedOut` first.
 vec2 parallaxLocal(vec2 local, vec3 viewTangent, vec4 bounds, float depthScale,
                     int steps, vec2 ddx, vec2 ddy, out float travelFraction, out float hitDepth,
-                    float fade) {
+                    float fade, out float hitHeight, out bool crossedOut) {
     // viewTangent points surface->eye; the ray travels the opposite way, so lateral offset per
     // unit depth is -(viewTangent.xy / viewTangent.z) * depthScale. rayZ floors z to avoid
     // diverging at grazing incidence.
@@ -220,6 +226,8 @@ vec2 parallaxLocal(vec2 local, vec3 viewTangent, vec4 bounds, float depthScale,
     if (!crossed) {
         travelFraction = float(usedSteps) / float(fadedSteps);
         hitDepth = curDepth;
+        hitHeight = curHeight;
+        crossedOut = false;
         return curUV;
     }
 
@@ -231,6 +239,8 @@ vec2 parallaxLocal(vec2 local, vec3 viewTangent, vec4 bounds, float depthScale,
 
     hitDepth = mix(prevDepth, curDepth, w);
     travelFraction = (float(usedSteps - 1) + dither + w) / float(fadedSteps);
+    crossedOut = true;
+    hitHeight = 0.0;  // Not used here: the UV sent back sits between two read points and was never read.
     return mix(prevUV, curUV, w);
 }
 

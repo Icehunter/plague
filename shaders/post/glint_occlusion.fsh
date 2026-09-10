@@ -53,8 +53,12 @@ vec3 projectToScreen(vec3 pos) {
 /**
  * How far behind the opaque scene a point is, in blocks; positive means past a real surface.
  * -1e9 off-screen so a frame-edge texel can never register as a crossing.
+ *
+ * `rayWorldPos` is the 3D point the caller turned into `screen`. It is passed in as is,
+ * instead of turned back into a 3D point with worldPosAt(screen.xy, screen.z). That would
+ * do the same math again on a value the caller already has.
  */
-float behindAt(vec3 screen) {
+float behindAt(vec3 screen, vec3 rayWorldPos) {
     if (screen.x <= 0.0 || screen.x >= 1.0 || screen.y <= 0.0 || screen.y >= 1.0) {
         return -1e9;
     }
@@ -63,7 +67,7 @@ float behindAt(vec3 screen) {
         return -1e9; // sky: nothing to hit
     }
     vec3 scenePos = worldPosAt(screen.xy, sceneDepth);
-    return length(worldPosAt(screen.xy, screen.z)) - length(scenePos);
+    return length(rayWorldPos) - length(scenePos);
 }
 
 float plagueGlintVisibility(vec3 origin, vec3 waveNormal, vec3 lightDir) {
@@ -79,7 +83,8 @@ float plagueGlintVisibility(vec3 origin, vec3 waveNormal, vec3 lightDir) {
     for (int i = 0; i < GLINT_MARCH_SAMPLES; i++) {
         step *= 1.4;
         travelled += step;
-        if (behindAt(projectToScreen(rayPos + travelled)) > 0.0) {
+        vec3 worldPoint = rayPos + travelled;
+        if (behindAt(projectToScreen(worldPoint), worldPoint) > 0.0) {
             return 0.0;
         }
     }
@@ -110,8 +115,21 @@ void main() {
             ? normalize(u_SkyCelestial.xyz) : vec3(0.0, 1.0, 0.0);
     vec3 moonDir = -trueSunDir;
 
-    float activeVisibility = plagueGlintVisibility(origin, waveNormal, activeLightDir);
     float trueSunVisibility = plagueGlintVisibility(origin, waveNormal, trueSunDir);
     float moonVisibility = plagueGlintVisibility(origin, waveNormal, moonDir);
+
+    // Most of the time, the active light points the same way as the true sun or the true
+    // moon (see the top of this file for the one time this is not so). Then its march would
+    // just repeat one already done above, so use that result again instead of running a
+    // third march with the same answer. In that one case, the direction does not match
+    // either one, so it runs its own march.
+    float activeVisibility;
+    if (dot(activeLightDir, trueSunDir) > 0.999999) {
+        activeVisibility = trueSunVisibility;
+    } else if (dot(activeLightDir, moonDir) > 0.999999) {
+        activeVisibility = moonVisibility;
+    } else {
+        activeVisibility = plagueGlintVisibility(origin, waveNormal, activeLightDir);
+    }
     fragColor = vec4(activeVisibility, trueSunVisibility, moonVisibility, 1.0);
 }

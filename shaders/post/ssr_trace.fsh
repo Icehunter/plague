@@ -164,9 +164,10 @@ void main() {
         } else if (level > 0) {
             level--; // something in this tile is in the way: refine before believing it
         } else {
-            // Finest level: this is the only place a hit may be accepted.
-            float sceneDepth = texelFetch(u_Input5, cell, 0).r;
-            vec3 scenePos = worldPosAt(p.xy, sceneDepth);
+            // This is the only place a hit can be taken. `level == 0` here, the only way to
+            // reach this part of the code, so `tileClosest` above is already the depth for
+            // this cell at this level. No need to read it again.
+            vec3 scenePos = worldPosAt(p.xy, tileClosest);
             vec3 rayPos = worldPosAt(p.xy, p.z);
             float behind = length(rayPos) - length(scenePos); // > 0: the ray has crossed BEHIND the surface
             // Linear thickness window: the lower bound rejects the ray's own start surface, the

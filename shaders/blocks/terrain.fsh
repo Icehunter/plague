@@ -426,6 +426,12 @@ void main() {
     // self-shadow ray. 1 = full parallax close in, 0 past the band.
     float pomFade = plaguePomDistanceFade(length(v_WorldPos), u_PomDistance);
 
+    // True when the march ran and did not cross the surface. Then the last height it read is
+    // the same as a new read at `uv` would give. The shadow code below can use it again
+    // instead of reading it a second time. (See `hitHeight` in parallaxLocal.)
+    bool pomHeightKnown = false;
+    float pomKnownHeight = 0.0;
+
     // A viewTangent.z near zero divides each step up toward infinity, flinging the march off the
     // sprite at exactly the grazing angles parallax is meant to look best at.
     if (pomAllowed && haveBounds && pomSteps > 0 && u_PomDepth > 0.0 && viewTangent.z > 0.1) {
@@ -437,31 +443,13 @@ void main() {
         if (pomFade > 0.0 && surfaceHeight < (254.0 / 255.0)) {
             vec2 spriteSize = spriteBounds.zw - spriteBounds.xy;
             vec2 local = (v_TexCoord - spriteBounds.xy) / spriteSize;
+            bool pomCrossed;
             local = parallaxLocal(local, viewTangent, spriteBounds,
-                    u_PomDepth, pomSteps, ddx, ddy, pomTravel, pomHit, pomFade);
+                    u_PomDepth, pomSteps, ddx, ddy, pomTravel, pomHit, pomFade,
+                    pomKnownHeight, pomCrossed);
+            pomHeightKnown = !pomCrossed;
             uv = spriteToAtlas(local, spriteBounds);
         }
-    }
-
-    // Self-shadowing, computed at the coordinate parallax actually landed on.
-    float pomShadow = 1.0;
-    if (pomAllowed && haveBounds && pomSteps > 0 && u_PomDepth > 0.0) {
-        vec2 spriteSize = spriteBounds.zw - spriteBounds.xy;
-        vec2 shadowLocal = (uv - spriteBounds.xy) / spriteSize;
-        vec3 sunWorld = normalize(v_SunDirection);
-        vec3 sunTangent = vec3(dot(sunWorld, tangent), dot(sunWorld, bitangent), dot(sunWorld, faceNormal));
-
-        // The shadow ray starts from pomHit (where the march actually stopped), not from the
-        // landed texel's own height: that texel may be a raised feature's TOP with the ray still
-        // part-way down its side, and starting from the top makes crevice shadows unreachable —
-        // a bright rim around a dark interior that reads as a dish rather than raised brick.
-        float landedHeight = plaguePagedNormalGrad(uv, ddx, ddy).a;
-        // Written as a max, which is identical to `min(landedHeight, pomHit)`:
-        // a - max(0, a - b) IS min(a, b).
-        float pomOvershoot = max(landedHeight - pomHit, 0.0);
-
-        pomShadow = parallaxSelfShadow(shadowLocal, landedHeight, pomOvershoot,
-                sunTangent, spriteBounds, ddx, ddy, pomFade);
     }
 
     // Gradients stay the ORIGINAL v_TexCoord derivatives even at a POM-marched uv (the file's
@@ -476,6 +464,34 @@ void main() {
         discard;
     }
 #endif
+
+    // Shadow on the surface, at the point the march landed on. This runs after the cutout
+    // discard, so a fragment that gets thrown away does not need it. It also checks pomFade,
+    // like the march above: parallaxSelfShadow always gives back 1.0 when fade is 0, no
+    // matter what the ray finds. So past the fade range, the answer is already known before
+    // this runs.
+    float pomShadow = 1.0;
+    if (pomAllowed && haveBounds && pomSteps > 0 && u_PomDepth > 0.0 && pomFade > 0.0) {
+        vec2 spriteSize = spriteBounds.zw - spriteBounds.xy;
+        vec2 shadowLocal = (uv - spriteBounds.xy) / spriteSize;
+        vec3 sunWorld = normalize(v_SunDirection);
+        vec3 sunTangent = vec3(dot(sunWorld, tangent), dot(sunWorld, bitangent), dot(sunWorld, faceNormal));
+
+        // The shadow ray starts from pomHit (where the march actually stopped), not from the
+        // landed texel's own height: that texel may be a raised feature's TOP with the ray still
+        // part-way down its side, and starting from the top makes crevice shadows unreachable —
+        // a bright rim around a dark interior that reads as a dish rather than raised brick.
+        //
+        // When the march lands without crossing the surface, its last height read is the same
+        // value as this one. Use it again instead of reading it one more time.
+        float landedHeight = pomHeightKnown ? pomKnownHeight : plaguePagedNormalGrad(uv, ddx, ddy).a;
+        // Written as a max, which is identical to `min(landedHeight, pomHit)`:
+        // a - max(0, a - b) IS min(a, b).
+        float pomOvershoot = max(landedHeight - pomHit, 0.0);
+
+        pomShadow = parallaxSelfShadow(shadowLocal, landedHeight, pomOvershoot,
+                sunTangent, spriteBounds, ddx, ddy, pomFade);
+    }
 
 #ifdef USE_DEFERRED
     // Tinted albedo, unlit. Biome tint belongs in the G-buffer (foliage textures are greyscale

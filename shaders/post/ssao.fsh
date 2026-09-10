@@ -59,6 +59,10 @@ void main() {
     float rotation = hash12(gl_FragCoord.xy) * 6.2831853;
     float occlusion = 0.0;
 
+    // This value is the same for every tap in the loop below, so it is worked out once,
+    // here, instead of again and again inside the loop.
+    mat4 viewProj = u_ProjectionMatrix * u_ModelViewMatrix;
+
     for (int i = 0; i < SSAO_TAPS; i++) {
         // Golden-angle spiral with elevation varied independently so samples fill the hemisphere
         // VOLUME rather than sitting on a cone floating above the surface with nothing to intersect.
@@ -77,7 +81,7 @@ void main() {
         // Distances spread across the radius so near-contact and wider occlusion both register.
         vec3 samplePos = origin + dir * (u_SsaoRadius * mix(0.25, 1.0, t));
 
-        vec4 sampleClip = u_ProjectionMatrix * u_ModelViewMatrix * vec4(samplePos, 1.0);
+        vec4 sampleClip = viewProj * vec4(samplePos, 1.0);
         if (sampleClip.w <= 0.0) {
             continue;
         }
