@@ -205,6 +205,7 @@ struct PlagueCloudDeck {
     float tier;        // this deck's own Off/Fast/Balanced/Ultra; sets slab steps, cap and sun taps
     float fallShear;   // downwind lean of the base against the top, in cells across the full depth
     float axisSwing;   // radians the shear axis may turn from the wind; 0 pins it to the wind
+    float veer;        // radians this deck's stretch sits clockwise of the ground wind
     float patchiness;   // how hard a large-scale field gates candidates; 0 fills the sky evenly
     float biomeResponse; // how far a dry column below thins this deck; 0 for decks above the weather
 };
@@ -367,6 +368,49 @@ const float PLAGUE_CLOUD_CUMULONIMBUS_COVER =    0.6250;   // 5 oktas
 const float PLAGUE_CLOUD_CONGESTUS_DEPTH =    192.00;   // 1000 m
 const float PLAGUE_CLOUD_CONGESTUS_TAU   =   18.0000;
 
+// --- Veer and swing, both derived from rows above -----------------------------------------------
+//
+// VEER. Wind turns clockwise as it goes up (northern half of the world): drag near the ground
+// holds the wind left of the flow above, and that turn unwinds with height (Ekman spiral), then
+// above it the wind keeps turning, more slowly. Real soundings put 30 to 60 degrees between the
+// ground layer and the top of the weather; 40 is the middle.
+//
+// Without this every deck stretches along one shared line, so every streak in the sky runs parallel
+// at every height, in every world.
+//
+// sqrt of height rather than a straight line: most of the turn is low down, then it flattens off,
+// which is the shape of the two effects above. Zero at the stratus base, the lowest deck drawn, and
+// full at the cirrus base, the highest. Takes the cloud type's own TABLE base, never deck.base, so
+// Cloud Altitude lifts the decks without turning the sky.
+//
+// Drift is left unveered on purpose. plagueCloudDrift multiplies by the whole number
+// PLAGUE_CLOUD_WIND, and only a whole number lets PLAGUE_CLOUD_DRIFT_WRAP land on a lattice edge at
+// every fbm octave. So every deck still MOVES along one line while each points its streaks its own
+// way; per-deck motion needs a per-deck wind row in the history state, and there is not one.
+const float PLAGUE_CLOUD_VEER_TOTAL = 0.6981;   // 40 degrees
+
+float plagueCloudVeer(float tableBase) {
+    float t = clamp((tableBase - PLAGUE_CLOUD_STRATUS_BASE)
+                    / (PLAGUE_CLOUD_CIRRUS_BASE - PLAGUE_CLOUD_STRATUS_BASE), 0.0, 1.0);
+    return PLAGUE_CLOUD_VEER_TOTAL * sqrt(t);
+}
+
+// SWING. How far the direction may wander off that line, per deck.
+//
+// SILENT NO-OP TO KNOW ABOUT: plagueCloudAllocationCoord multiplies the axis by
+// (along/shear - along), which is exactly zero at shear 1.0. A swing set on a shear-1.0 deck does
+// nothing at all while reading like a working feature. Stratus and nimbostratus are shear 1.0 and
+// cumulus is 1.1: a flat layer has no streak to point, so the maths hands them 0 on its own,
+// instead of a written-in zero that could fall out of step with the row.
+//
+// Worked out from the shear, not set per cloud type: a swing only counts as far as there is stretch
+// to point, so the one value picked off top-down views of the live candidate field (cirrus, at its
+// shear 6.0) is scaled by each deck's own share of that stretch.
+float plagueCloudAxisSwing(float shear) {
+    return PLAGUE_CLOUD_CIRRUS_AXIS_SWING
+         * clamp((shear - 1.0) / (PLAGUE_CLOUD_CIRRUS_SHEAR - 1.0), 0.0, 1.0);
+}
+
 // --- end of the derived block -------------------------------------------------------------------
 
 // Authored: the derivation script has no source for this axis. Selects the height-profile shape,
@@ -401,14 +445,14 @@ const float PLAGUE_CLOUD_CUMULONIMBUS_CONVECTIVE  = 1.00;  // the deepest convec
 //
 // The two-scale base-volume field is not uniform on 0..1. tools/verify_clouds.py takes 500,000
 // deterministic trilinear samples over the 24x24x1 joint domain at the accepted size ratio: mean
-// 0.51463, sigma 0.09489 after the centered fourfold organization-Y calibration. These statistics
-// pin the authored volume and catch accidental sampler/coordinate changes; candidate allocation no
-// longer derives a moving cutoff from aggregate coverage.
-const float PLAGUE_CLOUD_FIELD_MEAN  = 0.51463;
-const float PLAGUE_CLOUD_FIELD_SIGMA = 0.09489;
-// Remap ceiling: the same sample's 99.9th percentile is 0.78005, so the top 0.1% saturates rather
+// 0.52866, sigma 0.09450 after the centered fourfold organization-Y tuning. These numbers pin the
+// authored volume and catch stray sampler/coordinate changes; candidate allocation does not derive
+// a moving cutoff from aggregate coverage.
+const float PLAGUE_CLOUD_FIELD_MEAN  = 0.52866;
+const float PLAGUE_CLOUD_FIELD_SIGMA = 0.09450;
+// Remap ceiling: the same sample's 99.9th percentile is 0.80114, so the top 0.1% saturates rather
 // than normalising against an unreachable 1.0.
-const float PLAGUE_CLOUD_FIELD_TOP   = 0.78005;
+const float PLAGUE_CLOUD_FIELD_TOP   = 0.80114;
 
 /**
  * How far u_CloudAltitude moves the low deck from the table's placement, blocks.
@@ -492,7 +536,7 @@ const float PLAGUE_CLOUD_POPULATION_MAX = 0.72;
 
 // Fixed per-candidate interior threshold: the shipped two-volume field's measured 75% superlevel
 // cutoff. Amount owns population now, so this value must never move with aggregate coverage.
-const float PLAGUE_CLOUD_CANDIDATE_CUTOFF = 0.450656;
+const float PLAGUE_CLOUD_CANDIDATE_CUTOFF = 0.463846;
 
 // Measured over the fixed 24x24 owner calibration at reference Size: candidate potential area times
 // fixed-cut base occupancy. This is aggregate lighting/reporting data, never a density-shape input.
@@ -572,7 +616,8 @@ PlagueCloudDeck plagueCloudLowStratiformDeck(float moisture, float stability, fl
     deck.convectiveLift = 0.0;
     deck.stepScale = PLAGUE_CLOUD_SHEET_STEP_SCALE;
     deck.fallShear = 0.0;   // only ice falling from a generating head trails
-    deck.axisSwing = 0.0;   // only a fibrous deck wanders off the wind
+    deck.axisSwing = plagueCloudAxisSwing(deck.shear);
+    deck.veer = plagueCloudVeer(PLAGUE_CLOUD_STRATUS_BASE);
     deck.tier = u_CloudTierStratus;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
@@ -713,7 +758,8 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
     deck.tau *= mix(PLAGUE_CLOUD_DRY_TAU_FLOOR, 1.0, condensation);
     deck.stepScale = 1.0;
     deck.fallShear = 0.0;   // only ice falling from a generating head trails
-    deck.axisSwing = 0.0;   // only a fibrous deck wanders off the wind
+    deck.axisSwing = plagueCloudAxisSwing(deck.shear);
+    deck.veer = plagueCloudVeer(PLAGUE_CLOUD_CUMULUS_BASE);
     deck.tier = u_CloudTierCumulus;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
@@ -757,7 +803,8 @@ PlagueCloudDeck plagueCloudStratocumulusDeck(float amountMask, float snowWeight)
     deck.convectiveLift = 0.0;
     deck.stepScale = PLAGUE_CLOUD_SHEET_STEP_SCALE;
     deck.fallShear = 0.0;   // only ice falling from a generating head trails
-    deck.axisSwing = 0.0;   // only a fibrous deck wanders off the wind
+    deck.axisSwing = plagueCloudAxisSwing(deck.shear);
+    deck.veer = plagueCloudVeer(PLAGUE_CLOUD_STRATOCUMULUS_BASE);
     deck.tier = u_CloudTierStratus;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
@@ -807,6 +854,8 @@ PlagueCloudDeck plagueCloudUpperDeck(float base, float depth, float cell, float 
     deck.stepScale = stepScale;
     deck.fallShear = fallShear;
     deck.axisSwing = axisSwing;
+    // The plain table row, not deck.base: Cloud Altitude lifts a deck, it does not turn it.
+    deck.veer = plagueCloudVeer(base);
     deck.tier = tier;
     // Patchy, and strongly so: these genera occupy part of the sky, not all of it. Picked off plan
     // views of the live candidate field at the altocumulus row: 0.30 is an even stipple with no open
@@ -886,7 +935,8 @@ PlagueCloudDeck plagueCloudNimbostratusDeck(float stratiformWeight, float thunde
     deck.convectiveLift = 0.0;   // a rain sheet is not convection
     deck.stepScale = 1.0;
     deck.fallShear = 0.0;   // only ice falling from a generating head trails
-    deck.axisSwing = 0.0;   // only a fibrous deck wanders off the wind
+    deck.axisSwing = plagueCloudAxisSwing(deck.shear);
+    deck.veer = plagueCloudVeer(PLAGUE_CLOUD_NIMBOSTRATUS_BASE);
     deck.tier = u_CloudTierNimbostratus;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
@@ -1015,7 +1065,9 @@ void plagueCloudUpperDecks(out PlagueCloudDeck cirrus, out PlagueCloudDeck cirro
                                         PLAGUE_CLOUD_CIRROCUMULUS_TAU,
                                         PLAGUE_CLOUD_CIRROCUMULUS_COVER,
                                         masks.y, PLAGUE_CLOUD_THIN_STEP_SCALE,
-                                        0.0, 0.0, u_CloudTierCirrus);
+                                        0.0,
+                                        plagueCloudAxisSwing(PLAGUE_CLOUD_CIRROCUMULUS_SHEAR),
+                                        u_CloudTierCirrus);
     altocumulus = plagueCloudUpperDeck(PLAGUE_CLOUD_ALTOCUMULUS_BASE,
                                         PLAGUE_CLOUD_ALTOCUMULUS_DEPTH,
                                         PLAGUE_CLOUD_ALTOCUMULUS_CELL,
@@ -1023,7 +1075,9 @@ void plagueCloudUpperDecks(out PlagueCloudDeck cirrus, out PlagueCloudDeck cirro
                                         PLAGUE_CLOUD_ALTOCUMULUS_TAU,
                                         PLAGUE_CLOUD_ALTOCUMULUS_COVER,
                                         masks.z, PLAGUE_CLOUD_MID_STEP_SCALE,
-                                        0.0, 0.0, u_CloudTierAltocumulus);
+                                        0.0,
+                                        plagueCloudAxisSwing(PLAGUE_CLOUD_ALTOCUMULUS_SHEAR),
+                                        u_CloudTierAltocumulus);
 }
 
 /**

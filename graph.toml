@@ -670,9 +670,9 @@ scale = 1.0
 # so each tiles at its own appropriate world scale (base shape coarse, detail fine).
 [textures.cloudBaseShape]
 file = "shaders/textures/cloud_base_shape.vol"
-depth = 48
-width = 48
-height = 48
+depth = 96
+width = 96
+height = 96
 format = "r8"
 
 [textures.cloudDetailShape]
