@@ -1,9 +1,25 @@
 #ifndef PLAGUE_VOXEL_LOCAL_LIGHT
 #define PLAGUE_VOXEL_LOCAL_LIGHT
+#ifndef PLAGUE_LOCAL_EMITTER_SIZE
+#define PLAGUE_LOCAL_EMITTER_SIZE 0 //[0 1 2] compile "Local Light Source Size" {0="Quarter block" 1="Half block" 2="Full face"}
+#endif
+// Side of the centred square each quarter is cut from, as a fraction of the face. Full face (2)
+// is 1.0, the whole face.
+#if PLAGUE_LOCAL_EMITTER_SIZE==0
+const float PLAGUE_LOCAL_EMITTER_SPAN=0.25;
+#elif PLAGUE_LOCAL_EMITTER_SIZE==1
+const float PLAGUE_LOCAL_EMITTER_SPAN=0.5;
+#else
+const float PLAGUE_LOCAL_EMITTER_SPAN=1.0;
+#endif
 #moj_import <fornax_runtime:voxel_local_layout.glsl>
 #moj_import <fornax_runtime:voxel_visibility.glsl>
-// Caller supplies source word/size accessors and voxel_coverage traversal. Primary and reflected
-// surfaces use the same finite segment query; there is no screen or receiver-quadrant cache.
+#ifdef PLAGUE_VOXEL_ENTITY_OCCLUDERS
+#moj_import <fornax_runtime:entity_occluders.glsl>
+#endif
+// Caller supplies source word/size accessors, a plagueLocalJitter() per-pixel 2D dither and
+// voxel_coverage traversal. Primary and reflected surfaces use the same finite segment query;
+// there is no screen or receiver-quadrant cache.
 vec3 plagueLocalSegmentStart(vec3 point,vec3 geometricNormal) {
     vec3 start=point;
     // Depth roundoff can lie on either side of an axis plane. Recover nearby 1/16-block model
@@ -28,7 +44,13 @@ bool plagueLocalSegment(vec3 point,vec3 geometricNormal,vec3 emitter,vec3 emitte
     vec3 endGrid=(u_CameraAbs-vec3((u_VoxelWindow.xyz-ivec3((d-1)/2))*16))+end;
     if(any(lessThan(endGrid,vec3(0.0))) || any(greaterThanEqual(endGrid,vec3(d*16)))) return false;
     // Source-side alcove blockers can reject a sample before its ray crosses the open room.
-    return plagueVoxelSegmentVisible(end,-segment/distance,distance,48);
+    if(!plagueVoxelSegmentVisible(end,-segment/distance,distance,48)) return false;
+#ifdef PLAGUE_VOXEL_ENTITY_OCCLUDERS
+    // point and emitter are camera-relative, the same origin the occluder buffer uses, so the
+    // segment needs no shift into grid space the way the voxel march above does.
+    if(plagueEntityOccluded(end,-segment/distance,distance)) return false;
+#endif
+    return true;
 }
 #moj_import <fornax_runtime:voxel_local_aperture.glsl>
 
@@ -75,6 +97,7 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
             || plagueLocalSourceWord(0)!=2u || plagueLocalSourceWord(1)!=uint(PLAGUE_LOCAL_CAPACITY)
             || plagueLocalSourceWord(2)>uint(PLAGUE_LOCAL_CAPACITY)) return false;
     if(any(isnan(point)) || any(isinf(point)) || any(isnan(normal)) || any(isinf(normal))) return false;
+    vec2 jitterUV=plagueLocalJitter();
     // Authored thin-sheet model: at maximum subsurface response half the diffuse energy goes
     // to each hemisphere. This splits diffuse energy; it adds no extra emitter power and gives
     // solid backing no transmission. It is a local sheet approximation, not a volume BSSRDF.
@@ -129,11 +152,23 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
                 vec4 aperture=transmission==0.0
                         ? plagueApertureRect(cell,sourceOrigin,face,point,geometricNormal) : vec4(0.0,0.0,1.0,1.0);
                 for(int quarter=0;quarter<4;quarter++) {
-                    vec2 quarterLo=vec2(quarter&1,quarter>>1)*0.5;
-                    vec2 areaLo=max(quarterLo,aperture.xy),areaHi=min(quarterLo+0.5,aperture.zw);
+                    // Authored look choice: light comes from a centred square of side SPAN
+                    // (1, 0.5 or 0.25 for Full face, Half block, Quarter block), not the whole
+                    // face, so a thin blocker can fully shadow it. The square is cut into its
+                    // four quarters first and only then clipped by the aperture, so a certified
+                    // side wall still clips smoothly instead of switching a whole quarter on or
+                    // off. SPAN 1 is the untouched face.
+                    vec2 quarterLo=(1.0-PLAGUE_LOCAL_EMITTER_SPAN)*0.5
+                            +vec2(quarter&1,quarter>>1)*(0.5*PLAGUE_LOCAL_EMITTER_SPAN);
+                    vec2 areaLo=max(quarterLo,aperture.xy),areaHi=min(quarterLo+0.5*PLAGUE_LOCAL_EMITTER_SPAN,aperture.zw);
                     if(any(lessThanEqual(areaHi,areaLo))) continue;
-                    float clippedArea=(areaHi.x-areaLo.x)*(areaHi.y-areaLo.y);
-                    vec2 areaST=(areaLo+areaHi)*0.5;
+                    // The square's area is SPAN*SPAN, so dividing by it keeps the total light the
+                    // same at every SPAN: four unclipped quarters always sum to 1.0.
+                    float clippedArea=(areaHi.x-areaLo.x)*(areaHi.y-areaLo.y)
+                            /(PLAGUE_LOCAL_EMITTER_SPAN*PLAGUE_LOCAL_EMITTER_SPAN);
+                    // Shift the sample point inside its clipped quarter. The quarter's weight is
+                    // the clipped area above; the point does not change it.
+                    vec2 areaST=mix(areaLo,areaHi,jitterUV);
                     float areaPlane=float(face&1);
                     vec3 emitter=sourceOrigin+(face<2 ? vec3(areaST.x,areaPlane,areaST.y)
                             : face<4 ? vec3(areaST,areaPlane) : vec3(areaPlane,areaST));

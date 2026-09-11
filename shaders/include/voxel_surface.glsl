@@ -11,6 +11,7 @@
 uniform usamplerBuffer u_Input17;
 uint plagueLocalSourceWord(int word) { return texelFetch(u_Input17,word).r; }
 int plagueLocalSourceSize() { return textureSize(u_Input17); }
+#moj_import <fornax_runtime:voxel_local_jitter.glsl>
 #moj_import <fornax_runtime:voxel_local_light.glsl>
 #endif
 

@@ -134,31 +134,82 @@ bool plagueVoxelCutoutHit(vec3 o, vec3 dir, ivec3 cell, int base, uint flags,
             }
         }
     } else {
-        float a, b;
-        if (!plagueCoverageInterval(localOrigin, dir, vec3(0.0), vec3(1.0), a, b)) return false;
-        for (int face = 0; face < 2; face++) {
-            float candidate = face == 0 ? a : b;
-            // Allow the small entry nudge, but never invent a surface inside the cell.
-            if (candidate + PLAGUE_COVERAGE_EPSILON < current || candidate >= nearest) continue;
-            vec3 point = localOrigin + dir * candidate;
-            vec3 n = plagueVoxelHitNormal(point, vec3(0.0), vec3(1.0), face == 0 ? dir : -dir);
-            float planeCoordinate = dot(point, abs(n));
-            if (abs(planeCoordinate - max(dot(n, vec3(1.0)), 0.0)) > PLAGUE_COVERAGE_EPSILON) continue;
-            bool solid;
+        int boxes = int(flags & 15u);
+        if (boxes == 0) {
+            float a, b;
+            if (!plagueCoverageInterval(localOrigin, dir, vec3(0.0), vec3(1.0), a, b)) return false;
+            for (int face = 0; face < 2; face++) {
+                float candidate = face == 0 ? a : b;
+                // Allow the small entry nudge, but never invent a surface inside the cell.
+                if (candidate + PLAGUE_COVERAGE_EPSILON < current || candidate >= nearest) continue;
+                vec3 point = localOrigin + dir * candidate;
+                vec3 n = plagueVoxelHitNormal(point, vec3(0.0), vec3(1.0), face == 0 ? dir : -dir);
+                float planeCoordinate = dot(point, abs(n));
+                if (abs(planeCoordinate - max(dot(n, vec3(1.0)), 0.0)) > PLAGUE_COVERAGE_EPSILON) continue;
+                bool solid;
 #ifdef PLAGUE_VOXEL_TEXTURED_FACES
-            vec4 mapped;
-            if (plagueVoxelOpaqueFace(base / 16,n)) solid=true;
-            else if (plagueVoxelFaceSample(base / 16, point, n, mapped))
-                solid = mapped.a >= 0.5; // Same half cutoff as the stand-in sprite path.
-            else
+                vec4 mapped;
+                if (plagueVoxelOpaqueFace(base / 16,n)) solid=true;
+                else if (plagueVoxelFaceSample(base / 16, point, n, mapped))
+                    solid = mapped.a >= 0.5; // Same half cutoff as the stand-in sprite path.
+                else
 #endif
-            {
-                if (!plagueVoxelSpriteValid(base)) { unavailable = true; return false; }
-                solid = plagueVoxelAlphaSolid(base, plagueVoxelCubeUV(point, n));
+                {
+                    if (!plagueVoxelSpriteValid(base)) { unavailable = true; return false; }
+                    solid = plagueVoxelAlphaSolid(base, plagueVoxelCubeUV(point, n));
+                }
+                if (solid) {
+                    nearest = candidate;
+                    normal = n;
+                }
             }
-            if (solid) {
-                nearest = candidate;
-                normal = n;
+            return nearest < 1e30;
+        }
+        // A cutout entry keeps its packed UV rect in box slots 6 and 7 (see BrickGridUpload), so
+        // its box list never goes past 6; an ordinary PARTIAL shape can hold 8.
+        if (boxes > 6) { unavailable = true; return false; }
+        // A door, trapdoor, pane or iron bars: alpha-test each stored box's own faces, with the
+        // sprite rect stretched across that box rather than the whole cell, so this march agrees
+        // with plagueVisibilityCutout in the shadow segment.
+        for (int box = 0; box < boxes; box++) {
+            uint packed = texelFetch(u_Input5, base + 7 + box).r;
+            vec3 lo = vec3(packed & 31u, (packed >> 5) & 31u, (packed >> 10) & 31u) / 16.0;
+            vec3 hi = vec3((packed >> 15) & 31u, (packed >> 20) & 31u, (packed >> 25) & 31u) / 16.0;
+            vec3 size = hi - lo;
+            if (any(lessThanEqual(size, vec3(0.0)))) continue;
+            float a, b;
+            if (!plagueCoverageInterval(localOrigin, dir, lo, hi, a, b)) continue;
+            for (int face = 0; face < 2; face++) {
+                float candidate = face == 0 ? a : b;
+                if (candidate + PLAGUE_COVERAGE_EPSILON < current || candidate >= nearest) continue;
+                vec3 point = localOrigin + dir * candidate;
+                vec3 n = plagueVoxelHitNormal(point, lo, hi, face == 0 ? dir : -dir);
+                vec3 facePos = mix(lo, hi, step(0.0, n));
+                if (abs(dot(point, abs(n)) - dot(facePos, abs(n))) > PLAGUE_COVERAGE_EPSILON) continue;
+                bool solid;
+                // A box thinner than a quarter block (a pane's rail, a door's own thickness)
+                // reads as solid. Its face is too thin to alpha-test.
+                if ((abs(n.x) < 1.0 && size.x < 4.0/16.0) || (abs(n.y) < 1.0 && size.y < 4.0/16.0)
+                        || (abs(n.z) < 1.0 && size.z < 4.0/16.0)) {
+                    solid = true;
+                } else {
+                    vec3 st = (point - lo) / size;
+#ifdef PLAGUE_VOXEL_TEXTURED_FACES
+                    vec4 mapped;
+                    if (plagueVoxelOpaqueFace(base / 16,n)) solid=true;
+                    else if (plagueVoxelFaceSample(base / 16, st, n, mapped))
+                        solid = mapped.a >= 0.5;
+                    else
+#endif
+                    {
+                        if (!plagueVoxelSpriteValid(base)) { unavailable = true; return false; }
+                        solid = plagueVoxelAlphaSolid(base, plagueVoxelCubeUV(st, n));
+                    }
+                }
+                if (solid) {
+                    nearest = candidate;
+                    normal = n;
+                }
             }
         }
     }

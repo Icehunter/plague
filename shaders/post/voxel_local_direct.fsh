@@ -16,6 +16,13 @@ uniform sampler2D u_Input11; // cloudShadowMask packed into the otherwise unused
 uniform usamplerBuffer u_Input7; // sparse local radiance
 uint plagueLocalSourceWord(int word) { return texelFetch(u_Input7,word).r; }
 int plagueLocalSourceSize() { return textureSize(u_Input7); }
+uniform usamplerBuffer u_Input12; // entityOccluders, last input so every earlier slot keeps its index
+float plagueEntityOccluderWord(int word) { return uintBitsToFloat(texelFetch(u_Input12,word).r); }
+int plagueEntityOccluderSize() { return textureSize(u_Input12); }
+// Only this pass binds entityOccluders. voxel_local_light.glsl reads it behind this guard, so the
+// reflection recovery pass, which shares that include but has no such buffer, still compiles.
+#define PLAGUE_VOXEL_ENTITY_OCCLUDERS
+#moj_import <fornax_runtime:voxel_local_jitter.glsl>
 #moj_import <fornax_runtime:voxel_local_light.glsl>
 in vec2 texCoord;
 out vec4 fragColor;

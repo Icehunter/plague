@@ -744,6 +744,7 @@ elements = [
 
     "<group:Local Lighting>",
     "PLAGUE_LOCAL_LIGHTING",
+    "PLAGUE_LOCAL_EMITTER_SIZE|requires:PLAGUE_LOCAL_LIGHTING",
     "PLAGUE_SOURCE_DIAGNOSTIC",
     "PLAGUE_SOURCE_RADIANCE",
 
@@ -795,6 +796,12 @@ nearby opaque cube faces within four blocks. Unsupported shapes, crowded source 
 distant terrain can remain dark.
 The small camera-local cache and half-block shadow samples are unfinished quality limits.
 This is direct light, not bounced GI.
+"""
+PLAGUE_LOCAL_EMITTER_SIZE = """
+The part of each lit face that casts light. Quarter block is smallest and gives the sharpest
+shadows from thin blocks such as a fence post or a hopper. Full face spreads light across the
+whole face for the softest result. The light's total energy is the same for all three; only the
+size it appears to shine from changes.
 """
 PLAGUE_SOURCE_DIAGNOSTIC = """
 Section overlay, not coloured light or a reflection view. Reads terrain depth, including terrain behind water.

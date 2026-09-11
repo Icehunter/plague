@@ -132,11 +132,20 @@ notes; what is here is what a reader needs to know the limit exists.
 - Experimental local lighting supports mapped full source faces, not partial lamps. It has a finite
   12-block source range, four area samples per face and a 4096-cell admitted-source capacity;
   pending/unknown data contributes no light. Thin-sheet transmission and harvested cutout geometry
-  are approximations. The owner accepted the direct-light appearance but reported fence shadow
-  omissions and high cost: supplied overlays show roughly 4.8–7.1 ms in the earlier outdoor scenes
-  and 40–42 ms in the later multi-light corridor. Those samples are not a controlled benchmark.
+  are approximations. A full cube clips a light's face smoothly; a door, trapdoor, pane or iron
+  bars shadows through its own opening. A fence or hopper, which is made of several boxes, still
+  uses four area samples, not the smooth clip. Debug → Local Light Source Size, Quarter block by
+  default, sets how much of a lit face casts light: smaller gives thin blocks (a fence post, a
+  hopper) a crisp shadow instead of a wide soft one, at the same light energy. Nearby players,
+  mobs and items shadow local light through the engine's published body boxes; an item's box is
+  shrunk to half its width and depth first to match its drawn sprite. Which way a body faces and
+  how it moves do not shape its shadow. The owner accepted the direct-light appearance but
+  reported high cost: supplied overlays show roughly 4.8 to 7.1 ms in the earlier outdoor scenes
+  and 40 to 42 ms in the later multi-light corridor. Those samples are not a controlled benchmark.
   Source-side traversal and certified full-cube aperture clipping reduced native synthetic alcove
   dispatch time by 27.6%; this does not predict live frame time. Other silhouettes still use four
-  area samples and can retain stepped penumbrae. Static overflow source pages are supported;
-  animated sprites without a full-copy page remain unsupported. Cost scales with receivers and sources
+  area samples; a per-pixel, per-frame shift turns the stepped penumbra into noise that temporal
+  reconstruction settles, rather than removing the steps. Static overflow source pages are
+  supported; animated sprites without a full-copy page remain unsupported. Cost scales with
+  receivers and sources
   (`shaders/include/voxel_local_light.glsl`, `shaders/post/voxel_local_direct.fsh`).

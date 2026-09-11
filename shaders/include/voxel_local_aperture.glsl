@@ -14,10 +14,9 @@ bool plagueApertureFullCube(ivec3 cell) {
     if(entry>=96)return false;
     int base=slot*1536+entry*16;
     uint flags=texelFetch(u_Input5,base).r;
-    // Only one ordinary full box certifies the strip; cutouts and multi-box shapes fall back.
-    if((flags&0xc000000fu)!=1u)return false;
-    // Coverage boxes use 1/16 coordinates; this one must cover the entire unit cube.
-    return (texelFetch(u_Input5,base+7).r&0x3fffffffu)==((16u<<15)|(16u<<20)|(16u<<25));
+    // A full cube is box count 0 with neither the cutout nor the cross bit set. The engine writes
+    // no box words for it, so there is no box to check against the unit cube.
+    return (flags&0xc000000fu)==0u;
 }
 vec4 plagueApertureRect(ivec3 cell,vec3 sourceOrigin,int face,vec3 point,vec3 geometricNormal) {
     vec4 rect=vec4(0.,0.,1.,1.);

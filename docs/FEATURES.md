@@ -53,6 +53,10 @@ covers what the pack does, not the engine under it.
   the base page; animated overflow sprites remain unsupported.
   Visible emission and received light share the calibrated scale; Off keeps the legacy lighting.
   The owner has checked the direct-light appearance in game; its GPU cost remains high.
+- *Experiment, default Quarter block:* Debug → Local Light Source Size sets how much of each lit
+  face casts light: Quarter block, Half block or Full face. Smaller gives sharper shadows from
+  thin blocks such as a fence post or a hopper; Full face is the softest. The light's total energy
+  is the same at every setting.
 - *Test feature, default Off:* Debug → Voxel Source Inventory shows which sections hold a light
   source and whether each section's data is current. F10 records the counts. This is a first step
   toward coloured local lighting; it adds no light and still needs checking in game.

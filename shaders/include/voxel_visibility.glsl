@@ -68,17 +68,50 @@ int plagueVisibilityCutout(vec3 origin,vec3 dir,ivec3 cell,int base,uint flags,
         }
         return 0;
     }
-    float a,b;
-    if(!plagueCoverageInterval(localOrigin,dir,vec3(0.0),vec3(1.0),a,b)) return 0;
-    for(int side=0;side<2;side++) {
-        float candidate=side==0 ? a : b;
-        if(candidate+PLAGUE_COVERAGE_EPSILON<current || candidate>=end) continue;
-        vec3 point=localOrigin+dir*candidate;
-        vec3 normal=plagueVoxelHitNormal(point,vec3(0.0),vec3(1.0),side==0 ? dir : -dir);
-        float coordinate=dot(point,abs(normal));
-        if(abs(coordinate-max(dot(normal,vec3(1.0)),0.0))>PLAGUE_COVERAGE_EPSILON) continue;
-        int opacity=plagueVisibilityCubeFace(base,point,normal);
-        if(opacity!=0) return opacity;
+    int boxes=int(flags&15u);
+    if(boxes==0) {
+        float a,b;
+        if(!plagueCoverageInterval(localOrigin,dir,vec3(0.0),vec3(1.0),a,b)) return 0;
+        for(int side=0;side<2;side++) {
+            float candidate=side==0 ? a : b;
+            if(candidate+PLAGUE_COVERAGE_EPSILON<current || candidate>=end) continue;
+            vec3 point=localOrigin+dir*candidate;
+            vec3 normal=plagueVoxelHitNormal(point,vec3(0.0),vec3(1.0),side==0 ? dir : -dir);
+            float coordinate=dot(point,abs(normal));
+            if(abs(coordinate-max(dot(normal,vec3(1.0)),0.0))>PLAGUE_COVERAGE_EPSILON) continue;
+            int opacity=plagueVisibilityCubeFace(base,point,normal);
+            if(opacity!=0) return opacity;
+        }
+        return 0;
+    }
+    // A cutout entry keeps its packed UV rect in box slots 6 and 7 (see BrickGridUpload), so its
+    // box list never goes past 6; an ordinary PARTIAL shape can hold 8.
+    if(boxes>6) return 2;
+    // A door, trapdoor, pane or iron bars: alpha-test each stored box's own faces, with the
+    // sprite rect stretched across that box rather than the whole cell.
+    for(int box=0;box<boxes;box++) {
+        uint packed=texelFetch(u_Input5,base+7+box).r;
+        vec3 lo=vec3(packed&31u,(packed>>5)&31u,(packed>>10)&31u)/16.0;
+        vec3 hi=vec3((packed>>15)&31u,(packed>>20)&31u,(packed>>25)&31u)/16.0;
+        vec3 size=hi-lo;
+        if(any(lessThanEqual(size,vec3(0.0)))) continue;
+        float a,b;
+        if(!plagueCoverageInterval(localOrigin,dir,lo,hi,a,b)) continue;
+        for(int side=0;side<2;side++) {
+            float candidate=side==0 ? a : b;
+            if(candidate+PLAGUE_COVERAGE_EPSILON<current || candidate>=end) continue;
+            vec3 point=localOrigin+dir*candidate;
+            vec3 normal=plagueVoxelHitNormal(point,lo,hi,side==0 ? dir : -dir);
+            vec3 facePos=mix(lo,hi,step(0.0,normal));
+            if(abs(dot(point,abs(normal))-dot(facePos,abs(normal)))>PLAGUE_COVERAGE_EPSILON) continue;
+            // A box thinner than a quarter block (a pane's rail, a door's own thickness) reads
+            // as solid. Its face is too thin to alpha-test.
+            if((abs(normal.x)<1.0 && size.x<4.0/16.0) || (abs(normal.y)<1.0 && size.y<4.0/16.0)
+                    || (abs(normal.z)<1.0 && size.z<4.0/16.0)) return 1;
+            vec3 st=(point-lo)/size;
+            int opacity=plagueVisibilityCubeFace(base,st,normal);
+            if(opacity!=0) return opacity;
+        }
     }
     return 0;
 }

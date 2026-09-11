@@ -410,16 +410,33 @@ section ranges come from the receiver's 27 neighbouring sections. The authored f
 fade and no limit of three contributing faces. Adding known lamps adds their contributions.
 
 Full opaque cubes beside a source's forward cell clip its visible face area analytically when
-the receiver lies within the other tangent slab. The clipping uses the same snapped and biased
-endpoints as shadow traversal. Each quarter keeps its radiance, weights by its surviving area,
-and traces from that area's centroid. This avoids whole-quarter visibility steps at certified
-alcove side walls without adding rays. Unknown, partial, cutout and unsupported silhouettes retain
-ordinary quadrature. Every surviving sample still traces the complete shadow segment.
+the receiver lies within the other tangent slab. A full cube is the engine's boxCount-0 palette
+entry, with neither the cutout nor the cross bit set. The clipping uses the same snapped and
+biased endpoints as shadow traversal. Each quarter keeps its radiance, weights by its surviving
+area, and traces from a point inside that area that shifts a little per pixel and per frame. The
+shift is interleaved gradient noise stepped by the golden-ratio fraction each frame, so the
+engine's temporal reconstruction settles the result over a few frames instead of leaving a fixed
+step at each quarter edge. This avoids whole-quarter visibility steps at certified alcove side
+walls without adding rays. Unknown, partial, cutout and unsupported silhouettes retain ordinary
+quadrature. Every surviving sample still traces the complete shadow segment.
+
+`PLAGUE_LOCAL_EMITTER_SIZE`, default Quarter block, sets the size of the square that gives off
+light, centred on the face: the whole face (Full face), half its side (Half block) or a quarter of
+its side (Quarter block). The four quarters are cut from that square first and only then clipped
+by the aperture, so a certified side wall still clips smoothly instead of switching a whole
+quarter on or off. Each quarter's weight divides by the square's area, so a smaller square gives
+off the same total light as the full face. Only the spot the light comes from gets smaller, which
+lets a thin block fully shadow a face instead of hiding only a sliver of it.
 
 Visibility follows finite voxel segments from source toward receiver, rejecting nearby source-side
-blockers early, with opaque blocks, partial boxes and atlas-alpha
-cutouts. It asks whether geometry blocks the segment, independently of whether a hit has a usable
-reflection colour. Missing or pending segment data fails closed for that sample. Rendered opaque
+blockers early, with opaque blocks, partial boxes, atlas-alpha cutouts, and the engine's published
+nearby-body bounds. Each segment is tested against every published body's axis-aligned box, so a
+player, a mob or a dropped item inside a light's range casts a shadow the same way a wall does.
+The shadow is the plain box; which way the body faces and how it moves do not shape it. An item's
+box is first shrunk about its centre to half its width and depth, so it matches the drawn sprite
+and not the wider collision box; height stays as published. It asks whether
+geometry blocks the segment, independently of whether a hit has a usable reflection colour.
+Missing or pending segment data fails closed for that sample. Rendered opaque
 backing is a separate face-metadata bit from a usable atlas mapping; grass overlays therefore
 cannot turn their opaque cube backing transparent. Terrain carries the primitive's geometric
 normal in `gNormal.a`, encoded for the target's actual SNORM16 format; exact axis codes preserve
@@ -429,10 +446,14 @@ without this payload use their shading normal as a fallback.
 Grass and foliage use actual visible points rather than a cube-face receiver cache. Known thin
 cutouts with labPBR subsurface response split diffuse energy between reflection and transmission,
 up to half in each hemisphere. This is an authored thin-sheet approximation, not volume scattering;
-opaque-backed grass faces do not transmit. Cutout occluders still use the harvested model's
-approximation (two crossed planes for CROSS) and atlas alpha. Outside the certified aperture case,
-four area samples can leave visible steps in a penumbra. Quarter radiance and centroid integration
-do not resolve arbitrarily small emissive details or exact specular area-light response.
+opaque-backed grass faces do not transmit. Cutout occluders use the harvested model's approximation:
+two crossed planes for CROSS, the unit cube for a full cutout cell, and each stored box's own faces
+for a partial cutout (a door, trapdoor, pane or iron bars). The sprite rect is stretched across
+that box, and a box thinner than a quarter block reads as solid. Outside the certified aperture
+case, four area samples can leave visible steps in a penumbra; the per-quarter shift turns those
+steps into noise that temporal reconstruction settles over a few frames. Quarter radiance and
+shifted-sample integration do not resolve arbitrarily small emissive details or exact specular
+area-light response.
 
 Primary lighting has a separate HDR target so its cost and output can be measured. RGB holds local
 radiance; alpha carries the cloud-shadow mask. Resolve reads both through its existing input 15,

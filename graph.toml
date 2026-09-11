@@ -516,6 +516,12 @@ outputs = ["consolidatedGbuf"]
 kind = "buffer"
 enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
 
+# Engine-owned: boxes of nearby players, mobs and items, so local light can shadow against them.
+# EntityOccluderBuffer in the engine holds the layout; only voxel_local_direct reads it.
+[targets.entityOccluders]
+kind = "buffer"
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
+
 [targets.voxelLocalRadiance]
 kind = "buffer"
 stride_bytes = 4
@@ -543,7 +549,8 @@ shader = "shaders/post/voxel_local_direct.fsh"
 enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
 inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "voxelOccupancy",
           "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelLocalRadiance",
-          "builtin.gMotion", "builtin.blockAtlas", "voxelFaceTexture", "cloudShadowMask"]
+          "builtin.gMotion", "builtin.blockAtlas", "voxelFaceTexture", "cloudShadowMask",
+          "entityOccluders"]
 outputs = ["voxelLocalDirect"]
 
 [[pass]]
