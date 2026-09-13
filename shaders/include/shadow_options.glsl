@@ -8,6 +8,9 @@
 
 // With this off, the engine never renders the shadow map and it stays a 64x64 placeholder.
 #define SHADOWS //[] compile "Shadows"
+// Owner-requested receiver distance: integer chunks, default two, from one through sixteen.
+#define RT_SHADOWS 1 //[0 1] compile "Ray Traced Shadows" {0="Off" 1="On"}
+#define u_RtShadowDistance 2 //[1..16 step 1] runtime "RT Shadow Distance (Chunks)"
 // Default off: a new per-fragment cost on the full-res shading pass, on top of needing
 // CLOUDS_VOLUMETRIC (also default off). Its own toggle so enabling volumetric clouds doesn't
 // silently also enable this separately-costed feature.

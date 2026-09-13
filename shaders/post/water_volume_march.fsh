@@ -15,6 +15,14 @@ uniform sampler2D u_Input0;       // waterVolumeInterval
 uniform sampler2DShadow u_Input1; // sunShadowMap
 uniform sampler2D u_Input2;       // builtin.noise
 
+uniform sampler2D u_Input3; // sunShadowMapRaw
+uniform sampler2D u_Input4; // rtTerrainShadowDepth
+uniform sampler2D u_Input5; // sunEntityShadowMapRaw
+#define SHADOW_COMPARISON_MAP u_Input1
+#define SHADOW_RAW_MAP u_Input3
+#define RT_TERRAIN_SHADOW_DEPTH u_Input4
+#define ENTITY_SHADOW_RAW_MAP u_Input5
+#moj_import <fornax_runtime:shadow_handoff.glsl>
 #moj_import <fornax_runtime:water_volume_source.glsl>
 
 layout(std140) uniform u_PassParams {

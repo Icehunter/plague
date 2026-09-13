@@ -1,5 +1,13 @@
 # Plague render graph. Passes execute in declaration order.
 
+[ray_traced_shadows]
+enabled_if = "SHADOWS && RT_SHADOWS"
+distance_option = "u_RtShadowDistance"
+blocks_per_unit = 16
+# Maximum filter support: softness 6 * disk radius 2.046826 * rain 3 * ambient 4,
+# plus one texel for the bilinear comparison. See shadow_filter.glsl and its verifier.
+filter_guard_texels = 148.371472
+
 # --- Geometry -------------------------------------------------------------------------------------
 
 [[pass]]
@@ -263,7 +271,7 @@ dispatch = [1, 1, 1]
 # sunShadowMap last: inputs are positional, append only. It lets terrain stop the sun before it
 # lights the fog in front of a hill.
 inputs = ["globals", "packOptions", "atmoTransmittance", "atmoMultiScatter", "atmoSkyView",
-          "sunShadowMap"]
+          "sunShadowMap", "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
 outputs = ["atmoAerial"]
 
 [targets.ssaoRaw]
@@ -561,6 +569,21 @@ enabled_if = "PLAGUE_LOCAL_LIGHTING == 0"
 inputs = ["cloudShadowMask"]
 outputs = ["voxelLocalDirect"]
 
+# The shared receiver handoff combines RT terrain with independent entity depth before filtering.
+# The complete raster map remains available per tap; clouds keep their separate transmittance.
+[targets.rtShadowComposite]
+format = "rgba16f"
+scale = 1.0
+filter = "nearest"
+
+[[pass]]
+name = "resolve_hdr_rt_shadow"
+type = "fullscreen"
+shader = "shaders/post/rt_shadow_composite.fsh"
+enabled_if = "SHADOWS"
+inputs = ["builtin.depth", "builtin.gNormal", "sunShadowMap", "builtin.depth", "builtin.depth", "sunShadowMapRaw", "builtin.depth", "builtin.depth", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
+outputs = ["rtShadowComposite"]
+
 [[pass]]
 name = "resolve"
 type = "fullscreen"
@@ -571,10 +594,13 @@ shader = "shaders/post/gbuffer_resolve.fsh"
 # shader uniform and its graph.toml binding are one atomic contract — never remove one side alone.
 # consolidatedGbuf (u_Input1) is gbuf_consolidate's output, not a [targets.*] entry. See that
 # pass's own comment.
-# voxelLocalRadiance is left out here: gbuffer_resolve.fsh has no u_Input18, so listing it would
+# rtShadowComposite (u_Input18) holds direct and wide ambient shadow from one combined pass;
+# both use the world-position RT/raster handoff through the shared shadow filter.
+# u_Input19 stays reserved (bound to builtin.depth), so no input numbers shift.
+# voxelLocalRadiance is left out here: gbuffer_resolve.fsh has no u_Input20, so listing it would
 # name a texture nothing reads. It is the last entry, so leaving it out does not shift the numbers
 # before it. The target itself stays live; other passes still read it.
-inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial"]
+inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial", "rtShadowComposite", "builtin.depth"]
 outputs = ["sceneHdr"]
 
 # Tileable grayscale focusing pattern, sampled by two rotated flowing layers with mirror-repeat UVs.
@@ -1164,7 +1190,7 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
           "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
-          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance"]
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance", "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
 outputs = ["voxelWaterReflection"]
 
 # Prefix timings are separate draws and include output sinks and cache/order effects.
@@ -1184,7 +1210,7 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
           "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
-          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance"]
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance", "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
 outputs = ["voxelReflectionProbe"]
 
 [[pass]]
@@ -1196,7 +1222,7 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
           "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
-          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance"]
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance", "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
 outputs = ["voxelReflectionProbe"]
 
 [[pass]]
@@ -1208,7 +1234,7 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
           "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
-          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance"]
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance", "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
 outputs = ["voxelReflectionProbe"]
 
 [[pass]]
@@ -1220,7 +1246,7 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
           "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
-          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance"]
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance", "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
 outputs = ["voxelReflectionProbe"]
 
 [[pass]]
@@ -1232,7 +1258,7 @@ inputs = ["builtin.waterNormal", "builtin.waterDepth", "builtin.depth",
           "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
           "ssrWaterRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
-          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance"]
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance", "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
 outputs = ["voxelReflectionProbe"]
 
 
@@ -1295,7 +1321,7 @@ name = "water_volume_march"
 type = "fullscreen"
 shader = "shaders/post/water_volume_march.fsh"
 enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
-inputs = ["waterVolumeInterval", "sunShadowMap", "builtin.noise"]
+inputs = ["waterVolumeInterval", "sunShadowMap", "builtin.noise", "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
 outputs = ["waterVolumeScatterRaw"]
 
 [[pass]]
@@ -1386,7 +1412,7 @@ name = "water_volume_composite_submerged"
 type = "fullscreen"
 shader = "shaders/post/water_volume_composite_submerged.fsh"
 enabled_if = "PLAGUE_UNDERWATER != 0 && WATER_SCATTERING_QUALITY != 0"
-inputs = ["sceneHdrRefracted", "waterVolumeScatter", "waterVolumeInterval", "builtin.depth", "builtin.waterDepth", "builtin.waterNormal", "sunShadowMap", "builtin.noise"]
+inputs = ["sceneHdrRefracted", "waterVolumeScatter", "waterVolumeInterval", "builtin.depth", "builtin.waterDepth", "builtin.waterNormal", "sunShadowMap", "builtin.noise", "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
 outputs = ["waterVolumeShaftsResolved"]
 
 # Refraction must run first: the blur consumes sceneHdrRefracted. Tonemap reconstructs the half-res

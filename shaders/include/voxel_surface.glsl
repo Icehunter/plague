@@ -74,7 +74,7 @@ float plagueVoxelSurfaceShadow(vec3 point, vec3 normal, vec3 sunDir) {
     float distortion = length(coord.xy)*u_ShadowMapParams.x+(1.0-u_ShadowMapParams.x);
     coord.xy = coord.xy/distortion*0.5+0.5;
     if (all(greaterThan(coord,vec3(0))) && all(lessThan(coord,vec3(1))))
-        return texture(u_Input8,coord);
+        return plagueShadowLookup(point, coord.xy, coord.z);
     // Past the shadow map, ask the grid what blocks the sun rather than guessing lit or dark.
     vec3 p,n,l; uint c; int e;
     float state = plagueVoxelTraceMaterial(point+normal*PLAGUE_COVERAGE_EPSILON,sunDir,p,n,c,e,l);

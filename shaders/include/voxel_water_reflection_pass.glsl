@@ -16,6 +16,15 @@ uniform sampler2D u_Input13; // material atlas
 uniform sampler2D u_Input14; // atmospheric transmittance
 uniform sampler2D u_Input15; // atmospheric multiscatter
 uniform sampler2D u_Input16; // atmospheric sky view
+uniform sampler2D u_Input18; // sunShadowMapRaw
+uniform sampler2D u_Input19; // rtTerrainShadowDepth
+uniform sampler2D u_Input20; // sunEntityShadowMapRaw
+#define SHADOW_COMPARISON_MAP u_Input8
+#define SHADOW_RAW_MAP u_Input18
+#define RT_TERRAIN_SHADOW_DEPTH u_Input19
+#define ENTITY_SHADOW_RAW_MAP u_Input20
+#moj_import <fornax_runtime:shadow_options.glsl>
+#moj_import <fornax_runtime:shadow_handoff.glsl>
 #moj_import <fornax_runtime:voxel_reflection_fog.glsl>
 #moj_import <fornax_runtime:surface_lighting.glsl>
 #moj_import <fornax_runtime:voxel_surface.glsl>

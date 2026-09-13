@@ -80,12 +80,44 @@ mutually exclusive `enabled_if` guards, not one pass with a quality branch. The 
 file compiled as two passes at two sizes, because every size-dependent value comes from
 `textureSize()`.
 
-### 3. The deferred resolve: 1 pass
+### 3. The deferred resolve: 2 passes
 
 `resolve` is where the frame is lit: it reads the G-buffer, samples the sky from the sky-view table,
 evaluates the sun, filters shadows, applies ambient and
 blocklight, composites reflections in, and lays fog over the result. It is by far the largest shader
 in the pack.
+
+`resolve_hdr_rt_shadow` runs before `resolve` and applies the shared world-position handoff in
+`shadow_handoff.glsl`, followed by `shadow_filter.glsl`. `rtShadowComposite` holds direct and wide
+ambient visibility in red/green, the seabed caustic query in blue, and actual selected RT coverage
+in alpha (averaged over the direct filter taps). `resolve` reads input 18; input 19 remains reserved.
+Its RT shadow coverage debug tints selected RT cyan and raster fallback gray; brightness follows
+applied visibility with a display-only floor so shadowed coverage remains visible.
+
+The graph's `[ray_traced_shadows]` table declares `SHADOWS && RT_SHADOWS`, runtime
+`distance_option = "u_RtShadowDistance"`, and `blocks_per_unit = 16`. The control is an integer
+one-to-sixteen chunks, default two (32 blocks), measured horizontally from camera to receiving
+point. The engine caps effective RT distance at overall Shadow Distance and publishes its square
+in `u_ShadowMapParams.y`; zero means inactive. The fixed two-block transition lies inside that
+boundary. Increasing coverage does not change already-covered nearby shadow queries.
+
+RT caster selection is distinct: relevant blockers can be distant or elevated, anywhere along the
+light ray through the receiving volume. `rtTerrainShadowDepth.r` is forward light depth (miss one),
+and alpha is current validity. Per tap, the pack unions valid RT terrain depth with independent
+`sunEntityShadowMapRaw` depth before comparison. Invalid RT texels and distant receivers use the
+complete `sunShadowMapRaw`. Manual bilinear comparison preserves the comparison-sampler filter;
+it never multiplies two complete visibility fields or interpolates raw depths before comparison.
+
+The same handoff serves primary surfaces, caustics, water shafts, reflected surfaces and fog sample
+positions. Softness, Samples, rain widening, Strength and ambient darkening retain their existing
+places. The engine receives a conservative filter guard of 148.371472 texels: maximum softness 6,
+disk radius 2.046826, rain factor 3 and ambient multiplier 4, plus one bilinear texel. Every other
+consumer uses one bilinear tap and needs no larger guard. Cloud transmission remains separate.
+
+The complete raster map remains available for distant receivers and incomplete RT coverage. This
+implementation therefore adds tracing and mesh maintenance; it does not promise zero raster cost.
+Offline depth fixtures verify selection and filtering, while actual caster coverage, appearance and
+frame time require engine tests and the owner's client session.
 
 ### 4. Clouds: 4 passes
 

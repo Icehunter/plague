@@ -28,17 +28,22 @@
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 // Bindings: 0 globals, 1 packOptions (engine-injected), 2 atmoTransmittance, 3 atmoMultiScatter,
-// 4 atmoSkyView, 5 sunShadowMap, 6 the table. Storage targets are storage images, never samplers.
+// 4 atmoSkyView, 5 sunShadowMap, 6 raw raster, 7 RT terrain, 8 raw entities, 9 output.
+// Inputs are appended; storage targets are storage images, never samplers.
 // The shadow map is a sampler because a depth format cannot be a storage image.
 layout(rgba16f, set = 0, binding = 2) uniform readonly image2D u_Transmittance;
 layout(rgba16f, set = 0, binding = 3) uniform readonly image2D u_MultiScatter;
 layout(rgba16f, set = 0, binding = 4) uniform readonly image2D u_SkyView;
-#ifdef SHADOWS
 layout(set = 0, binding = 5) uniform sampler2DShadow u_SunShadow;
-layout(rgba16f, set = 0, binding = 6) uniform writeonly image2D u_OutAerial;
-#else
-layout(rgba16f, set = 0, binding = 5) uniform writeonly image2D u_OutAerial;
-#endif
+layout(set = 0, binding = 6) uniform sampler2D u_ShadowRaw;
+layout(set = 0, binding = 7) uniform sampler2D u_RtTerrainShadow;
+layout(set = 0, binding = 8) uniform sampler2D u_EntityShadowRaw;
+layout(rgba16f, set = 0, binding = 9) uniform writeonly image2D u_OutAerial;
+#define SHADOW_COMPARISON_MAP u_SunShadow
+#define SHADOW_RAW_MAP u_ShadowRaw
+#define RT_TERRAIN_SHADOW_DEPTH u_RtTerrainShadow
+#define ENTITY_SHADOW_RAW_MAP u_EntityShadowRaw
+#moj_import <fornax_runtime:shadow_handoff.glsl>
 
 #ifdef SHADOWS
 /**
@@ -66,7 +71,7 @@ float plagueAtmoSunShadow(vec3 posBlocks, vec3 sunDir) {
     if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0 || ndc.z <= 0.0 || ndc.z >= 1.0) {
         return 1.0;
     }
-    return mix(texture(u_SunShadow, vec3(uv, ndc.z)), 1.0,
+    return mix(plagueShadowLookup(posBlocks, uv, ndc.z), 1.0,
                smoothstep(reach * 0.75, reach, dist));
 }
 #endif

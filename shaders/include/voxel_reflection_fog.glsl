@@ -36,7 +36,8 @@ float plagueAtmoSunShadow(vec3 posBlocks, vec3 sunDir) {
     if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0 || ndc.z <= 0.0 || ndc.z >= 1.0)
         return 1.0;
     // Same shadow-map boundary fade as atmo_aerial.comp; no reflection-specific tuning.
-    return mix(texture(u_Input8, vec3(uv, ndc.z)), 1.0, smoothstep(reach * 0.75, reach, dist));
+    return mix(plagueShadowLookup(posBlocks, uv, ndc.z), 1.0,
+               smoothstep(reach * 0.75, reach, dist));
 }
 #endif
 

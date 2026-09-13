@@ -83,6 +83,19 @@ covers what the pack does, not the engine under it.
 - PCF shadow filtering. Resolution 1024/2048/4096, 2-16 taps per side, distance
   16-512 blocks in chunk steps, plus softness and strength.
 - Shadows fade out over the last quarter of their distance rather than ending at a hard edge.
+- Ray-traced sun and moon shadows: a toggle plus an RT Shadow Distance slider, in chunks. Default
+  2 chunks (32 blocks), range 1 to 16. This sets how far from you shadows use ray tracing, capped
+  by the normal Shadow Distance. A block far away or high up can still cast a shadow onto ground
+  close to you.
+- Past that range, or where ray data is missing, shadows fall back to the normal shadow map.
+  Shadows from mobs and players still combine with the ray-traced ground shadows. Softness,
+  Samples, rain spread, Strength and ambient darkening apply to ray-traced shadows too.
+- Ray tracing covers ground, water light shafts, caustics, reflections and fog through one shared
+  step. In the shadow debug view, cyan means ray-traced, gray means the normal shadow map, and
+  brightness shows how much light gets through. Cloud shadows are handled on their own.
+- The normal shadow map still runs everywhere, as a backup and for far-away ground. Ray tracing is
+  extra work on top of it, not a free swap for it.
+- The offline tests check the numbers only. Seeing how it looks and runs needs a real game session.
 - Optional suppression of vanilla's blob shadows and vanilla's rain-splash particles.
 
 ## Ambient occlusion

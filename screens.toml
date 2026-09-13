@@ -70,6 +70,7 @@ sliders = [
     "u_ShadowSoftness",
     "u_ShadowStrength",
     "u_ShadowDistance",
+    "u_RtShadowDistance",
     "u_SsaoRadius",
     "u_SsaoStrength",
     "u_SsrStrength",
@@ -462,6 +463,8 @@ elements = [
 title = "Shadows"
 elements = [
     "SHADOWS",
+    "RT_SHADOWS|requires:SHADOWS",
+    "u_RtShadowDistance|requires:RT_SHADOWS",
     "SHADOW_RESOLUTION|requires:SHADOWS",
     "SHADOW_SAMPLES|requires:SHADOWS",
     "u_ShadowDistance|requires:SHADOWS",
@@ -1701,17 +1704,30 @@ Shorter makes nearby shadows noticeably crisper, because the same shadow detail 
 ground. Shadows fade out gently near the limit rather than stopping at a hard line."""
 
 u_ShadowSoftness = """
-How soft the edges of shadows are.
+How soft the edges of shadows are, with regular or ray traced shadows.
 
 Low is crisp, high is a wide, diffuse edge. Changing Shadow Resolution does not change this \
 look."""
 
 u_ShadowStrength = """
-How dark shadows are.
+How dark shadows are, with regular or ray traced shadows.
 
 At 1.0 shadowed ground gets no direct sunlight at all, only light from the sky. Lower lets some \
 sun bleed through, which reads like soft bounced light. Above 1.0 the sky light inside shadows \
 fades too, gradually, and never all the way to black."""
+
+RT_SHADOWS = """
+Uses ray tracing for sun and moon shadows on nearby surfaces when the engine supports it.
+
+Distant blockers still cast onto those surfaces. Farther surfaces and unavailable RT data use \
+regular shadows. Softness, Samples and Strength apply to both."""
+
+u_RtShadowDistance = """
+Horizontal distance from you to surfaces receiving ray traced shadows, in chunks (16 blocks each).
+
+The default is 2 chunks (32 blocks). The effective reach is the smaller of this setting and \
+Shadow Distance, which is in blocks. Farther surfaces use regular shadows. Distant or elevated \
+blocks can still cast onto nearby surfaces; this does not limit where blockers may be."""
 
 HIDE_VANILLA_BLOB_SHADOWS = """
 Hides the dark oval vanilla draws under every player and mob.

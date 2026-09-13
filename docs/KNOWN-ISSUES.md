@@ -75,8 +75,11 @@ notes; what is here is what a reader needs to know the limit exists.
 - **A stratiform layer shows a flat horizontal seam where it thins.** Seen as a straight
   light-toned line through the layer rather than a cloud edge. Suspected to be the slab's own top or
   bottom plane showing once the vertical profile saturates before it reaches the boundary. Matters
-  most for anything at eye level, so it must be understood before the march is reused for ground fog
-  or mist, which are viewed edge-on constantly.
+  most for anything at eye level, so fix this before the march runs for ground fog or mist, which
+  show it edge-on all the time. A later capture also shows a straight seam in the night sky near
+  the crosshair; it may be the same cause. Check `shaders/compute/clouds_march_volume.comp`,
+  `shaders/compute/atmo_skyview.comp`, and `shaders/post/clouds_composite.fsh`. Close this once the
+  sky stays smooth in game.
 - **A cloud grows and gains density as the sun passes behind it.** The silhouette widens, not just
   the glow around it. Most visible against a small isolated cumulus. The moon behind the same cloud
   does nothing, which fits the march lighting from the sun alone: the moon is no directional source

@@ -93,11 +93,13 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
     return texture(ATMO_AERIAL, uv);
 }
 
-// Metal allows 16 samplers per fragment function, counting only the ones read.
-// tools/check_metal_pipelines.py counts 14 here. The debug-only reads below add 2,
-// so the views sit right at the ceiling and any new input to
-// this pass has to displace a read. Past the ceiling the pipeline refuses to build, with nothing in
-// the log but a pipeline error.
+// Earlier pass output: r/g = direct/wide ambient visibility; b = the seabed caustic query.
+// All use the world-position receiver handoff before their shared filtering.
+uniform sampler2D u_Input18; // rtShadowComposite
+#define RT_SHADOW_COMPOSITE u_Input18
+// u_Input19 stays reserved (bound to builtin.depth) so no input numbers shift.
+// Debug and normal paths read the same applied shadow result. That keeps sampler count under
+// Metal's limit of sixteen, with room for both raw-depth and motion debug views.
 //#define PLAGUE_DEBUG_VIEWS //[] compile "Motion and Shadow-Map Debug Views"
 
 // Must follow NOISE_TEX: PLAGUE_CLOUD_NOISE expands inline where clouds.glsl calls it, so an
@@ -235,139 +237,6 @@ vec3 sampleLightmap(sampler2D lut, vec2 uv) {
 in vec2 texCoord;
 out vec4 fragColor;
 
-#ifdef SHADOWS
-// Sun visibility at a camera-relative world position, 1.0 lit, 0.0 fully shadowed. The shadow map
-// is written with a radial distortion (u_ShadowMapParams.x) that must be matched on read, or every
-// off-centre sample lands on the wrong texel and shows up as acne.
-//
-// Trap: moving this into shadow.glsl as a wrapper turned every lit surface black. Suspected cause
-// is a sampler2DShadow crossing a function-parameter boundary, a rough edge in some GLSL->SPIR-V
-// lowering. Check in a running client, not just check_shaders.sh, before trying again.
-
-// Golden-angle (Vogel) disk PCF, radius ~ (i/N)^p, with p and the per-count radius fitted against a
-// committed fixture (tools/verify_shadow_filter.py re-checks it). Vogel 1979. Each sample is a
-// +/-offset pair, halving noise for the same taps. Reads SUN_SHADOW_MAP as a global, for the same
-// reason this function is kept inline.
-
-// radius_i = diskRadius * (i / SHADOW_SAMPLES)^p. Fitted jointly across all four sample counts.
-const float PLAGUE_SHADOW_RADIAL_EXPONENT = 1.266505;
-
-// Disk outer radius per sample count, in (u_ShadowSoftness / SHADOW_RESOLUTION) texel units.
-// Growing with N is expected: more rings reach further out for the same profile width.
-#if SHADOW_SAMPLES == 2
-const float PLAGUE_SHADOW_DISK_RADIUS = 1.358320;
-#elif SHADOW_SAMPLES == 4
-const float PLAGUE_SHADOW_DISK_RADIUS = 1.677305;
-#elif SHADOW_SAMPLES == 8
-const float PLAGUE_SHADOW_DISK_RADIUS = 1.942500;
-#else // SHADOW_SAMPLES == 16
-const float PLAGUE_SHADOW_DISK_RADIUS = 2.046826;
-#endif
-
-// Angular step between consecutive Vogel-disk taps: 2*pi * (1 - 1/phi).
-const float PLAGUE_SHADOW_GOLDEN_ANGLE = 2.39996323;
-
-const float PLAGUE_SHADOW_TWO_PI = 6.28318531;
-
-// Wider than the sun-disc penumbra: a caster blocks the sky dome broadly, and the fill-light
-// darkening needs a smooth signal or the sharp per-pixel visibility blotches it.
-const float PLAGUE_SHADOW_AMBIENT_BROADEN = 4.0;
-
-// Overcast rain is a larger, softer light source, so the penumbra widens with the square of rain
-// intensity (matched to the fixture's recorded full-rain d-scale).
-const float PLAGUE_SHADOW_RAIN_WIDEN_SCALE = 3.0;
-
-// temporalNoise rotates the whole disk each frame (interleaved gradient noise stepped by the
-// golden-ratio fraction, Jimenez 2014), so the rotation spreads evenly around the circle over many
-// frames (Weyl equidistribution): the condition the radii above were fitted under.
-float plagueSunVisibilityFiltered(vec2 shadowUv, float refDepth, float texelScale,
-                                  float temporalNoise, float rainFactor) {
-    float rainScale = 1.0 + (PLAGUE_SHADOW_RAIN_WIDEN_SCALE - 1.0) * rainFactor * rainFactor;
-    float diskRadiusTexels = PLAGUE_SHADOW_DISK_RADIUS * rainScale;
-    float frameAngle = temporalNoise * PLAGUE_SHADOW_TWO_PI;
-
-    float visSum = 0.0;
-    for (int i = 1; i <= SHADOW_SAMPLES; ++i) {
-        float t = float(i) / float(SHADOW_SAMPLES);
-        float radius = diskRadiusTexels * pow(t, PLAGUE_SHADOW_RADIAL_EXPONENT);
-        float angle = float(i) * PLAGUE_SHADOW_GOLDEN_ANGLE + frameAngle;
-
-        vec2 offset = vec2(cos(angle), sin(angle)) * radius * texelScale;
-
-        visSum += texture(SUN_SHADOW_MAP, vec3(shadowUv + offset, refDepth));
-        visSum += texture(SUN_SHADOW_MAP, vec3(shadowUv - offset, refDepth));
-    }
-
-    return visSum / float(2 * SHADOW_SAMPLES);
-}
-
-float sunVisibilityAt(vec3 worldPos, vec3 normal, vec3 sunDir, float rainFactorForShadow,
-                      float radiusScale) {
-    // Offset along the normal before projecting. Depth bias alone cannot fix acne on surfaces
-    // near-parallel to the light: the bias needed there runs to infinity, where a normal offset
-    // stays bounded and scales with texel size.
-    float slope = 1.0 - abs(dot(normal, sunDir));
-    vec3 biased = worldPos + normal * (0.05 + 0.35 * slope);
-
-    // On top of the normal offset, not instead of it: that offset moves the compared depth by
-    // dot(normal, sunDir), which goes to zero at grazing angles, exactly where slope above is
-    // largest. sunDir is unit length, so this term does not depend on angle and covers the gap.
-    biased += sunDir * 0.05;
-
-    vec4 lightClip = u_SunViewProj * vec4(biased, 1.0);
-    vec3 lightNdc = lightClip.xyz / lightClip.w;
-
-    float radius = length(lightNdc.xy);
-    float distortFactor = radius * u_ShadowMapParams.x + (1.0 - u_ShadowMapParams.x);
-    vec2 shadowUv = (lightNdc.xy / distortFactor) * 0.5 + 0.5;
-
-    float rawDepth = lightNdc.z;
-    if (shadowUv.x <= 0.0 || shadowUv.x >= 1.0 || shadowUv.y <= 0.0 || shadowUv.y >= 1.0
-            || rawDepth <= 0.0 || rawDepth >= 1.0) {
-        return 1.0; // outside the map: unshadowed rather than guessing
-    }
-    // The write side stores gl_Position.z unscaled, so no conversion sits between the two.
-    float refDepth = rawDepth;
-
-    // Interleaved gradient noise (Jimenez 2014), advanced per frame by the golden-ratio fraction so
-    // TAA resolves the dither into a smooth penumbra instead of a repeating pattern. Frame counter
-    // wrapped at 4096 to stay inside float precision; dense enough to be invisible.
-    float gradientNoise = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x
-                                                   + 0.00583715 * gl_FragCoord.y));
-    const float goldenRatioFrac = 0.61803398875;
-    float temporalNoise = fract(gradientNoise + goldenRatioFrac * mod(u_FrameState.x, 4096.0));
-
-    // Divides by SHADOW_RESOLUTION, not a literal 2048.0: the map does resize, and a constant
-    // would detach softness from texel size at 1024/4096.
-    float texelScale = (u_ShadowSoftness / float(SHADOW_RESOLUTION)) * radiusScale;
-
-    return plagueSunVisibilityFiltered(shadowUv, refDepth, texelScale, temporalNoise,
-                                       rainFactorForShadow);
-}
-
-float sunVisibility(vec3 worldPos, vec3 normal, vec3 sunDir, float rainFactorForShadow) {
-    return sunVisibilityAt(worldPos, normal, sunDir, rainFactorForShadow, 1.0);
-}
-
-#if WATER_CAUSTICS
-// One-tap visibility for water-volume samples. Unlike sunVisibility(), a position outside the
-// covered shadow volume reads dark rather than inventing sunlight.
-float plagueWaterSunVisibility(vec3 worldPos, vec3 sunDir) {
-    vec3 biased = worldPos + sunDir * 0.08;
-    vec4 lightClip = u_SunViewProj * vec4(biased, 1.0);
-    vec3 lightNdc = lightClip.xyz / max(lightClip.w, 1e-6);
-
-    float radius = length(lightNdc.xy);
-    float distortFactor = radius * u_ShadowMapParams.x + (1.0 - u_ShadowMapParams.x);
-    vec2 shadowUv = (lightNdc.xy / distortFactor) * 0.5 + 0.5;
-    if (shadowUv.x <= 0.0 || shadowUv.x >= 1.0 || shadowUv.y <= 0.0 || shadowUv.y >= 1.0
-            || lightNdc.z <= 0.0 || lightNdc.z >= 1.0) {
-        return 0.0; // volumetrics outside the covered shadow volume must not invent sunlight
-    }
-    return texture(SUN_SHADOW_MAP, vec3(shadowUv, lightNdc.z));
-}
-#endif
-#endif
 
 #if PLAGUE_UNDERWATER && WATER_SUN_TINT
 // Turns caustic focus (`pattern`, 0 unfocused, 1 full focus) into a sun-colour tint: Beer-Lambert
@@ -416,17 +285,14 @@ int debugView = int(u_Param3 + 0.5);
         if (debugView == DBG_SSAO)     { fragColor = vec4(vec3(texture(SSAO_TEX, texCoord).r), 1.0); return; }
         if (debugView == DBG_AO)       { fragColor = vec4(vec3(texture(G_BUF, vec3(texCoord, 2.0)).r), 1.0); return; }
         if (debugView == DBG_RT_SHADOW) {
-            // Sun visibility alone: white lit, black shadowed. Isolates the shadow map from the
-            // lightmap/ambient, which can mask a missing caster in the lit image.
+            // Cyan is RT-selected coverage; gray is full-raster fallback. Brightness carries
+            // the applied direct visibility. The display-only 1/4 floor keeps shadowed coverage
+            // visible; it does not enter lighting or either shadow query readback.
 #ifdef SHADOWS
-            vec4 dbgClip = vec4(texCoord * 2.0 - 1.0, depth, 1.0);
-            vec4 dbgWorldH = u_InvProjModelView * dbgClip;
-            vec3 dbgWorld = dbgWorldH.xyz / dbgWorldH.w;
-            vec3 dbgN = normalSample.xyz;
-            vec3 dbgNormal = dot(dbgN, dbgN) > 1e-6 ? normalize(dbgN) : vec3(0.0, 1.0, 0.0);
-            vec3 dbgS = u_SunDirection.xyz;
-            vec3 dbgSun = dot(dbgS, dbgS) > 1e-6 ? normalize(dbgS) : normalize(vec3(0.3, 0.9, 0.2));
-            fragColor = vec4(vec3(sunVisibility(dbgWorld, dbgNormal, dbgSun, clamp(u_SkyState.x, 0.0, 1.0))), 1.0);
+            vec4 appliedShadow = texture(RT_SHADOW_COMPOSITE, texCoord);
+            float debugBrightness = mix(0.25, 1.0, appliedShadow.r);
+            vec3 coverageColor = mix(vec3(1.0), vec3(0.0, 1.0, 1.0), appliedShadow.a);
+            fragColor = vec4(coverageColor * debugBrightness, 1.0);
 #else
             fragColor = vec4(1.0);
 #endif
@@ -819,15 +685,13 @@ int debugView = int(u_Param3 + 0.5);
     if (dot(shadowGeomNormal, normal) < 0.0) {
         shadowGeomNormal = -shadowGeomNormal;
     }
-    float visibility = sunVisibility(worldPos, shadowGeomNormal, sunDir, rainFactor);
-    // Queried at PLAGUE_SHADOW_AMBIENT_BROADEN times the filter radius: the sky guess below rides
-    // this at every slider position, and sharp per-pixel visibility would paint ink patches on any
-    // surface made of reflections.
-    float ambientVisibility = sunVisibilityAt(worldPos, shadowGeomNormal, sunDir, rainFactor,
-                                              PLAGUE_SHADOW_AMBIENT_BROADEN);
+    // Shared world-position handoff and filtering were resolved once by the earlier pass.
+    vec2 combinedShadow = texture(RT_SHADOW_COMPOSITE, texCoord).rg;
+    float visibility = combinedShadow.r;
+    float ambientVisibility = combinedShadow.g;
 
-    // A local copy of sunVisibilityAt's bias and projection maths, not a call into it; see that
-    // function's own trap note above.
+    // Projection diagnostics share the filter bias. QUERY_2 carries applied receiver visibility;
+    // QUERY_3 reads the complete raster fallback depth, which is still useful with RT active.
     if (debugView == DBG_SHADOW_QUERY_1) {
         fragColor = vec4(sunDir, ndotl);
         return;
@@ -1570,7 +1434,7 @@ int debugView = int(u_Param3 + 0.5);
         // cloudShadow belongs inside this visibility: a caustic is the focused beam, and an
         // overcast deck scatters that beam into flat light with nothing left to focus. Terrain and
         // cloud block the same sun. 1.0 when CLOUD_SHADOWS is off.
-        float causticShadow = plagueWaterSunVisibility(worldPos, sunDir) * pomShadow * cloudShadow;
+        float causticShadow = texture(RT_SHADOW_COMPOSITE, texCoord).b * pomShadow * cloudShadow;
         // Three terms off one visibility, so bloom and bounce cannot appear where the direct
         // caustic cannot. Not fed back into extinction or fog: this adds light, it does not change
         // the medium.

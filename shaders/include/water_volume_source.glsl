@@ -437,7 +437,7 @@ float plagueWaterShadowVisibility(
     // Compared against the writer's plain [0,1] light-clip depth. Outside its covered volume
     // there is no evidence of direct illumination, so the edge fades to dark—not lit.
     // The shadow target has one mip; explicit LOD also works in sparse recovery branches.
-    float sampledVisibility = textureLod(shadowTexture, vec3(shadowUv, lightNdc.z), 0.0);
+    float sampledVisibility = plagueShadowLookup(interfacePosition, shadowUv, lightNdc.z);
     return sampledVisibility * coverage;
 #else
     return 1.0;

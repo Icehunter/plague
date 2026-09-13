@@ -27,6 +27,14 @@ uniform sampler2D u_Input7; // builtin.noise
 #moj_import <fornax_runtime:water_waves.glsl>
 #define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Mesh Displacement" {0="Off" 1="Standard"}
 #define WATER_ABSORPTION_TINT 1 //[0 1] compile "Underwater Tint" {0="Off" 1="On"}
+uniform sampler2D u_Input8; // sunShadowMapRaw
+uniform sampler2D u_Input9; // rtTerrainShadowDepth
+uniform sampler2D u_Input10; // sunEntityShadowMapRaw
+#define SHADOW_COMPARISON_MAP u_Input6
+#define SHADOW_RAW_MAP u_Input8
+#define RT_TERRAIN_SHADOW_DEPTH u_Input9
+#define ENTITY_SHADOW_RAW_MAP u_Input10
+#moj_import <fornax_runtime:shadow_handoff.glsl>
 #moj_import <fornax_runtime:water_volume_source.glsl>
 
 layout(std140) uniform u_PassParams {
