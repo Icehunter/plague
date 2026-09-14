@@ -48,14 +48,18 @@ Near the camera, the ray is split at world-grid lines every eight blocks, and th
 cut short at the solid surface. Each piece uses one smooth reading of air and haze, averaged from
 eight light-visibility checks. Each grid cell always gets the same fixed set of checks, so a
 longer path adds more cells rather than more checks per cell; the far sky march keeps its old,
-wider spacing. `atmo_mist.glsl` adds a test-stage patch of still mist tied to world position,
-turned on by the Local Mist Amount setting. It sits on a smooth 128-block grid and fades with
-height above sea level, adding the same amount to both light loss and haze scatter. It needs no
-extra pass, texture, or history from past frames. The sky tables (planetary light loss and
-multi-bounce light) leave this thin local patch out. The color of light lost through the solid
-surface path stays correct when the patch mixes with colored air, and needs no extra storage. The
-new full-size unfogged color target costs eight bytes per pixel and one extra read and write; the
-new fog step proves the math is right, but its speed has not yet been measured.
+wider spacing. `atmo_mist.glsl` adds still mist banks placed at fixed spots in the world, turned
+on by Local Mist Amount. The bank grid is 32 blocks wide and 16 blocks tall, and sits inside the
+Fog Height range above sea level. The same bank shape also spreads out the normal morning and
+weather mist, so a flat weather layer does not hide the mist pockets. One flat bank still holds
+the 0.15 top optical-depth limit, over 32 blocks instead of 128, so mist shows up over shorter
+views. Local Mist Amount at zero gives back the plain, flat weather mist. Light loss and scatter
+use the same density. Each point needs eight lattice checks instead of four, with no extra march
+steps, passes, textures, or stored frames. The sky tables (planet light loss and bounced light)
+skip this thin local patch. Light lost through the solid surface stays right when it mixes with
+colored air, with no extra storage needed. The new full-size color target costs eight bytes per
+pixel and one extra read and write. The new fog step is checked offline; how it looks and runs in
+game has not been measured yet.
 The aerial table still feeds light-loss data to water, reflections and cave detection.
 `fog_aerial.glsl` mixes this with the sky along the ray and the fade at the render edge. Its guard
 against wrong sky light at cave mouths still works, and still misses a lit gap between two

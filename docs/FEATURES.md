@@ -30,11 +30,12 @@ covers what the pack does, not the engine under it.
 
 ## Clouds and fog
 
-- Test-stage local mist patches, turned on by Local Mist Amount on the Fog screen. The mist sits
-  at fixed points in the world, with broad, smooth changes across the ground and the same Fog
-  Height falloff as normal fog. Solid objects and the aerial table read the mist directly; direct
-  sunlight through it uses the normal terrain shadow check. Mist blocking its own light, and
-  matching fog on particles, are not done yet.
+- Local mist banks, turned on by Local Mist Amount on the Fog screen. Density changes along all
+  three world axes within the Fog Height range, and shapes the normal morning and after-rain
+  mist too. Banks are 32 blocks wide and 16 blocks tall, giving shape and range you can see over
+  close paths. Solid objects and the aerial table read the mist directly; direct sunlight through
+  it uses the normal terrain shadow check. Mist blocking its own light, and matching fog on
+  particles, are not done yet.
 
 - Volumetric cloud march composited in linear HDR **before** the tonemap, so sunlit cloud tops go
   past display white and bloom. Fast / Fancy (half-res) and Ultra (full-res) tiers, with altitude,

@@ -659,7 +659,7 @@ vec3 plagueAtmoShadowLightDirection() {
 // The aerial writers fill in this field, keyed by world position. Sky table writers skip it:
 // ground mist near the player is not a planet-wide layer. Read it before adding planet radius,
 // which would lose the local detail.
-float plagueAtmoLocalMistSigma(vec3 cameraRelativeBlocks);
+float plagueAtmoLocalMistSigma(vec3 cameraRelativeBlocks, out float weatherMistScale);
 #endif
 
 vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec3 moonRadiance,
@@ -681,7 +681,7 @@ vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec
 #ifdef PLAGUE_ATMO_LOCAL_STEPS
     // Split the ray at world-grid lines instead of camera distance. Camera-distance steps shift
     // every sample as the camera moves; a world grid keeps each ray piece at the same fixed spot.
-    // Eight-block cells split each 128-block mist grid cell into 16 parts per side. Smooth air
+    // Eight-block cells resolve the local mist lattice horizontally and vertically. Smooth air
     // values are read once per cell; shadow visibility gets eight smaller samples below, instead
     // of stretching one on/off shadow check across the whole cell. Checking all three axes' grid
     // lines avoids a sudden jump when the ray's steepest axis changes.
@@ -750,8 +750,15 @@ vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec
         }
 #endif
 #ifdef PLAGUE_ATMO_LOCAL_MIST
-        float localMistSigma = plagueAtmoLocalMistSigma(dir * (t / PLAGUE_ATMO_METRES_PER_BLOCK));
-        plagueAtmoScatterAt(origin + dir * t, sunDir, phases, sunRadiance, moonRadiance, air,
+        float weatherMistScale;
+        float localMistSigma = plagueAtmoLocalMistSigma(dir * (t / PLAGUE_ATMO_METRES_PER_BLOCK),
+                                                       weatherMistScale);
+        // Morning and weather mist use the same banks as this local mist. Keeping the plain
+        // weather density here would hide those banks under one flat layer. Change only this
+        // one sample: the next point along the ray must start from the plain weather value.
+        PlagueAtmoAir pointAir = air;
+        pointAir.mistDensity *= weatherMistScale;
+        plagueAtmoScatterAt(origin + dir * t, sunDir, phases, sunRadiance, moonRadiance, pointAir,
                             directVisibility, localMistSigma, scattered, extinction);
 #else
         plagueAtmoScatterAt(origin + dir * t, sunDir, phases, sunRadiance, moonRadiance, air,
