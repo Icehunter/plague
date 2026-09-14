@@ -1,0 +1,206 @@
+#version 450
+// Sort and recombine the seven premultiplied layer results, retaining the original history metadata.
+#define PLAGUE_CLOUD_CANDIDATE_CACHE_READ
+#moj_import <fornax_runtime:cloud_volume_frame.glsl>
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Append all layer images after the original eight inputs.
+layout(rgba32f, set = 0, binding = 8) uniform readonly image2D u_CloudLayer0Colour;
+layout(r32f, set = 0, binding = 9) uniform readonly image2D u_CloudLayer0Front;
+layout(rgba32f, set = 0, binding = 10) uniform readonly image2D u_CloudLayer1Colour;
+layout(r32f, set = 0, binding = 11) uniform readonly image2D u_CloudLayer1Front;
+layout(rgba32f, set = 0, binding = 12) uniform readonly image2D u_CloudLayer2Colour;
+layout(r32f, set = 0, binding = 13) uniform readonly image2D u_CloudLayer2Front;
+layout(rgba32f, set = 0, binding = 14) uniform readonly image2D u_CloudLayer3Colour;
+layout(r32f, set = 0, binding = 15) uniform readonly image2D u_CloudLayer3Front;
+layout(rgba32f, set = 0, binding = 16) uniform readonly image2D u_CloudLayer4Colour;
+layout(r32f, set = 0, binding = 17) uniform readonly image2D u_CloudLayer4Front;
+layout(rgba32f, set = 0, binding = 18) uniform readonly image2D u_CloudLayer5Colour;
+layout(r32f, set = 0, binding = 19) uniform readonly image2D u_CloudLayer5Front;
+layout(rgba32f, set = 0, binding = 20) uniform readonly image2D u_CloudLayer6Colour;
+layout(r32f, set = 0, binding = 21) uniform readonly image2D u_CloudLayer6Front;
+
+layout(rgba16f, set = 0, binding = 22) uniform writeonly image2D u_OutClouds;
+layout(r32f, set = 0, binding = 23) uniform writeonly image2D u_OutCloudDistance;
+
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+// Raw history writers append outputs, leaving all original bindings intact.
+layout(rgba16f, set = 0, binding = 24) uniform writeonly image2D u_OutCloudHistory;
+layout(r32f, set = 0, binding = 25) uniform writeonly image2D u_OutCloudHistoryData;
+layout(r32f, set = 0, binding = 26) uniform writeonly image2D u_OutCloudHistoryDistance;
+layout(r32f, set = 0, binding = 27) uniform writeonly image2D u_OutCloudHistoryState;
+#endif
+
+
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+#define PLAGUE_CLOUD_HISTORY_WRITE_STATE
+#moj_import <fornax_runtime:cloud_history_state.glsl>
+
+void plagueStoreCloudHistoryState(int row, vec4 value) {
+    for (int lane = 0; lane < 4; lane++) {
+        imageStore(u_OutCloudHistoryState, ivec2(row, lane), vec4(value[lane]));
+    }
+}
+
+void plagueWriteCloudHistoryState(ivec2 size) {
+    plagueStoreCloudHistoryState(0,
+               vec4(u_FrameState.x + 1.0, u_SkyState.w, vec2(size)));
+    plagueStoreCloudHistoryState(1, u_WorldBounds);
+    plagueStoreCloudHistoryState(2, u_WorldClock);
+    plagueStoreCloudHistoryState(3,
+               vec4(u_SkyState.x, u_FrameState.zw, u_SkyState.z));
+    plagueStoreCloudHistoryState(4,
+               vec4(u_ProjectionMatrix[0][0], u_ProjectionMatrix[1][1],
+                    u_ProjectionMatrix[2][2], u_ProjectionMatrix[3][2]));
+    plagueStoreCloudHistoryState(5,
+               vec4(u_ScreenBrightness, u_RenderFog.y, u_CameraSkyLight.yw));
+    for (int i = PLAGUE_CLOUD_HISTORY_DECK_ROW; i < PLAGUE_CLOUD_HISTORY_OPTION_ROW; i++) {
+        plagueStoreCloudHistoryState(i, vec4(0.0));
+    }
+#if CLOUDS_VOLUMETRIC
+    if (u_SkyState.z > 0.5) {
+        PlagueCloudDeck decks[PLAGUE_CLOUD_LAYERS] = PlagueCloudDeck[PLAGUE_CLOUD_LAYERS](
+            convectiveDeck, sheetDeck, stratiformDeck, rollDeck,
+            altocumulusDeck, cirrocumulusDeck, cirrusDeck);
+        for (int i = 0; i < PLAGUE_CLOUD_LAYERS; i++) {
+            plagueStoreCloudHistoryState(PLAGUE_CLOUD_HISTORY_DECK_ROW + i,
+                       vec4(decks[i].cell, decks[i].shear, decks[i].axisSwing,
+                            PLAGUE_CLOUD_WIND_SPEED * max(u_CloudSpeed, 0.0)
+                            / (max(decks[i].cell, 1e-3) * PLAGUE_CLOUD_WIND_LENGTH)));
+        }
+    }
+#endif
+    plagueStoreCloudHistoryState(PLAGUE_CLOUD_HISTORY_WIND_ROW,
+                                // Include the sample mode in frame compatibility, even if storage survives a reload.
+                                vec4(PLAGUE_CLOUD_WIND, PLAGUE_CLOUD_DRIFT_WRAP, float(PLAGUE_CLOUD_TEMPORAL)));
+    for (int i = PLAGUE_CLOUD_HISTORY_OPTION_ROW; i < PLAGUE_CLOUD_HISTORY_STATE_ROWS; i++) {
+        plagueStoreCloudHistoryState(i,
+                   plagueCloudHistoryOptions(i - PLAGUE_CLOUD_HISTORY_OPTION_ROW));
+    }
+}
+
+void plagueWriteCloudHistory(ivec2 pixel, vec4 colour, float distance, uint mask) {
+    imageStore(u_OutCloudHistory, pixel, colour);
+    // A per-pixel source stamp prevents cleared/reallocated or skipped images masquerading as history.
+    imageStore(u_OutCloudHistoryData, pixel, vec4(plagueCloudHistoryPack(mask, u_FrameState.x + 1.0)));
+    imageStore(u_OutCloudHistoryDistance, pixel, vec4(distance));
+}
+#endif
+
+void main() {
+#if CLOUDS_VOLUMETRIC && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)
+    // Only history metadata needs the deck/frame state; the merge itself reads layer images.
+    if (gl_LocalInvocationIndex == 0u && u_SkyState.z > 0.5) {
+        plaguePrepareCloudWorkgroup();
+    }
+    barrier();
+#endif
+    ivec2 outSize = imageSize(u_OutClouds);
+    ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(texelCoord, outSize))) {
+        return;
+    }
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+    if (all(equal(texelCoord, ivec2(0)))) {
+        plagueWriteCloudHistoryState(outSize);
+    }
+#endif
+#if CLOUDS_VOLUMETRIC
+    if (u_SkyState.z <= 0.5) {
+        imageStore(u_OutClouds, texelCoord, vec4(0.0));
+        imageStore(u_OutCloudDistance, texelCoord, vec4(0.0));
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+        plagueWriteCloudHistory(texelCoord, vec4(0.0), 0.0, 0u);
+#endif
+        return;
+    }
+    vec4 layer[PLAGUE_CLOUD_LAYERS];
+    float front[PLAGUE_CLOUD_LAYERS];
+    layer[0] = imageLoad(u_CloudLayer0Colour, texelCoord);
+    front[0] = imageLoad(u_CloudLayer0Front, texelCoord).r;
+    layer[1] = imageLoad(u_CloudLayer1Colour, texelCoord);
+    front[1] = imageLoad(u_CloudLayer1Front, texelCoord).r;
+    layer[2] = imageLoad(u_CloudLayer2Colour, texelCoord);
+    front[2] = imageLoad(u_CloudLayer2Front, texelCoord).r;
+    layer[3] = imageLoad(u_CloudLayer3Colour, texelCoord);
+    front[3] = imageLoad(u_CloudLayer3Front, texelCoord).r;
+    layer[4] = imageLoad(u_CloudLayer4Colour, texelCoord);
+    front[4] = imageLoad(u_CloudLayer4Front, texelCoord).r;
+    layer[5] = imageLoad(u_CloudLayer5Colour, texelCoord);
+    front[5] = imageLoad(u_CloudLayer5Front, texelCoord).r;
+    layer[6] = imageLoad(u_CloudLayer6Colour, texelCoord);
+    front[6] = imageLoad(u_CloudLayer6Front, texelCoord).r;
+
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+    uint contributor[PLAGUE_CLOUD_LAYERS];
+    for (int i = 0; i < PLAGUE_CLOUD_LAYERS; i++) {
+        contributor[i] = 1u << uint(i);
+    }
+#endif
+
+    // Sorted by where the ray first meets material. A missed deck reports front 0 and zero alpha;
+    // treating 0 as infinitely far sorts it last, where zero alpha changes nothing.
+    for (int i = 0; i < PLAGUE_CLOUD_LAYERS - 1; i++) {
+        for (int j = 0; j < PLAGUE_CLOUD_LAYERS - 1 - i; j++) {
+            float nearer = front[j] > 0.0 ? front[j] : 1e30;
+            float farther = front[j + 1] > 0.0 ? front[j + 1] : 1e30;
+            if (farther < nearer) {
+                vec4 swapLayer = layer[j];
+                layer[j] = layer[j + 1];
+                layer[j + 1] = swapLayer;
+                float swapFront = front[j];
+                front[j] = front[j + 1];
+                front[j + 1] = swapFront;
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+                uint swapContributor = contributor[j];
+                contributor[j] = contributor[j + 1];
+                contributor[j + 1] = swapContributor;
+#endif
+            }
+        }
+    }
+
+    vec4 clouds = layer[0];
+    for (int i = 1; i < PLAGUE_CLOUD_LAYERS; i++) {
+        clouds += layer[i] * (1.0 - clouds.a);
+    }
+
+    // Weighted by each layer's contribution to the union, not the nearest that drew. A layer
+    // reports a front distance until its alpha reaches zero, so the nearest JUMPS to the next layer
+    // when the near one drops out; the composite gates the whole union on this against terrain
+    // depth, so that jump deletes every layer at once. Weighting retires a fading layer's distance
+    // continuously. This is a weighted mean of sampled fronts, not a material surface or centroid.
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+    uint contributorMask = 0u;
+#endif
+    float frontTransmittance = 1.0;
+    float frontWeight = 0.0;
+    float cloudFrontDistance = 0.0;
+    for (int i = 0; i < PLAGUE_CLOUD_LAYERS; i++) {
+        float contribution = layer[i].a * frontTransmittance;
+        frontTransmittance *= 1.0 - layer[i].a;
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+        if (contribution > 0.0) {
+            contributorMask |= contributor[i];
+        }
+#endif
+        if (front[i] > 0.0) {
+            cloudFrontDistance += front[i] * contribution;
+            frontWeight += contribution;
+        }
+    }
+    cloudFrontDistance = frontWeight > 0.0 ? cloudFrontDistance / frontWeight : 0.0;
+
+    imageStore(u_OutClouds, texelCoord, clouds);
+    imageStore(u_OutCloudDistance, texelCoord, vec4(cloudFrontDistance));
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+    plagueWriteCloudHistory(texelCoord, clouds, cloudFrontDistance, contributorMask);
+#endif
+#else
+    imageStore(u_OutClouds, texelCoord, vec4(0.0));
+    imageStore(u_OutCloudDistance, texelCoord, vec4(0.0));
+#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+    plagueWriteCloudHistory(texelCoord, vec4(0.0), 0.0, 0u);
+#endif
+#endif
+}

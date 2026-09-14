@@ -119,26 +119,53 @@ implementation therefore adds tracing and mesh maintenance; it does not promise 
 Offline depth fixtures verify selection and filtering, while actual caster coverage, appearance and
 frame time require engine tests and the owner's client session.
 
-### 4. Clouds: 4 passes
+### 4. Clouds
 
-`clouds_march_volume` → `clouds_composite`, with
-`clouds_march_volume_full` / `clouds_composite_full` as the higher-quality pair. The compute march
+`clouds_candidates` → `clouds_march_volume` → `clouds_merge_layers` → `clouds_composite`, with
+quarter, half and three-quarter resolution variants. The compute march
 samples the pack's 3D shape volumes against the same sky model the dome uses, so the clouds and the
 light they cast agree. Global Minecraft rain and thunder strengths drive weather shape, while the
-camera precipitation type picks rain or snow. Each march writes paired targets: premultiplied colour
-in `cloudsVolumeCompute` and the first density-bearing ray distance in `cloudsVolumeDistance`, with
-full-resolution equivalents for the highest quality tier.
+camera precipitation type picks rain or snow. Each march writes seven pairs of full-float targets:
+premultiplied colour and first density-bearing ray distance, one pair per genus. The merge sorts
+these layers and writes `cloudsVolumeCompute` plus the contribution-weighted mean of their sampled
+front distances to `cloudsVolumeDistance`. Existing history and composite passes consume these
+merged outputs.
 Weather, cloud decks, lighting and hemisphere sampling run once per 16 × 16 workgroup. Each
 invocation keeps its own view direction, noise phase and ray samples; a barrier shares the setup
 before any invocation can exit at the edge of the image.
+The dispatch has seven Z workgroup planes, one per genus. Each invocation retains only its current
+layer while marching, preserving the independent dither phases, convective weather fade and sample
+budgets. Moving sorting to a separate pass removes the seven-result private arrays from the long
+density loop. Every missed or disabled genus writes zero so the merge cannot read a stale layer.
+The fourteen intermediate images use the same scale as the merged output; separate targets avoid
+atlas tile rounding errors at odd viewport sizes. Their float32 storage avoids an extra half-float
+quantization before merging, at a transient cost of 140 bytes per cloud pixel (about 141 MiB at
+1296 × 813). Only the selected resolution allocates these targets, and clouds Off allocates none.
 
-The composite samples the destination pixel's reversed-Z terrain depth, works out its terrain
-distance, and resolves the colour from four fixed diagonal cloud taps. Each tap fetches colour and
-front distance from the same exact source texel, because filtering the broken zero-sentinel distance
-would break their depth ordering. A non-empty tap counts only when its cloud front is in front of
-that destination geometry (or the destination is sky), and the sum is always divided by four. So the
-resolve neither borrows clouds from a neighbouring depth class nor grows them by renormalising the
-surviving taps at a silhouette.
+Before marching, `clouds_candidates` builds conservative membership masks for seven decks in a
+512 × 3585 R32F atlas. Each of the 512 × 512 deck tiles stores nine candidate bits; one extra row
+stores frame stamps. Ellipse/lobe bounds omit nonnegative patch and vertical penalties, retaining
+every candidate that could produce visible density anywhere in the tile. The march visits retained
+bits in the original order. An empty mask returns the sheet value and its erosion owner before
+evaluating unused patch noise. Rank and support checks run procedurally on cache misses; other cloud
+callers keep that original path. Both passes import the same frame/deck setup.
+
+Masks encode as 1 to 512, reserving zero for cleared/unavailable data. Wrong dimensions, malformed
+entries or a mismatched frame stamp fall back to the original field. The frame stamp uses the
+engine's wrapped frame counter, not a globally unique generation identifier. The atlas is rebuilt
+in graph order with compute write/read synchronization and has no temporal history. Candidate
+culling changes work, not march resolution, sample counts, lighting, density or winning ownership.
+Offline GPU parity and dispatch measurements do not establish live FPS or stability in motion.
+
+The composite step works out how far the land and water are at each screen pixel, then reconstructs
+cloud colour from sixteen source pixels with positive cubic B-spline weights. The separable kernel
+is the convolution of four unit-area boxes; it smooths the source sampling grid while preserving
+constant colour and opacity. Each tap reads colour and front distance from the same source pixel.
+A tap contributes only when it sits in front of the destination land and water. Rejected taps
+contribute zero without renormalizing the remaining weights, avoiding inflated opacity at terrain
+edges. Premultiplied colour and opacity are filtered together, then converted to the straight colour
+format the next pass needs. The wider kernel softens silhouettes and does not resolve temporal
+aliasing already present in the density march.
 
 Cloud placement has two separate coordinate systems. The density volumes keep their fixed
 57.6-block world X/Z lobe frame, shear, wind and drift. A separate unwarped 230.4-block allocation
@@ -154,6 +181,12 @@ optical depth, horizontal footprint and profile smoothly instead; thunder may al
 candidates while keeping the accepted full-thunder population endpoint. No weather state moves the
 candidate sites. Each site also owns a small stable base-height offset, so single cumulus keep
 locally flat bases without the whole deck sharing one plane.
+
+Before evaluating a candidate's ellipse, lobes and vertical profile, the density query rejects
+sites outside a conservative support circle derived from its existing empty-density cutoff.
+The bound includes every lobe, ellipse stretch and floating-point slack; nearly zero orientation
+seeds bypass it because their normalization floor can collapse the frame. Sampling, lighting,
+cloud resolution and visible winning potentials are unchanged.
 
 `Cloud Size = 0.30` is the physical reference. Size changes physical depth and the isosurface bias
 inside each fixed owner potential; it never scales a radius, offset or noise coordinate. So the real
@@ -174,6 +207,16 @@ or sun tap is added. At the reference setting the dry deck resolves to 76.8 bloc
 advances six slab steps, and grazing rays are capped at 64 steps. These contracts aim at detached,
 flat-based cumulus groups with rounded vertical crowns rather than one continuous rolling layer. The
 shape and the control response are subject to owner live acceptance.
+
+Each step of the cloud ray march stays inside its own piece of the ray, even as later steps grow
+longer. Distance and the deck's step scale reduce its tier budget to a fixed four-sample slab floor
+and eight-step grazing cap floor. Those floors never rise with tier or morphology: doing so cancels
+the distance reduction. The low-detail mode halves the budget before these safety floors apply.
+The step count is always capped at the loop limit, even when rounding pushes it one step over.
+Sampling changes between frames only when engine temporal AA or cloud temporal smoothing is
+enabled. With both off, spatial dither stays fixed; movement can still reveal sampling aliasing.
+This uses the engine's `FX_TAA` compute preamble. Older engines that omit that fact retain the
+previous animated sequence until updated.
 
 Cloud lighting treats the density as a medium light passes through rather than a normal-mapped
 surface. Each quality tier keeps its coarse direct-light fan. The fan's accumulated optical depth is

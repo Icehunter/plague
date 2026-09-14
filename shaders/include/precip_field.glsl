@@ -138,14 +138,22 @@ const float PLAGUE_PRECIP_REACH =
         float(PLAGUE_PRECIP_GRID << PLAGUE_PRECIP_CELL_STRIDE_LOG2) * 0.5
         - PLAGUE_PRECIP_NEIGHBOURHOOD;
 
-/**
- * Pull a sample column inside the window, for a caller sampling away from the camera.
- *
- * Gating on coverage instead drops the caller's term along the square's edge, drawing a hard tilted
- * line. Clamping lets a far column inherit the nearest one the field knows.
- */
+// Round the clamp over one interpolation cell on each side of the former boundary. The width
+// comes from the uploaded field's cell footprint; farther interior columns stay bit-identical.
+const float PLAGUE_PRECIP_CLAMP_HALF_BAND = float(1 << PLAGUE_PRECIP_CELL_STRIDE_LOG2);
+
+/** Keep distant columns inside the field without stopping its gradient on a straight line. */
 vec2 plaguePrecipClampColumn(vec2 worldXZ, vec2 cameraXZ) {
-    return clamp(worldXZ, cameraXZ - PLAGUE_PRECIP_REACH, cameraXZ + PLAGUE_PRECIP_REACH);
+    vec2 delta = worldXZ - cameraXZ;
+    vec2 distance = abs(delta);
+    float inner = PLAGUE_PRECIP_REACH - PLAGUE_PRECIP_CLAMP_HALF_BAND;
+    vec2 t = clamp((distance - inner) / (2.0 * PLAGUE_PRECIP_CLAMP_HALF_BAND), 0.0, 1.0);
+    // Integrating a slope that falls linearly from 1 to 0 gives this quadratic. It joins the
+    // identity at reach-band and the original constant extent at reach+band with matching slopes.
+    vec2 remaining = 1.0 - t;
+    vec2 rounded = PLAGUE_PRECIP_REACH - PLAGUE_PRECIP_CLAMP_HALF_BAND * remaining * remaining;
+    vec2 bounded = cameraXZ + sign(delta) * rounded;
+    return mix(worldXZ, bounded, greaterThan(distance, vec2(inner)));
 }
 
 /**

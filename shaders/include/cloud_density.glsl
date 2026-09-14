@@ -64,10 +64,9 @@ vec2 plagueCloudAllocationCoord(vec2 worldXZ, float cell, float shear, float axi
     return q;
 }
 
-vec2 plagueCloudSampleCoord(vec2 worldXZ, float cell, float shear, float axisSwing, float veer,
-                            vec2 drift) {
-    vec2 q = plagueCloudAllocationCoord(worldXZ, cell, shear, axisSwing, veer, drift);
-
+// Warp the same allocation coordinate used for candidate selection. Rebuilding its world
+// transform here repeats the shear-axis noise in both visible-density and sunlight samples.
+vec2 plagueCloudSampleCoord(vec2 q) {
     vec2 warpCoord = q / PLAGUE_CLOUD_WEATHER_CLOUDS;
     vec2 warp = vec2(plagueSkyFbm(warpCoord, 2),
                       plagueSkyFbm(warpCoord + vec2(31.7, 57.3), 2)) - 0.5;
@@ -103,6 +102,10 @@ const float PLAGUE_CLOUD_MORPHOLOGY_PENALTY = 0.36;
 // flat condensation base.
 const float PLAGUE_CLOUD_MORPHOLOGY_VERTICAL_PENALTY = 0.52;
 const float PLAGUE_CLOUD_SIZE_DENSITY_GAIN = 0.24;
+
+// Conservative roundoff budget: 64 binary32 epsilons cover the bound's arithmetic, ellipse
+// normalization and profile rounding. This expands support only; it never changes sampled density.
+const float PLAGUE_CLOUD_CANDIDATE_BOUND_ERROR = 64.0 / 8388608.0;
 
 // A sheet's own feature size. deck.cell is 57.6 blocks, sized for cumulus, and cannot change per
 // form: a moving world-coordinate divisor rephases the field around world origin. The sheet's large
@@ -181,6 +184,164 @@ float plagueCloudHeightProfile(float h, float family);
  * frame and texture coordinates are fixed. More Amount can only raise the max; more Size raises
  * the potential but never widens the shape. `ownerH` belongs to the winner and feeds only
  * height-modulated erosion. */
+#if defined(PLAGUE_CLOUD_CANDIDATE_CACHE_READ) || defined(PLAGUE_CLOUD_CANDIDATE_CACHE_BUILD)
+#moj_import <fornax_runtime:cloud_candidate_cache.glsl>
+#endif
+
+#ifdef PLAGUE_CLOUD_CANDIDATE_CACHE_READ
+float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudDeck deck,
+                                    out float ownerH) {
+    ownerH = -1.0;
+    if (deck.population <= 0.0) {
+        return -1e6;
+    }
+
+    vec2 allocationP = allocationQ / PLAGUE_CLOUD_ALLOCATION_PERIOD;
+    ivec2 baseCell = ivec2(floor(allocationP));
+    float radius = PLAGUE_CLOUD_MORPHOLOGY_RADIUS * deck.footprint;
+    float sizeBias = PLAGUE_CLOUD_SIZE_DENSITY_GAIN * log2(max(deck.sizeRatio, 1e-3));
+
+    // A stratiform deck is a layer, not a scatter of candidates. Seeding the union with the deck's
+    // floor keeps every position eligible, so the base volume decides where the sheet is thick and
+    // candidates ride on top as ragged base variation. The floor takes the same vertical penalty
+    // candidates do, so the sheet closes at its own top and base instead of on a flat lid. A
+    // convective deck's floor sits far below the early-out, giving back the candidate-only field.
+    uint cachedCandidateMask = 511u; // All nine candidates in original traversal order.
+    bool cachedCandidateValid = false;
+    float cachedCandidateUpper;
+    if (plagueCloudCandidateCachedMask(allocationQ, cachedCandidateUpper)
+            && cachedCandidateUpper >= 0.0 && cachedCandidateUpper <= 511.0) {
+        cachedCandidateValid = true;
+        cachedCandidateMask = uint(cachedCandidateUpper);
+    }
+
+
+    float bestPotential = -1e6;
+    float sheetH = (worldY - deck.base) / max(deck.depth, 1e-3);
+    if (deck.sheetFloor > -1.0 && sheetH > 0.0 && sheetH < 1.0) {
+        // Per position, not a constant: a uniform floor is a flat lid. Drift rides in through
+        // allocationQ, so thick and thin parts move with the deck.
+        float sheetVary = plagueSkyFbm(allocationQ / PLAGUE_CLOUD_SHEET_SCALE, 2);
+        bestPotential = deck.sheetFloor
+                      - PLAGUE_CLOUD_SHEET_VARIATION * (1.0 - sheetVary)
+                      - PLAGUE_CLOUD_MORPHOLOGY_VERTICAL_PENALTY
+                      * (1.0 - plagueCloudHeightProfile(sheetH, deck.family));
+        ownerH = sheetH;
+    }
+
+
+    // Retained bits may contribute visible density; invalid or missing masks retain all candidates.
+    // A certified empty candidate mask still returns the exact sheet value and erosion owner.
+    if (cachedCandidateValid && cachedCandidateMask == 0u) return bestPotential;
+    // Where this genus exists at all. Taken off every candidate's potential, so a low patch pushes
+    // the neighbourhood under the cutoff and leaves open sky instead of thinning cells evenly.
+    // Costs one fbm on decks that ask for it and nothing on decks that do not.
+    float patchGate = 0.0;
+    if (deck.patchiness > 0.0) {
+        // deck.cell takes allocationQ back to world blocks. Shear and drift ride along, stretching
+        // a patch downwind and moving it.
+        patchGate = deck.patchiness
+                  * (1.0 - plagueSkyFbm(allocationQ * deck.cell / PLAGUE_CLOUD_PATCH_BLOCKS, 2));
+    }
+
+    // Every candidate takes shape penalties off this bound, and those are never negative. A
+    // tie keeps the sheet owner, so a beaten candidate cannot move density or erosion height.
+    if (ownerH >= 0.0 && bestPotential >= sizeBias + deck.convectiveLift - patchGate) return bestPotential;
+    float support = 0.0;
+    if (!cachedCandidateValid) {
+    // Triangle inequality bounds the union of all three local lobes by centre radius plus
+    // the largest lobe radius times sqrt(allowable quadratic penalty). The inverse ellipse
+    // stretches distance by at most max(aspect, 1/aspect); its rotation preserves length.
+    // Use density's empty cutoff, not the running winner: one bound serves all nine sites.
+    // This skips only sites that the existing density early-out would discard anyway.
+    float boundCentreRadius = abs(radius) * length(PLAGUE_CLOUD_MORPHOLOGY_LOBE_OFFSET);
+    float boundLobeRadius = max(radius * max(PLAGUE_CLOUD_MORPHOLOGY_CORE_RADIUS,
+            max(PLAGUE_CLOUD_MORPHOLOGY_SIDE_RADIUS, PLAGUE_CLOUD_MORPHOLOGY_CROWN_RADIUS)), 1e-3);
+    float boundEllipseStretch = max(PLAGUE_CLOUD_MORPHOLOGY_ASPECT_MAX,
+                                    1.0 / PLAGUE_CLOUD_MORPHOLOGY_ASPECT_MIN);
+    float boundPeak = sizeBias + deck.convectiveLift - patchGate;
+    float boundPotentialError = PLAGUE_CLOUD_CANDIDATE_BOUND_ERROR
+            * max(1.0, abs(sizeBias) + abs(deck.convectiveLift) + abs(patchGate)
+                    + abs(deck.cut) + abs(PLAGUE_CLOUD_FIELD_TOP)
+                    + PLAGUE_CLOUD_MORPHOLOGY_VERTICAL_PENALTY);
+
+    float boundTarget = deck.cut - PLAGUE_CLOUD_FIELD_TOP;
+    float allowedMetric = max(boundPeak - boundTarget + boundPotentialError, 0.0)
+                        / PLAGUE_CLOUD_MORPHOLOGY_PENALTY;
+    support = (boundCentreRadius + boundLobeRadius * sqrt(allowedMetric))
+                  * boundEllipseStretch;
+    support += PLAGUE_CLOUD_CANDIDATE_BOUND_ERROR * max(support, 1.0);
+
+    }
+    for (uint remainingCandidates = cachedCandidateMask; remainingCandidates != 0u;
+            remainingCandidates &= remainingCandidates - 1u) {
+            int candidateIndex = findLSB(remainingCandidates);
+            int x = candidateIndex / 3 - 1;
+            int z = candidateIndex % 3 - 1;
+            ivec2 cellId = baseCell + ivec2(x, z);
+            if (!cachedCandidateValid) {
+                float rank = plagueCloudCandidateHash(cellId + PLAGUE_CLOUD_RANK_SALT, 2u);
+                if (rank >= deck.population) continue;
+            }
+
+            vec2 jitter = plagueCloudCandidateJitter(cellId);
+            vec2 site = vec2(cellId) + 0.5
+                      + (jitter - 0.5) * PLAGUE_CLOUD_SITE_JITTER;
+            vec2 delta = allocationP - site;
+            vec2 axisSeed = jitter * 2.0 - 1.0;
+
+            // A site outside this support cannot exceed density's empty cutoff. Equality stays
+            // on the original path; both potential allowance and support include roundoff slack.
+            // The normalization floor shortens almost-zero axes, invalidating the unit-ellipse
+            // bound. Such candidates must take the original path, however rare their hashes are.
+            if (!cachedCandidateValid && dot(axisSeed, axisSeed) >= 1e-6 && dot(delta, delta) > support * support) {
+                continue;
+            }
+
+            float candidateBase = deck.base
+                                + (jitter.y * 2.0 - 1.0) * PLAGUE_CLOUD_BASE_VARIATION;
+            float h = (worldY - candidateBase) / max(deck.depth, 1e-3);
+            if (h <= 0.0 || h >= 1.0) {
+                continue;
+            }
+
+            // The position hashes double as the ellipse angle and aspect seed. Scaling one axis by
+            // the reciprocal of the other keeps the area while changing the outline.
+            vec2 axis = axisSeed * inversesqrt(max(dot(axisSeed, axisSeed), 1e-6));
+            vec2 perpendicular = vec2(-axis.y, axis.x);
+            float aspect = mix(PLAGUE_CLOUD_MORPHOLOGY_ASPECT_MIN,
+                               PLAGUE_CLOUD_MORPHOLOGY_ASPECT_MAX, jitter.x);
+            vec2 local = vec2(dot(delta, axis) / aspect,
+                              dot(delta, perpendicular) * aspect);
+
+            // Hash signs mirror the same three-lobe shape per owner. Weather footprint scales this
+            // frame; Size does not, and reaches only sizeBias above.
+            vec2 lobeOffset = radius * PLAGUE_CLOUD_MORPHOLOGY_LOBE_OFFSET
+                            * vec2(jitter.x < 0.5 ? -1.0 : 1.0,
+                                   jitter.y < 0.5 ? -1.0 : 1.0);
+            vec2 crownOffset = vec2(-lobeOffset.y, lobeOffset.x);
+
+            float horizontalMetric = plagueCloudPotentialLobe(
+                    local, vec2(0.0), radius * PLAGUE_CLOUD_MORPHOLOGY_CORE_RADIUS);
+            horizontalMetric = min(horizontalMetric, plagueCloudPotentialLobe(
+                    local, lobeOffset, radius * PLAGUE_CLOUD_MORPHOLOGY_SIDE_RADIUS));
+            horizontalMetric = min(horizontalMetric, plagueCloudPotentialLobe(
+                    local, crownOffset, radius * PLAGUE_CLOUD_MORPHOLOGY_CROWN_RADIUS));
+
+            float profile = plagueCloudHeightProfile(h, deck.family);
+            float candidatePotential = sizeBias + deck.convectiveLift - patchGate
+                                      - PLAGUE_CLOUD_MORPHOLOGY_PENALTY * horizontalMetric
+                                      - PLAGUE_CLOUD_MORPHOLOGY_VERTICAL_PENALTY
+                                      * (1.0 - profile);
+            if (candidatePotential > bestPotential) {
+                bestPotential = candidatePotential;
+                ownerH = h;
+            }
+    }
+    return bestPotential;
+}
+
+#else
 float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudDeck deck,
                                     out float ownerH) {
     ownerH = -1.0;
@@ -225,6 +386,29 @@ float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudD
         if (bestPotential >= sizeBias + deck.convectiveLift - patchGate) return bestPotential;
     }
 
+    // Triangle inequality bounds the union of all three local lobes by centre radius plus
+    // the largest lobe radius times sqrt(allowable quadratic penalty). The inverse ellipse
+    // stretches distance by at most max(aspect, 1/aspect); its rotation preserves length.
+    // Use density's empty cutoff, not the running winner: one bound serves all nine sites.
+    // This skips only sites that the existing density early-out would discard anyway.
+    float boundCentreRadius = abs(radius) * length(PLAGUE_CLOUD_MORPHOLOGY_LOBE_OFFSET);
+    float boundLobeRadius = max(radius * max(PLAGUE_CLOUD_MORPHOLOGY_CORE_RADIUS,
+            max(PLAGUE_CLOUD_MORPHOLOGY_SIDE_RADIUS, PLAGUE_CLOUD_MORPHOLOGY_CROWN_RADIUS)), 1e-3);
+    float boundEllipseStretch = max(PLAGUE_CLOUD_MORPHOLOGY_ASPECT_MAX,
+                                    1.0 / PLAGUE_CLOUD_MORPHOLOGY_ASPECT_MIN);
+    float boundPeak = sizeBias + deck.convectiveLift - patchGate;
+    float boundPotentialError = PLAGUE_CLOUD_CANDIDATE_BOUND_ERROR
+            * max(1.0, abs(sizeBias) + abs(deck.convectiveLift) + abs(patchGate)
+                    + abs(deck.cut) + abs(PLAGUE_CLOUD_FIELD_TOP)
+                    + PLAGUE_CLOUD_MORPHOLOGY_VERTICAL_PENALTY);
+
+    float boundTarget = deck.cut - PLAGUE_CLOUD_FIELD_TOP;
+    float allowedMetric = max(boundPeak - boundTarget + boundPotentialError, 0.0)
+                        / PLAGUE_CLOUD_MORPHOLOGY_PENALTY;
+    float support = (boundCentreRadius + boundLobeRadius * sqrt(allowedMetric))
+                  * boundEllipseStretch;
+    support += PLAGUE_CLOUD_CANDIDATE_BOUND_ERROR * max(support, 1.0);
+
     for (int x = -1; x <= 1; x++) {
         for (int z = -1; z <= 1; z++) {
             ivec2 cellId = baseCell + ivec2(x, z);
@@ -234,6 +418,19 @@ float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudD
             }
 
             vec2 jitter = plagueCloudCandidateJitter(cellId);
+            vec2 site = vec2(cellId) + 0.5
+                      + (jitter - 0.5) * PLAGUE_CLOUD_SITE_JITTER;
+            vec2 delta = allocationP - site;
+            vec2 axisSeed = jitter * 2.0 - 1.0;
+
+            // A site outside this support cannot exceed density's empty cutoff. Equality stays
+            // on the original path; both potential allowance and support include roundoff slack.
+            // The normalization floor shortens almost-zero axes, invalidating the unit-ellipse
+            // bound. Such candidates must take the original path, however rare their hashes are.
+            if (dot(axisSeed, axisSeed) >= 1e-6 && dot(delta, delta) > support * support) {
+                continue;
+            }
+
             float candidateBase = deck.base
                                 + (jitter.y * 2.0 - 1.0) * PLAGUE_CLOUD_BASE_VARIATION;
             float h = (worldY - candidateBase) / max(deck.depth, 1e-3);
@@ -241,13 +438,8 @@ float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudD
                 continue;
             }
 
-            vec2 site = vec2(cellId) + 0.5
-                      + (jitter - 0.5) * PLAGUE_CLOUD_SITE_JITTER;
-            vec2 delta = allocationP - site;
-
             // The position hashes double as the ellipse angle and aspect seed. Scaling one axis by
             // the reciprocal of the other keeps the area while changing the outline.
-            vec2 axisSeed = jitter * 2.0 - 1.0;
             vec2 axis = axisSeed * inversesqrt(max(dot(axisSeed, axisSeed), 1e-6));
             vec2 perpendicular = vec2(-axis.y, axis.x);
             float aspect = mix(PLAGUE_CLOUD_MORPHOLOGY_ASPECT_MIN,
@@ -282,6 +474,8 @@ float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudD
     }
     return bestPotential;
 }
+
+#endif
 
 // HOW FAST AIR CONDENSES ONCE IT IS INSIDE A CLOUD, as a fraction of the field's surviving range.
 // A cloud edge is a phase change, not a gradient: water content jumps at the edge then varies
@@ -517,8 +711,7 @@ float plagueCloudDensityAt(vec3 worldPos, PlagueCloudDeck deck, vec2 drift) {
         return 0.0;
     }
 
-    vec2 q = plagueCloudSampleCoord(shearedXZ, deck.cell, deck.shear, deck.axisSwing, deck.veer,
-                                    drift);
+    vec2 q = plagueCloudSampleCoord(allocationQ);
     // Height above the shared reference base keeps the volume phase fixed; ownerH carries each
     // candidate's own flat base and vertical shape.
     float noiseY = (worldPos.y - deck.base) / plagueCloudHeightRef(deck);
@@ -556,8 +749,7 @@ float plagueCloudDensityCoarseIn(vec3 worldPos, PlagueCloudDeck deck, vec2 drift
     if (potential <= deck.cut - PLAGUE_CLOUD_FIELD_TOP) {
         return 0.0;
     }
-    vec2 q = plagueCloudSampleCoord(shearedXZ, deck.cell, deck.shear, deck.axisSwing, deck.veer,
-                                    drift);
+    vec2 q = plagueCloudSampleCoord(allocationQ);
     float noiseY = (worldPos.y - deck.base) / plagueCloudHeightRef(deck);
     float baseShape = plagueCloudBaseShape(vec3(q.x, noiseY, q.y), deck);
     return plagueCloudCoverage(baseShape, deck, potential);

@@ -715,6 +715,25 @@ width = 32
 height = 32
 format = "r8"
 
+# Rebuilt before every march. Storage dependency makes the completed atlas visible to all
+# resolution/history variants. A stale atlas could erase clouds silently, so it has no history.
+[targets.cloudCandidateMask]
+format = "r32f"
+width = 512
+height = 3585
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC"
+
+[[pass]]
+name = "clouds_candidates"
+type = "compute"
+shader = "shaders/compute/clouds_candidates.comp"
+enabled_if = "CLOUDS_VOLUMETRIC"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance"]
+outputs = ["cloudCandidateMask"]
+
 [targets.cloudsVolumeCompute]
 format = "rgba16f"
 scale = 0.5
@@ -729,17 +748,112 @@ filter = "linear"
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
 
+# Seven independent layers retain float32 march results until the merge.
+# Same-size targets avoid scaled-atlas rounding errors at odd viewport dimensions.
+[targets.cloudsLayerColour0]
+format = "rgba32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerFront0]
+format = "r32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerColour1]
+format = "rgba32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerFront1]
+format = "r32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerColour2]
+format = "rgba32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerFront2]
+format = "r32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerColour3]
+format = "rgba32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerFront3]
+format = "r32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerColour4]
+format = "rgba32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerFront4]
+format = "r32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerColour5]
+format = "rgba32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerFront5]
+format = "r32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerColour6]
+format = "rgba32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+[targets.cloudsLayerFront6]
+format = "r32f"
+scale = 0.5
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
 [[pass]]
 name = "clouds_march_volume"
 type = "compute"
 shader = "shaders/compute/clouds_march_volume.comp"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+local_size = [16, 16]
+# X/Y follow the first layer target; Z assigns one workgroup plane to each of seven decks.
+dispatch = [1, 1, 7]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask"]
+outputs = ["cloudsLayerColour0", "cloudsLayerFront0", "cloudsLayerColour1", "cloudsLayerFront1", "cloudsLayerColour2", "cloudsLayerFront2", "cloudsLayerColour3", "cloudsLayerFront3", "cloudsLayerColour4", "cloudsLayerFront4", "cloudsLayerColour5", "cloudsLayerFront5", "cloudsLayerColour6", "cloudsLayerFront6"]
+
+[[pass]]
+name = "clouds_merge_layers"
+type = "compute"
+shader = "shaders/compute/clouds_merge_layers.comp"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && PLAGUE_CLOUD_HISTORY_DEBUG == 0 && PLAGUE_CLOUD_TEMPORAL == 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-# dispatch above is an unused placeholder: local_size makes the engine derive real group counts
-# from cloudsVolumeCompute's own resolved pixel size every dispatch (ComputePassRunner), which is
-# what lets this pass track window resize the same way its own 0.5 scale factor already does.
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
+          "cloudsLayerColour0", "cloudsLayerFront0", "cloudsLayerColour1", "cloudsLayerFront1", "cloudsLayerColour2", "cloudsLayerFront2", "cloudsLayerColour3", "cloudsLayerFront3", "cloudsLayerColour4", "cloudsLayerFront4", "cloudsLayerColour5", "cloudsLayerFront5", "cloudsLayerColour6", "cloudsLayerFront6"]
 outputs = ["cloudsVolumeCompute", "cloudsVolumeDistance"]
 
 [targets.cloudHistory]
@@ -780,16 +894,14 @@ storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && PLAGUE_CLOUD_HISTORY_DEBUG != 0"
 
 [[pass]]
-name = "clouds_march_volume_history"
+name = "clouds_merge_layers_history"
 type = "compute"
-shader = "shaders/compute/clouds_march_volume.comp"
+shader = "shaders/compute/clouds_merge_layers.comp"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-# dispatch above is an unused placeholder: local_size makes the engine derive real group counts
-# from cloudsVolumeCompute's own resolved pixel size every dispatch (ComputePassRunner), which is
-# what lets this pass track window resize the same way its own 0.5 scale factor already does.
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
+          "cloudsLayerColour0", "cloudsLayerFront0", "cloudsLayerColour1", "cloudsLayerFront1", "cloudsLayerColour2", "cloudsLayerFront2", "cloudsLayerColour3", "cloudsLayerFront3", "cloudsLayerColour4", "cloudsLayerFront4", "cloudsLayerColour5", "cloudsLayerFront5", "cloudsLayerColour6", "cloudsLayerFront6"]
 outputs = ["cloudsVolumeCompute", "cloudsVolumeDistance", "cloudHistory", "cloudHistoryData", "cloudHistoryDistance", "cloudHistoryState"]
 
 [[pass]]
@@ -857,14 +969,112 @@ filter = "linear"
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
 
+# Seven independent layers retain float32 march results until the merge.
+# Same-size targets avoid scaled-atlas rounding errors at odd viewport dimensions.
+[targets.cloudsLayerColour0Quarter]
+format = "rgba32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerFront0Quarter]
+format = "r32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerColour1Quarter]
+format = "rgba32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerFront1Quarter]
+format = "r32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerColour2Quarter]
+format = "rgba32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerFront2Quarter]
+format = "r32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerColour3Quarter]
+format = "rgba32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerFront3Quarter]
+format = "r32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerColour4Quarter]
+format = "rgba32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerFront4Quarter]
+format = "r32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerColour5Quarter]
+format = "rgba32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerFront5Quarter]
+format = "r32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerColour6Quarter]
+format = "rgba32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+[targets.cloudsLayerFront6Quarter]
+format = "r32f"
+scale = 0.25
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
 [[pass]]
 name = "clouds_march_volume_quarter"
 type = "compute"
 shader = "shaders/compute/clouds_march_volume.comp"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+local_size = [16, 16]
+# X/Y follow the first layer target; Z assigns one workgroup plane to each of seven decks.
+dispatch = [1, 1, 7]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask"]
+outputs = ["cloudsLayerColour0Quarter", "cloudsLayerFront0Quarter", "cloudsLayerColour1Quarter", "cloudsLayerFront1Quarter", "cloudsLayerColour2Quarter", "cloudsLayerFront2Quarter", "cloudsLayerColour3Quarter", "cloudsLayerFront3Quarter", "cloudsLayerColour4Quarter", "cloudsLayerFront4Quarter", "cloudsLayerColour5Quarter", "cloudsLayerFront5Quarter", "cloudsLayerColour6Quarter", "cloudsLayerFront6Quarter"]
+
+[[pass]]
+name = "clouds_merge_layers_quarter"
+type = "compute"
+shader = "shaders/compute/clouds_merge_layers.comp"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && PLAGUE_CLOUD_HISTORY_DEBUG == 0 && PLAGUE_CLOUD_TEMPORAL == 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
+          "cloudsLayerColour0Quarter", "cloudsLayerFront0Quarter", "cloudsLayerColour1Quarter", "cloudsLayerFront1Quarter", "cloudsLayerColour2Quarter", "cloudsLayerFront2Quarter", "cloudsLayerColour3Quarter", "cloudsLayerFront3Quarter", "cloudsLayerColour4Quarter", "cloudsLayerFront4Quarter", "cloudsLayerColour5Quarter", "cloudsLayerFront5Quarter", "cloudsLayerColour6Quarter", "cloudsLayerFront6Quarter"]
 outputs = ["cloudsVolumeComputeQuarter", "cloudsVolumeDistanceQuarter"]
 
 [targets.cloudHistoryQuarter]
@@ -905,13 +1115,14 @@ storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && PLAGUE_CLOUD_HISTORY_DEBUG != 0"
 
 [[pass]]
-name = "clouds_march_volume_quarter_history"
+name = "clouds_merge_layers_quarter_history"
 type = "compute"
-shader = "shaders/compute/clouds_march_volume.comp"
+shader = "shaders/compute/clouds_merge_layers.comp"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
+          "cloudsLayerColour0Quarter", "cloudsLayerFront0Quarter", "cloudsLayerColour1Quarter", "cloudsLayerFront1Quarter", "cloudsLayerColour2Quarter", "cloudsLayerFront2Quarter", "cloudsLayerColour3Quarter", "cloudsLayerFront3Quarter", "cloudsLayerColour4Quarter", "cloudsLayerFront4Quarter", "cloudsLayerColour5Quarter", "cloudsLayerFront5Quarter", "cloudsLayerColour6Quarter", "cloudsLayerFront6Quarter"]
 outputs = ["cloudsVolumeComputeQuarter", "cloudsVolumeDistanceQuarter", "cloudHistoryQuarter", "cloudHistoryDataQuarter", "cloudHistoryDistanceQuarter", "cloudHistoryStateQuarter"]
 
 [[pass]]
@@ -979,14 +1190,112 @@ filter = "linear"
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 
+# Seven independent layers retain float32 march results until the merge.
+# Same-size targets avoid scaled-atlas rounding errors at odd viewport dimensions.
+[targets.cloudsLayerColour0Full]
+format = "rgba32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront0Full]
+format = "r32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerColour1Full]
+format = "rgba32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront1Full]
+format = "r32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerColour2Full]
+format = "rgba32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront2Full]
+format = "r32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerColour3Full]
+format = "rgba32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront3Full]
+format = "r32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerColour4Full]
+format = "rgba32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront4Full]
+format = "r32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerColour5Full]
+format = "rgba32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront5Full]
+format = "r32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerColour6Full]
+format = "rgba32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront6Full]
+format = "r32f"
+scale = 0.75
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
 [[pass]]
 name = "clouds_march_volume_full"
 type = "compute"
 shader = "shaders/compute/clouds_march_volume.comp"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+local_size = [16, 16]
+# X/Y follow the first layer target; Z assigns one workgroup plane to each of seven decks.
+dispatch = [1, 1, 7]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask"]
+outputs = ["cloudsLayerColour0Full", "cloudsLayerFront0Full", "cloudsLayerColour1Full", "cloudsLayerFront1Full", "cloudsLayerColour2Full", "cloudsLayerFront2Full", "cloudsLayerColour3Full", "cloudsLayerFront3Full", "cloudsLayerColour4Full", "cloudsLayerFront4Full", "cloudsLayerColour5Full", "cloudsLayerFront5Full", "cloudsLayerColour6Full", "cloudsLayerFront6Full"]
+
+[[pass]]
+name = "clouds_merge_layers_full"
+type = "compute"
+shader = "shaders/compute/clouds_merge_layers.comp"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && PLAGUE_CLOUD_HISTORY_DEBUG == 0 && PLAGUE_CLOUD_TEMPORAL == 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
+          "cloudsLayerColour0Full", "cloudsLayerFront0Full", "cloudsLayerColour1Full", "cloudsLayerFront1Full", "cloudsLayerColour2Full", "cloudsLayerFront2Full", "cloudsLayerColour3Full", "cloudsLayerFront3Full", "cloudsLayerColour4Full", "cloudsLayerFront4Full", "cloudsLayerColour5Full", "cloudsLayerFront5Full", "cloudsLayerColour6Full", "cloudsLayerFront6Full"]
 outputs = ["cloudsVolumeComputeFull", "cloudsVolumeDistanceFull"]
 
 [targets.cloudHistoryFull]
@@ -1027,13 +1336,14 @@ storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && PLAGUE_CLOUD_HISTORY_DEBUG != 0"
 
 [[pass]]
-name = "clouds_march_volume_full_history"
+name = "clouds_merge_layers_full_history"
 type = "compute"
-shader = "shaders/compute/clouds_march_volume.comp"
+shader = "shaders/compute/clouds_merge_layers.comp"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance"]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
+          "cloudsLayerColour0Full", "cloudsLayerFront0Full", "cloudsLayerColour1Full", "cloudsLayerFront1Full", "cloudsLayerColour2Full", "cloudsLayerFront2Full", "cloudsLayerColour3Full", "cloudsLayerFront3Full", "cloudsLayerColour4Full", "cloudsLayerFront4Full", "cloudsLayerColour5Full", "cloudsLayerFront5Full", "cloudsLayerColour6Full", "cloudsLayerFront6Full"]
 outputs = ["cloudsVolumeComputeFull", "cloudsVolumeDistanceFull", "cloudHistoryFull", "cloudHistoryDataFull", "cloudHistoryDistanceFull", "cloudHistoryStateFull"]
 
 [[pass]]

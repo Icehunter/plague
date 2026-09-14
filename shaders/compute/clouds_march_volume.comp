@@ -1,226 +1,62 @@
 #version 450
-
-// The direct-view cloud march, as a compute pass: Vulkan's shader-reflection step for
-// FULLSCREEN/geometry pipelines (GlslCompiler.addToBindGroup) refuses any sampled texture whose
-// SPIR-V dimension isn't 2D or Cube, so the real 3D coverage/detail volumes (cloud_density.glsl)
-// can only be bound here, never from a fullscreen pass.
-
-#define FORNAX_COMPUTE_GLOBALS
-#define FORNAX_GLOBALS_BINDING 0
-#moj_import <fornax:globals.glsl>
-#moj_import <fornax_runtime:light_and_ambient_colors.glsl>
-#moj_import <fornax_runtime:light_options.glsl>
-#moj_import <fornax_runtime:sky.glsl>
-#moj_import <fornax_runtime:cloud_history.glsl>
-
+// March one genus per workgroup, avoiding seven live colour/front results in the march's private
+// working set. Float32 layer targets preserve march precision until the final merge.
+#define PLAGUE_CLOUD_CANDIDATE_CACHE_READ
+#moj_import <fornax_runtime:cloud_volume_frame.glsl>
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
-// Binding order mirrors graph.toml's declared inputs-then-outputs for this pass exactly:
-// 0 globals (above), 1 packOptions (auto-injected by the engine, no declaration needed here),
-// 2 cloudBaseShape, 3 cloudDetailShape, 4 precipCoarseClipmap, 5 atmoSkyView, 6 atmoTransmittance,
-// 7 colour, 8 cloud-front distance. Adding an input moves every output number after it.
-// Terrain visibility is resolved against the destination pixel in clouds_composite, so this compute
-// pass intentionally has no unused 2D depth descriptor mixed into its 3D-volume descriptor set.
-layout(set = 0, binding = 2) uniform sampler3D u_CloudBaseShapeVolume;
-layout(set = 0, binding = 3) uniform sampler3D u_CloudDetailShapeVolume;
-layout(std430, set = 0, binding = 4) readonly buffer PrecipCoarseClipmap {
-    int words[];
-} precipCoarseClipmap;
-// Filled by the atmosphere passes before the cloud march.
-layout(rgba16f, set = 0, binding = 5) uniform readonly image2D u_SkyView;
-layout(rgba16f, set = 0, binding = 6) uniform readonly image2D u_Transmittance;
-layout(rgba16f, set = 0, binding = 7) uniform writeonly image2D u_OutClouds;
-layout(r32f, set = 0, binding = 8) uniform writeonly image2D u_OutCloudDistance;
+// Seven interleaved colour/front pairs, in the original genus order.
+// dispatch.z MUST be seven: an omitted genus leaves stale pixels. Every disabled or missed genus
+// must overwrite its own targets with zero on every dispatch.
+layout(rgba32f, set = 0, binding = 8) uniform writeonly image2D u_CloudLayer0Colour;
+layout(r32f, set = 0, binding = 9) uniform writeonly image2D u_CloudLayer0Front;
+layout(rgba32f, set = 0, binding = 10) uniform writeonly image2D u_CloudLayer1Colour;
+layout(r32f, set = 0, binding = 11) uniform writeonly image2D u_CloudLayer1Front;
+layout(rgba32f, set = 0, binding = 12) uniform writeonly image2D u_CloudLayer2Colour;
+layout(r32f, set = 0, binding = 13) uniform writeonly image2D u_CloudLayer2Front;
+layout(rgba32f, set = 0, binding = 14) uniform writeonly image2D u_CloudLayer3Colour;
+layout(r32f, set = 0, binding = 15) uniform writeonly image2D u_CloudLayer3Front;
+layout(rgba32f, set = 0, binding = 16) uniform writeonly image2D u_CloudLayer4Colour;
+layout(r32f, set = 0, binding = 17) uniform writeonly image2D u_CloudLayer4Front;
+layout(rgba32f, set = 0, binding = 18) uniform writeonly image2D u_CloudLayer5Colour;
+layout(r32f, set = 0, binding = 19) uniform writeonly image2D u_CloudLayer5Front;
+layout(rgba32f, set = 0, binding = 20) uniform writeonly image2D u_CloudLayer6Colour;
+layout(r32f, set = 0, binding = 21) uniform writeonly image2D u_CloudLayer6Front;
 
-#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
-// Raw history writers append outputs, leaving all original bindings intact.
-layout(rgba16f, set = 0, binding = 9) uniform writeonly image2D u_OutCloudHistory;
-layout(r32f, set = 0, binding = 10) uniform writeonly image2D u_OutCloudHistoryData;
-layout(r32f, set = 0, binding = 11) uniform writeonly image2D u_OutCloudHistoryDistance;
-layout(r32f, set = 0, binding = 12) uniform writeonly image2D u_OutCloudHistoryState;
-#endif
-
-#define PLAGUE_CLOUD_NOISE_3D(uvw) texture(u_CloudBaseShapeVolume, uvw)
-#define PLAGUE_CLOUD_DETAIL_3D(uvw) texture(u_CloudDetailShapeVolume, uvw)
-#define PLAGUE_PRECIP_CLIPMAP(slot) precipCoarseClipmap.words[slot]
-#define PLAGUE_ATMO_READS_SKYVIEW
-#define PLAGUE_ATMO_READS_TRANSMITTANCE
-#if PLAGUE_CLOUD_TEMPORAL == 2
-#define PLAGUE_CLOUD_REDUCED_MARCH
-#endif
-#moj_import <fornax_runtime:clouds.glsl>
-
-vec4 plagueAtmoFetchSkyView(vec2 uv) {
-    ivec2 i0;
-    ivec2 i1;
-    vec2 f;
-    plagueAtmoBilinearSetup(uv, imageSize(u_SkyView), i0, i1, f);
-    return plagueAtmoBilinearMix(imageLoad(u_SkyView, i0), imageLoad(u_SkyView, ivec2(i1.x, i0.y)),
-                                 imageLoad(u_SkyView, ivec2(i0.x, i1.y)), imageLoad(u_SkyView, i1), f);
-}
-
-vec4 plagueAtmoFetchTransmittance(vec2 uv) {
-    ivec2 i0;
-    ivec2 i1;
-    vec2 f;
-    plagueAtmoBilinearSetup(uv, imageSize(u_Transmittance), i0, i1, f);
-    return plagueAtmoBilinearMix(imageLoad(u_Transmittance, i0),
-                                 imageLoad(u_Transmittance, ivec2(i1.x, i0.y)),
-                                 imageLoad(u_Transmittance, ivec2(i0.x, i1.y)),
-                                 imageLoad(u_Transmittance, i1), f);
-}
-
-#if CLOUDS_VOLUMETRIC
-// Every value here comes from frame uniforms or the atmosphere tables, never the ray.
-// One invocation computes them for the whole workgroup; main's barrier shares the result.
-shared PlagueLighting lighting;
-shared PlagueCloudDeck convectiveDeck, stratiformDeck, sheetDeck, rollDeck;
-shared PlagueCloudDeck cirrusDeck, cirrocumulusDeck, altocumulusDeck;
-shared vec3 sunDirTrue, atmColorMult, ambientDome, upperMasks;
-shared float syncedTime, localRain, localThunder, stratiform, renderDistance;
-shared float lowSheet, lowRolls, cumulusOn, rainOn;
-
-void plaguePrepareCloudWorkgroup() {
-    PlagueCustomPalette palette = PlagueCustomPalette(
-            u_AtmPaletteNoonExponent, u_AtmPaletteNoonBrightness,
-            vec3(u_AtmPaletteSunsetTintR, u_AtmPaletteSunsetTintG, u_AtmPaletteSunsetTintB),
-            vec3(u_AtmPaletteNightR, u_AtmPaletteNightG, u_AtmPaletteNightB),
-            vec3(u_AtmPaletteRainDayR, u_AtmPaletteRainDayG, u_AtmPaletteRainDayB),
-            vec3(u_AtmPaletteRainNightR, u_AtmPaletteRainNightG, u_AtmPaletteRainNightB),
-            vec3(u_LightPaletteNoonR, u_LightPaletteNoonG, u_LightPaletteNoonB),
-            vec3(u_LightPaletteSunsetR, u_LightPaletteSunsetG, u_LightPaletteSunsetB),
-            u_LightPaletteSunsetWarmth,
-            vec3(u_LightPaletteNightR, u_LightPaletteNightG, u_LightPaletteNightB),
-            vec3(u_LightPaletteRainDayR, u_LightPaletteRainDayG, u_LightPaletteRainDayB),
-            vec3(u_LightPaletteRainNightR, u_LightPaletteRainNightG, u_LightPaletteRainNightB),
-            u_LightPaletteRainMagnitude);
-
-    // Compute passes never receive the fullscreen PassParams push constant's derived sun-elevation
-    // sine: that push constant's base 32 bytes carry texelSize/param2/param3/sunDir.xyz only, per
-    // ComputePassRunner, and .w is never written for a compute dispatch. Re-derived here from the
-    // true sun direction below: the Y component
-    // of a unit direction vector is the sine of its elevation by definition, so this is the exact
-    // same value under a different name, not an approximation.
-    sunDirTrue = dot(u_SkyCelestial.xyz, u_SkyCelestial.xyz) > 1e-6
-            ? normalize(u_SkyCelestial.xyz) : vec3(0.0, 1.0, 0.0);
-    float sunElevationSine = sunDirTrue.y;
-
-    syncedTime = u_SkyState.w * 0.05;
-
-    localRain = clamp(u_SkyState.x, 0.0, 1.0);
-    localThunder = clamp(u_FrameState.z, 0.0, 1.0);
-    float localSnowWeight = int(u_CameraSkyLight.y + 0.5) == 2 ? 1.0 : 0.0;
-
-    lighting = plagueOverworldLighting(
-            max(u_SkyColor.rgb, vec3(0.0)), sunElevationSine, u_SkyState.y,
-            localRain, u_ScreenBrightness, palette);
-
-    stratiform = plagueCloudTransitionDecks(
-            localRain,
-            localThunder,
-            clamp(u_FrameState.w, 0.0, 1.0),
-            localSnowWeight,
-            sunElevationSine,
-            syncedTime,
-            convectiveDeck,
-            stratiformDeck);
-
-    // u_Param2 is filled by the engine BY PASS NAME (see ComputePassRunner); this pass's name is
-    // not one the engine recognizes, so u_Param2 reads 0 here and this falls back to fog render
-    // distance.
-    renderDistance = max(u_RenderFog.y, 32.0);
-
-    atmColorMult = vec3(1.0);
-#ifdef ATM_COLOR_MULTS
-    atmColorMult = plagueAtmColorMult(lighting.noonFactor, lighting.sunVisibility2,
-            lighting.rainFactor,
-            vec3(u_AtmMorningR, u_AtmMorningG, u_AtmMorningB) * u_AtmMorningI,
-            vec3(u_AtmNoonR, u_AtmNoonG, u_AtmNoonB) * u_AtmNoonI,
-            vec3(u_AtmNightR, u_AtmNightG, u_AtmNightB) * u_AtmNightI,
-            vec3(u_AtmRainR, u_AtmRainG, u_AtmRainB) * u_AtmRainI);
-#endif
-
-    ambientDome = plagueAtmoSkyHemisphere(sunDirTrue, plagueAtmoCameraRadius());
-
-    // Three contributors, each marched only when it has something to draw: the convective low
-    // deck, the low etage's smooth forms, the deep precipitating object. Compositing premultiplied
-    // in ray order IS the union 1 - prod(1 - a), so forms coexist rather than trade. The smooth
-    // forms need their own march because deck.cell is five times coarser for a sheet and cannot
-    // move: a world-coordinate divisor rephases the field around world origin.
-    lowSheet = plagueCloudLowStratiform(localSnowWeight, sheetDeck);
-
-    lowRolls = plagueCloudStratocumulus(localSnowWeight, rollDeck);
-
-    plagueCloudUpperDecks(cirrusDeck, cirrocumulusDeck, altocumulusDeck, upperMasks);
-
-    cumulusOn = (u_CloudTierCumulus > 0.5 ? 1.0 : 0.0);
-    rainOn = (u_CloudTierNimbostratus > 0.5 ? 1.0 : 0.0);
-
-    // The End drops the two weather decks and keeps the sheets. A cumulus needs warm ground to rise
-    // off and a nimbostratus needs rain to drop, and a fair-weather heap over the void reads as a
-    // piece of the Overworld that followed you through the portal. Sheets carry no such claim: they
-    // pass as torn layers of the same medium the sky is made of, and without them the End has no
-    // cloud at all, since the high decks are thin and often not overhead.
-    float weatherDecks = u_WorldBounds.w == 3.0 ? 0.0 : 1.0;
-    cumulusOn *= weatherDecks;
-    rainOn *= weatherDecks;
-}
-#endif
-
-#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
-#define PLAGUE_CLOUD_HISTORY_WRITE_STATE
-#moj_import <fornax_runtime:cloud_history_state.glsl>
-
-void plagueStoreCloudHistoryState(int row, vec4 value) {
-    for (int lane = 0; lane < 4; lane++) {
-        imageStore(u_OutCloudHistoryState, ivec2(row, lane), vec4(value[lane]));
+// Each workgroup owns one genus. Constant image writes preserve the positional output ABI
+// without descriptor-array indexing; all fourteen targets use the same native pixel dimensions.
+void plagueStoreCloudLayer(int index, ivec2 pixel, vec4 colour, float front) {
+    switch (index) {
+        case 0:
+            imageStore(u_CloudLayer0Colour, pixel, colour);
+            imageStore(u_CloudLayer0Front, pixel, vec4(front));
+            break;
+        case 1:
+            imageStore(u_CloudLayer1Colour, pixel, colour);
+            imageStore(u_CloudLayer1Front, pixel, vec4(front));
+            break;
+        case 2:
+            imageStore(u_CloudLayer2Colour, pixel, colour);
+            imageStore(u_CloudLayer2Front, pixel, vec4(front));
+            break;
+        case 3:
+            imageStore(u_CloudLayer3Colour, pixel, colour);
+            imageStore(u_CloudLayer3Front, pixel, vec4(front));
+            break;
+        case 4:
+            imageStore(u_CloudLayer4Colour, pixel, colour);
+            imageStore(u_CloudLayer4Front, pixel, vec4(front));
+            break;
+        case 5:
+            imageStore(u_CloudLayer5Colour, pixel, colour);
+            imageStore(u_CloudLayer5Front, pixel, vec4(front));
+            break;
+        case 6:
+            imageStore(u_CloudLayer6Colour, pixel, colour);
+            imageStore(u_CloudLayer6Front, pixel, vec4(front));
+            break;
     }
 }
-
-void plagueWriteCloudHistoryState(ivec2 size) {
-    plagueStoreCloudHistoryState(0,
-               vec4(u_FrameState.x + 1.0, u_SkyState.w, vec2(size)));
-    plagueStoreCloudHistoryState(1, u_WorldBounds);
-    plagueStoreCloudHistoryState(2, u_WorldClock);
-    plagueStoreCloudHistoryState(3,
-               vec4(u_SkyState.x, u_FrameState.zw, u_SkyState.z));
-    plagueStoreCloudHistoryState(4,
-               vec4(u_ProjectionMatrix[0][0], u_ProjectionMatrix[1][1],
-                    u_ProjectionMatrix[2][2], u_ProjectionMatrix[3][2]));
-    plagueStoreCloudHistoryState(5,
-               vec4(u_ScreenBrightness, u_RenderFog.y, u_CameraSkyLight.yw));
-    for (int i = PLAGUE_CLOUD_HISTORY_DECK_ROW; i < PLAGUE_CLOUD_HISTORY_OPTION_ROW; i++) {
-        plagueStoreCloudHistoryState(i, vec4(0.0));
-    }
-#if CLOUDS_VOLUMETRIC
-    if (u_SkyState.z > 0.5) {
-        PlagueCloudDeck decks[PLAGUE_CLOUD_LAYERS] = PlagueCloudDeck[PLAGUE_CLOUD_LAYERS](
-            convectiveDeck, sheetDeck, stratiformDeck, rollDeck,
-            altocumulusDeck, cirrocumulusDeck, cirrusDeck);
-        for (int i = 0; i < PLAGUE_CLOUD_LAYERS; i++) {
-            plagueStoreCloudHistoryState(PLAGUE_CLOUD_HISTORY_DECK_ROW + i,
-                       vec4(decks[i].cell, decks[i].shear, decks[i].axisSwing,
-                            PLAGUE_CLOUD_WIND_SPEED * max(u_CloudSpeed, 0.0)
-                            / (max(decks[i].cell, 1e-3) * PLAGUE_CLOUD_WIND_LENGTH)));
-        }
-    }
-#endif
-    plagueStoreCloudHistoryState(PLAGUE_CLOUD_HISTORY_WIND_ROW,
-                                // Include the sample mode in frame compatibility, even if storage survives a reload.
-                                vec4(PLAGUE_CLOUD_WIND, PLAGUE_CLOUD_DRIFT_WRAP, float(PLAGUE_CLOUD_TEMPORAL)));
-    for (int i = PLAGUE_CLOUD_HISTORY_OPTION_ROW; i < PLAGUE_CLOUD_HISTORY_STATE_ROWS; i++) {
-        plagueStoreCloudHistoryState(i,
-                   plagueCloudHistoryOptions(i - PLAGUE_CLOUD_HISTORY_OPTION_ROW));
-    }
-}
-
-void plagueWriteCloudHistory(ivec2 pixel, vec4 colour, float distance, uint mask) {
-    imageStore(u_OutCloudHistory, pixel, colour);
-    // A per-pixel source stamp prevents cleared/reallocated or skipped images masquerading as history.
-    imageStore(u_OutCloudHistoryData, pixel, vec4(plagueCloudHistoryPack(mask, u_FrameState.x + 1.0)));
-    imageStore(u_OutCloudHistoryDistance, pixel, vec4(distance));
-}
-#endif
 
 void main() {
 #if CLOUDS_VOLUMETRIC
@@ -230,25 +66,18 @@ void main() {
     // Edge invocations must also reach this barrier. Returning early on bounds can stall the group.
     barrier();
 #endif
-    ivec2 outSize = imageSize(u_OutClouds);
+    // First output dimensions also drive the engine's x/y dispatch counts.
+    ivec2 outSize = imageSize(u_CloudLayer0Colour);
+    int cloudIndex = int(gl_WorkGroupID.z);
     ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(texelCoord, outSize))) {
         return;
     }
-#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
-    if (all(equal(texelCoord, ivec2(0)))) {
-        plagueWriteCloudHistoryState(outSize);
-    }
-#endif
 #if CLOUDS_VOLUMETRIC
     vec2 texCoord = (vec2(texelCoord) + 0.5) / vec2(outSize);
 
     if (u_SkyState.z <= 0.5) {
-        imageStore(u_OutClouds, texelCoord, vec4(0.0));
-        imageStore(u_OutCloudDistance, texelCoord, vec4(0.0));
-#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
-        plagueWriteCloudHistory(texelCoord, vec4(0.0), 0.0, 0u);
-#endif
+        plagueStoreCloudLayer(cloudIndex, texelCoord, vec4(0.0), 0.0);
         return;
     }
 
@@ -261,7 +90,14 @@ void main() {
     const float goldenRatio = 1.61803398875;
     float dither = 52.9829189
             * fract(0.06711056 * float(texelCoord.x) + 0.00583715 * float(texelCoord.y));
+    // Older engines omit FX_* from compute: preserve their existing sequence until updated.
+#if !defined(FX_TAA) || FX_TAA != 0 || PLAGUE_CLOUD_TEMPORAL != 0
     dither = fract(dither + goldenRatio * mod(u_FrameState.x, 3600.0));
+#else
+    // With no temporal consumer, changing the sample each frame only makes it flicker.
+    // Keep spatial dither; this does not filter aliasing during camera or cloud movement.
+    dither = fract(dither);
+#endif
 
     // The cutoff colour is directional, so each ray keeps its own sky lookup and grading.
     vec3 skyAlong = plagueAtmoSkyView(viewDir, sunDirTrue, plagueAtmoCameraRadius()).rgb;
@@ -269,128 +105,49 @@ void main() {
     skyAlong = plagueStormDarkenSky(skyAlong, viewDir.y, dot(viewDir, sunDirTrue), sunDirTrue.y,
                                     localRain, localThunder) * atmColorMult;
 
-    vec4 layer[PLAGUE_CLOUD_LAYERS];
-    float front[PLAGUE_CLOUD_LAYERS];
-    for (int i = 0; i < PLAGUE_CLOUD_LAYERS; i++) {
-        layer[i] = vec4(0.0);
-        front[i] = 0.0;
-    }
+    vec4 selectedLayer = vec4(0.0);
+    float selectedFront = 0.0;
 
-    // Own dither phase each: they walk the same ray, and a shared offset would put their samples
-    // on the same planes and correlate independent fields.
-    if (cumulusOn > 0.0 && stratiform < 1.0) {
-        // Faded by how far the sky has turned stratiform, so the convective deck hands over to the
-        // sheet by going away rather than by shrinking. Premultiplied, so scaling is a clean
-        // opacity change. Without it the layer also drew at full strength right up to the frame the
-        // gate closed, which is a cliff at stratiform 1.
-        layer[0] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, dither,
-                                   convectiveDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, front[0])
-                 * (1.0 - stratiform);
+    PlagueCloudDeck deck;
+    float phase = dither;
+    bool enabled;
+    if (cloudIndex == 0) {
+        deck = convectiveDeck;
+        enabled = cumulusOn > 0.0 && stratiform < 1.0;
+    } else if (cloudIndex == 1) {
+        deck = sheetDeck;
+        phase = fract(dither + 0.3333);
+        enabled = lowSheet > 0.0;
+    } else if (cloudIndex == 2) {
+        deck = stratiformDeck;
+        phase = fract(dither + 0.6667);
+        enabled = rainOn > 0.0 && stratiform > 0.0;
+    } else if (cloudIndex == 3) {
+        deck = rollDeck;
+        phase = fract(dither + 0.1667);
+        enabled = lowRolls > 0.0;
+    } else if (cloudIndex == 4) {
+        deck = altocumulusDeck;
+        phase = fract(dither + 0.5);
+        enabled = upperMasks.z > 0.0;
+    } else if (cloudIndex == 5) {
+        deck = cirrocumulusDeck;
+        phase = fract(dither + 0.8333);
+        enabled = upperMasks.y > 0.0;
+    } else {
+        deck = cirrusDeck;
+        phase = fract(dither + 0.25);
+        enabled = upperMasks.x > 0.0;
     }
-    if (lowSheet > 0.0) {
-        layer[1] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.3333),
-                                   sheetDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, front[1]);
+    if (enabled) {
+        plagueCloudCandidateDeckIndex = cloudIndex;
+        selectedLayer = plagueGetClouds(viewDir, u_CameraAbs, 0.0, phase,
+                deck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
+                renderDistance, selectedFront);
+        if (cloudIndex == 0) selectedLayer *= 1.0 - stratiform;
     }
-    // Nimbostratus on its own tier, not Stratus's: rain and thunder visibly fall out of this deck,
-    // so a shared gate takes the cloud out from under a storm.
-    if (rainOn > 0.0 && stratiform > 0.0) {
-        layer[2] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.6667),
-                                   stratiformDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, front[2]);
-    }
-    if (lowRolls > 0.0) {
-        layer[3] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.1667),
-                                   rollDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, front[3]);
-    }
-    if (upperMasks.z > 0.0) {
-        layer[4] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.5),
-                                   altocumulusDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, front[4]);
-    }
-    if (upperMasks.y > 0.0) {
-        layer[5] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.8333),
-                                   cirrocumulusDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, front[5]);
-    }
-    if (upperMasks.x > 0.0) {
-        layer[6] = plagueGetClouds(viewDir, u_CameraAbs, 0.0, fract(dither + 0.25),
-                                   cirrusDeck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
-                                   renderDistance, front[6]);
-    }
-
-#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
-    uint contributor[PLAGUE_CLOUD_LAYERS];
-    for (int i = 0; i < PLAGUE_CLOUD_LAYERS; i++) {
-        contributor[i] = 1u << uint(i);
-    }
-#endif
-
-    // Sorted by where the ray first meets material. A missed deck reports front 0 and zero alpha;
-    // treating 0 as infinitely far sorts it last, where zero alpha changes nothing.
-    for (int i = 0; i < PLAGUE_CLOUD_LAYERS - 1; i++) {
-        for (int j = 0; j < PLAGUE_CLOUD_LAYERS - 1 - i; j++) {
-            float nearer = front[j] > 0.0 ? front[j] : 1e30;
-            float farther = front[j + 1] > 0.0 ? front[j + 1] : 1e30;
-            if (farther < nearer) {
-                vec4 swapLayer = layer[j];
-                layer[j] = layer[j + 1];
-                layer[j + 1] = swapLayer;
-                float swapFront = front[j];
-                front[j] = front[j + 1];
-                front[j + 1] = swapFront;
-#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
-                uint swapContributor = contributor[j];
-                contributor[j] = contributor[j + 1];
-                contributor[j + 1] = swapContributor;
-#endif
-            }
-        }
-    }
-
-    vec4 clouds = layer[0];
-    for (int i = 1; i < PLAGUE_CLOUD_LAYERS; i++) {
-        clouds += layer[i] * (1.0 - clouds.a);
-    }
-
-    // Weighted by each layer's contribution to the union, not the nearest that drew. A layer
-    // reports a front distance until its alpha reaches zero, so the nearest JUMPS to the next layer
-    // when the near one drops out; the composite gates the whole union on this against terrain
-    // depth, so that jump deletes every layer at once. Weighting retires a fading layer's distance
-    // continuously. This is a weighted mean of sampled fronts, not a material surface or centroid.
-#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
-    uint contributorMask = 0u;
-#endif
-    float frontTransmittance = 1.0;
-    float frontWeight = 0.0;
-    float cloudFrontDistance = 0.0;
-    for (int i = 0; i < PLAGUE_CLOUD_LAYERS; i++) {
-        float contribution = layer[i].a * frontTransmittance;
-        frontTransmittance *= 1.0 - layer[i].a;
-#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
-        if (contribution > 0.0) {
-            contributorMask |= contributor[i];
-        }
-#endif
-        if (front[i] > 0.0) {
-            cloudFrontDistance += front[i] * contribution;
-            frontWeight += contribution;
-        }
-    }
-    cloudFrontDistance = frontWeight > 0.0 ? cloudFrontDistance / frontWeight : 0.0;
-
-    imageStore(u_OutClouds, texelCoord, clouds);
-    imageStore(u_OutCloudDistance, texelCoord, vec4(cloudFrontDistance));
-#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
-    plagueWriteCloudHistory(texelCoord, clouds, cloudFrontDistance, contributorMask);
-#endif
+    plagueStoreCloudLayer(cloudIndex, texelCoord, selectedLayer, selectedFront);
 #else
-    imageStore(u_OutClouds, texelCoord, vec4(0.0));
-    imageStore(u_OutCloudDistance, texelCoord, vec4(0.0));
-#if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
-    plagueWriteCloudHistory(texelCoord, vec4(0.0), 0.0, 0u);
-#endif
+    plagueStoreCloudLayer(cloudIndex, texelCoord, vec4(0.0), 0.0);
 #endif
 }

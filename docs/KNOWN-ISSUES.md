@@ -63,6 +63,16 @@ notes; what is here is what a reader needs to know the limit exists.
 
 ## Clouds
 
+- **Distant cloud detail still shimmers under temporal AA.** `shaders/include/clouds.glsl` reduces march samples with distance while `shaders/include/cloud_density.glsl` retains fine density detail; no pixel footprint reaches that density evaluation. Cloud history also rejects many moving or overlapping contributors. Close this after the owner's camera-motion comparison stays stable without changing cloud coverage or losing body; phase and motion-vector checks alone do not establish that.
+  The 2026-09-13 composite change uses positive cubic reconstruction to reduce spatial stippling.
+  Saved-input checks establish filtering and visibility; some pattern remains in the reconstructed
+  capture, and camera-motion stability is still unverified.
+- **Square cloud borders remain under investigation.** The 2026-09-13 saved weather buffer
+  reproduced a derivative crease at the square edge of the precipitation sampling region.
+  `shaders/include/precip_field.glsl` joins the interior coordinates to the bounded extension
+  smoothly over one existing interpolation cell. GPU probes confirm the join and unchanged inner
+  region; they do not establish that every photographed border comes from this field. Allocation
+  shapes and the nighttime seam remain separate open possibilities.
 - **A distant cloud can draw in front of a nearer one.** An opacity/transparency issue, not the
   separately tracked boxy/grid allocation-lattice shape issue. Root cause: the decks overlap in
   space. `shaders/compute/clouds_march_volume.comp` marches each deck on its own and blends the
@@ -79,7 +89,9 @@ notes; what is here is what a reader needs to know the limit exists.
   show it edge-on all the time. A later capture also shows a straight seam in the night sky near
   the crosshair; it may be the same cause. Check `shaders/compute/clouds_march_volume.comp`,
   `shaders/compute/atmo_skyview.comp`, and `shaders/post/clouds_composite.fsh`. Close this once the
-  sky stays smooth in game.
+  sky stays smooth in game, including camera movement. A 2026-09-13 probe of all seven decks using
+  the saved daytime state found zero density at and outside the nominal slab faces. That probe
+  did not support slab clipping as the cause in that state and does not settle the nighttime report.
 - **A cloud grows and gains density as the sun passes behind it.** The silhouette widens, not just
   the glow around it. Most visible against a small isolated cumulus. The moon behind the same cloud
   does nothing, which fits the march lighting from the sun alone: the moon is no directional source

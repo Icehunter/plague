@@ -50,8 +50,8 @@
 // them per ray by first-hit distance, so a per-deck resolution loses the ordering that puts a near
 // tower in front of far cirrus.
 //
-// At a quarter, clouds_composite's 4-tap box spans four destination pixels and leaves the march's
-// per-pixel variance as 4x4 blocks.
+// At a quarter, one march sample covers four screen pixels. Blending nearby samples softens
+// the blocky look but cannot bring back detail the march never sampled in the first place.
 #define CLOUD_RESOLUTION 1 //[0 1 2] compile "Cloud Resolution" {0="Quarter" 1="Half" 2="Three Quarter"}
 
 // Multiple of the derived wind speed below; 0 freezes the deck for screenshots/bisection. Top of
@@ -115,9 +115,9 @@ const float PLAGUE_CLOUD_SHADOW_MAX_SLANT = 3.0;
 // Slab steps: vertical samples through the deck. Cap: max samples before the step must stretch (a
 // near-horizon ray hits it almost immediately; a vertical ray never does).
 //
-// Each step integrates the closed-form density-over-segment analytically, so halving the count
-// converges to the same total opacity rather than thinning it: undersampling costs per-pixel
-// variance (absorbed by dither + temporal resolve), not a dimmer sky.
+// The light-loss math used here is exact only if density stays the same across one step. Too
+// few samples changes both how thick the cloud looks and how noisy it looks, so each quality
+// tier must keep enough samples to see the cloud shapes before blending smooths it out.
 //
 // Sun taps: self-shadowing march cost, which runs per lit sample so it scales with cloud coverage.
 //
@@ -137,9 +137,8 @@ const float PLAGUE_CLOUD_SHADOW_MAX_SLANT = 3.0;
 
 const float PLAGUE_CLOUD_DEPTH_STEP_CAP = 3.0;
 
-// Floor on the samples taken through a deck's own thickness. Below four the interior is resolved by
-// too few planes and the dither turns the gaps into rays radiating from the layer's vanishing point.
-// stepScale can buy budget back, but not past this.
+// Existing four-plane safety floor. Higher tier-dependent floors added 34% density queries in
+// the Sep 13 fixture; restoring distance reduction trades away some flat-layer sampling stability.
 const float PLAGUE_CLOUD_MIN_SLAB_STEPS = 4.0;
 
 // Distance over which a deck's step budget halves, blocks: one mip level per 16 chunks. A deck's
@@ -550,8 +549,8 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
         deckQuality *= exp2(-reach / (fadeChunks * PLAGUE_CLOUD_BLOCKS_PER_CHUNK));
     }
 
-    // The player's budget for this deck's group. The floors below keep the lowest setting a
-    // coarser deck rather than a missing one.
+    // Distance and stepScale reduce the tier budget; the fixed safety floor below must not
+    // restore it. Tier-dependent floors added 34% density queries in the Sep 13 GPU fixture.
     slabSteps *= deckQuality;
 #ifdef PLAGUE_CLOUD_REDUCED_MARCH
     // Half mode divides the per-frame budget by two; the existing spatial floors still apply.
@@ -577,6 +576,9 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
 #endif
                               + dither),
                       int(PLAGUE_CLOUD_MIN_SLAB_STEPS) * 2);
+    // Rounding can push the cap up by one step. Clamp it here, before the ray is split
+    // into steps, so the loop never runs short of its last piece.
+    stepCap = min(stepCap, PLAGUE_CLOUD_MAX_STEPS);
 
     int steps = max(int(ceil(span / stepLen)), 1);
 
@@ -721,25 +723,27 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
 
     // --- Integration ----------------------------------------------------------------------------
     //
-    // Analytic, not a running sum: each step is the closed-form integral over constant density,
-    // so halving the step converges to the same opacity rather than doubling it. This is what
-    // lets the quality tiers trade detail for cost without changing how thick a cloud looks, and
-    // what lets the cap above stretch a grazing ray's step without banding the horizon. Verified
-    // against a 4x step difference (Fast vs Ultra): mean alpha agrees to <1% at every elevation;
-    // per-pixel variance grows toward the horizon as the cap-stretched rays legitimately resolve
-    // less detail, not as the integration failing.
+    // Light loss is added up one piece of the ray at a time. The pieces cover the whole
+    // ray from tNear to tFar with no gap or overlap; each sample must use its own piece's
+    // exact length, not the step's full length.
     float transmittance = 1.0;
     vec3 luminance = vec3(0.0);
     float distSum = 0.0;
     float weightSum = 0.0;
 
-    float t = tNear + stepLen * dither;
+    // Each sample stays inside the ray piece it stands for. The last piece may be
+    // shorter and stops right at tFar; later, longer pieces still start where the
+    // one before them ended.
+    float segmentStart = tNear;
 
     for (int i = 0; i < PLAGUE_CLOUD_MAX_STEPS; i++) {
         if (i >= steps || transmittance < PLAGUE_CLOUD_MIN_TRANSMITTANCE) {
             break;
         }
 
+        float segmentLength = min(stepLen, tFar - segmentStart);
+        if (segmentLength <= 0.0) break;
+        float t = segmentStart + segmentLength * dither;
         vec3 pos = cameraPosAbs + viewDir * t;
         float density = plagueCloudDensityAt(pos, deck, drift);
 
@@ -748,7 +752,7 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
                 cloudFrontDistance = max(t, PLAGUE_CLOUD_RAY_EPSILON);
             }
             float sigma = density * sigmaScale;
-            float stepT = exp(-sigma * stepLen);
+            float stepT = exp(-sigma * segmentLength);
             float weight = transmittance * (1.0 - stepT);
 
             float h = clamp((pos.y - deck.base) / max(deck.depth, 1e-3), 0.0, 1.0);
@@ -804,7 +808,7 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
             transmittance *= stepT;
         }
 
-        t += stepLen;
+        segmentStart += segmentLength;
         stepLen += stepIncrement;
     }
 

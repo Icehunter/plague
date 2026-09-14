@@ -1,0 +1,41 @@
+#version 450
+// Same-frame conservative candidate membership, independent of march resolution or temporal AA.
+#define PLAGUE_CLOUD_CANDIDATE_CACHE_BUILD
+#moj_import <fornax_runtime:cloud_volume_frame.glsl>
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+// Original common inputs occupy 0..6. Atlas is the only output.
+layout(r32f, set = 0, binding = 7) uniform writeonly image2D u_OutCandidateMask;
+
+void main() {
+#if CLOUDS_VOLUMETRIC
+    if (gl_LocalInvocationIndex == 0u && u_SkyState.z > 0.5) plaguePrepareCloudWorkgroup();
+    barrier(); // All edge invocations must reach the shared-state barrier.
+#endif
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, imageSize(u_OutCandidateMask)))) return;
+#if CLOUDS_VOLUMETRIC
+    // Last row stamps each deck. Positive encoding distinguishes empty masks from cleared data.
+    if (pixel.y == PLAGUE_CLOUD_CANDIDATE_CACHE_SIDE * PLAGUE_CLOUD_LAYERS) {
+        imageStore(u_OutCandidateMask, pixel, vec4(pixel.x < PLAGUE_CLOUD_LAYERS ? u_FrameState.x + 1.0 : 0.0));
+        return;
+    }
+#endif
+    float mask = -1.0; // Invalid/absent sky uses the procedural reader fallback.
+#if CLOUDS_VOLUMETRIC
+    int deckIndex = pixel.y / PLAGUE_CLOUD_CANDIDATE_CACHE_SIDE;
+    if (u_SkyState.z > 0.5 && deckIndex < PLAGUE_CLOUD_LAYERS) {
+        PlagueCloudDeck deck;
+    if (deckIndex == 0) deck = convectiveDeck;
+    else if (deckIndex == 1) deck = sheetDeck;
+    else if (deckIndex == 2) deck = stratiformDeck;
+    else if (deckIndex == 3) deck = rollDeck;
+    else if (deckIndex == 4) deck = altocumulusDeck;
+    else if (deckIndex == 5) deck = cirrocumulusDeck;
+    else if (deckIndex == 6) deck = cirrusDeck;
+        ivec2 tile = plagueCloudCandidateOrigins[deckIndex]
+                   + ivec2(pixel.x, pixel.y % PLAGUE_CLOUD_CANDIDATE_CACHE_SIDE);
+        mask = plagueCloudCandidateTileMask(tile, deck);
+    }
+#endif
+    imageStore(u_OutCandidateMask, pixel, vec4(mask + 1.0));
+}

@@ -1,8 +1,7 @@
 #version 330
 
-// Blends the marched clouds over the scene, in HDR, before bloom and the tonemap. A separate pass
-// from the march because the march writes at half resolution (two of three quality tiers) while
-// the scene is full resolution, so this reconstructs at scene resolution instead.
+// Blends the marched clouds over the scene, in HDR, before bloom and the tonemap. This is a
+// separate pass from the march because the march draws at a smaller size than the screen.
 //
 // The march writes PREMULTIPLIED (rgb*a, a) so the fixed-tap reconstruction can average cloud
 // energy and opacity without transparent texels' colour leaking into the result. This pass divides
@@ -18,7 +17,7 @@
 #moj_import <fornax_runtime:light_and_ambient_colors.glsl>
 #moj_import <fornax_runtime:underwater.glsl>
 
-uniform sampler2D u_Input0; // clouds (premultiplied rgba16f, half or full resolution)
+uniform sampler2D u_Input0; // clouds (premultiplied rgba16f, at the chosen cloud size)
 uniform sampler2D u_Input1; // builtin.depth (reversed-Z: 0.0 sky, >0.0 geometry)
 uniform sampler2D u_Input2; // builtin.waterDepth (reversed-Z, 0.0 = no surface), for the eye-in-water veil
 uniform sampler2D u_Input3; // first density-bearing cloud distance (r32f; 0.0 means empty ray)
@@ -28,26 +27,26 @@ in vec2 texCoord;
 out vec4 fragColor; // straight rgb+alpha; the pipeline's translucent blend composites it
 
 void main() {
-    // Four taps at a rotated cross of one FULL half-res texel: the spatial half of the march's own
-    // interleaved-gradient-noise dither resolve (the march undersamples and offsets each pixel's
-    // first sample by IGN; this pass was previously leaning on TAA's temporal half alone, which
-    // left a halftone on backlit cloud where reprojection clamps history at high-contrast edges).
-    //
-    // MEASURED across five AA modes: the pattern survived under pure-supersampling SSAA at a
-    // half-texel offset (footprints overlapped too much to sample distinct phases), so the offset
-    // was widened to a full texel; four diagonal taps then cover the 2x2 block IGN interleaves
-    // across. Cost is bounded (~2 screen pixels of edge softening); a wider kernel would start
-    // blurring the silhouette itself.
-    //
-    // Averaging premultiplied (rgb*a, a) is linear and reproduces the march's own accumulation;
-    // averaging straight colour would drag transparent texels' rgb into the result.
+    // A centred cubic cardinal B-spline is the convolution of four unit-area boxes.
+    // Its four polynomial coefficients below are that convolution expanded on one cell;
+    // positive weights sum to one and join with two continuous derivatives. No sharpness knob.
+    // Every colour/front pair is still tested against destination geometry before filtering;
+    // rejected weights remain absent, so the filter cannot restore occluded cloud opacity.
     ivec2 sourceSize = textureSize(u_Input0, 0);
-    vec2 tap = 1.0 / vec2(sourceSize);
-    vec2 offsets[4] = vec2[4](
-        vec2( tap.x,  tap.y),
-        vec2(-tap.x,  tap.y),
-        vec2( tap.x, -tap.y),
-        vec2(-tap.x, -tap.y));
+    vec2 sourcePosition = texCoord * vec2(sourceSize) - 0.5;
+    ivec2 baseTexel = ivec2(floor(sourcePosition));
+    vec2 fraction = fract(sourcePosition);
+    vec2 square = fraction * fraction;
+    vec2 cube = square * fraction;
+    vec2 opposite = 1.0 - fraction;
+    vec4 weightsX = vec4(opposite.x * opposite.x * opposite.x,
+            4.0 - 6.0 * square.x + 3.0 * cube.x,
+            1.0 + 3.0 * fraction.x + 3.0 * square.x - 3.0 * cube.x,
+            cube.x) / 6.0;
+    vec4 weightsY = vec4(opposite.y * opposite.y * opposite.y,
+            4.0 - 6.0 * square.y + 3.0 * cube.y,
+            1.0 + 3.0 * fraction.y + 3.0 * square.y - 3.0 * cube.y,
+            cube.y) / 6.0;
 
     float destinationDepth = texture(u_Input1, texCoord).r;
     bool destinationGeometry = destinationDepth > 0.0;
@@ -75,11 +74,10 @@ void main() {
     }
 
     vec4 c = vec4(0.0);
-    for (int i = 0; i < 4; ++i) {
-        vec2 sampleUv = texCoord + offsets[i];
-        // First-hit distance is discontinuous and zero is its empty sentinel. Fetching both values
-        // from one exact texel preserves their ordering before destination-depth visibility.
-        ivec2 sampleTexel = clamp(ivec2(floor(sampleUv * vec2(sourceSize))),
+    for (int i = 0; i < 16; ++i) {
+        // At the screen edge, clamp x and y together so a repeated edge pixel still keeps
+        // its normal share of the blend, and flat colour stays flat.
+        ivec2 sampleTexel = clamp(baseTexel + ivec2(i % 4 - 1, i / 4 - 1),
                                   ivec2(0), sourceSize - ivec2(1));
         vec4 sampleCloud = texelFetch(u_Input0, sampleTexel, 0);
         float cloudFrontDistance = texelFetch(u_Input3, sampleTexel, 0).r;
@@ -88,10 +86,9 @@ void main() {
                 && (destinationWaterDistance <= 0.0
                     || cloudFrontDistance < destinationWaterDistance);
         if (cloudVisible) {
-            c += sampleCloud;
+            c += sampleCloud * (weightsX[i % 4] * weightsY[i / 4]);
         }
     }
-    c /= 4.0;
 
     // Early-out keeps the divide below away from zero on the overwhelming majority of pixels.
     if (c.a <= 0.0) { fragColor = vec4(0.0); return; }
