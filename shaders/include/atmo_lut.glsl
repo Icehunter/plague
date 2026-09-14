@@ -588,26 +588,43 @@ PlagueAtmoPhases plagueAtmoPhases(vec3 dir, vec3 sunDir) {
  * read at sea level; the world keeps going where the model's planet stops.
  */
 void plagueAtmoScatterAt(vec3 pos, vec3 sunDir, PlagueAtmoPhases phases, vec3 sunRadiance,
-                         vec3 moonRadiance, PlagueAtmoAir air,
+                         vec3 moonRadiance, PlagueAtmoAir air, vec2 directVisibility,
+                         float localMistSigma,
                          out vec3 scattered, out vec3 extinction) {
     float r = length(pos);
     float rTable = max(r, PLAGUE_PLANET_RADIUS + 1.0);
     vec3 up = pos / r;
     float altitude = r - PLAGUE_PLANET_RADIUS;
     vec3 density = plagueAtmoDensity(altitude, air);
-    float mist = plagueAtmoMist(altitude, air);
+    float mist = plagueAtmoMist(altitude, air) + localMistSigma;
     vec3 scatterAir = PLAGUE_RAYLEIGH_SCATTER * density.x;
     vec3 scatterHaze = vec3(PLAGUE_AEROSOL_SCATTER * density.y + mist);
     extinction = plagueAtmoExtinction(density) + vec3(mist);
 
     float muSun = dot(up, sunDir);
+    // Geometry visibility masks each direct beam. The isotropic multiple-scattering table is
+    // incoming diffuse light from the atmosphere, not another copy of that beam.
     vec3 sun = plagueAtmoTransmittanceToLight(rTable, muSun)
-            * (scatterAir * phases.rayleighSun + scatterHaze * phases.mieSun)
+            * (scatterAir * phases.rayleighSun + scatterHaze * phases.mieSun) * directVisibility.x
             + plagueAtmoMultiScatter(rTable, muSun) * (scatterAir + scatterHaze);
     vec3 moon = plagueAtmoTransmittanceToLight(rTable, -muSun)
-            * (scatterAir * phases.rayleighMoon + scatterHaze * phases.mieMoon)
+            * (scatterAir * phases.rayleighMoon + scatterHaze * phases.mieMoon) * directVisibility.y
             + plagueAtmoMultiScatter(rTable, -muSun) * (scatterAir + scatterHaze);
     scattered = sun * sunRadiance + moon * moonRadiance;
+}
+
+void plagueAtmoScatterAt(vec3 pos, vec3 sunDir, PlagueAtmoPhases phases, vec3 sunRadiance,
+                         vec3 moonRadiance, PlagueAtmoAir air, vec2 directVisibility,
+                         out vec3 scattered, out vec3 extinction) {
+    plagueAtmoScatterAt(pos, sunDir, phases, sunRadiance, moonRadiance, air, directVisibility,
+                        0.0, scattered, extinction);
+}
+
+void plagueAtmoScatterAt(vec3 pos, vec3 sunDir, PlagueAtmoPhases phases, vec3 sunRadiance,
+                         vec3 moonRadiance, PlagueAtmoAir air,
+                         out vec3 scattered, out vec3 extinction) {
+    plagueAtmoScatterAt(pos, sunDir, phases, sunRadiance, moonRadiance, air, vec2(1.0),
+                        scattered, extinction);
 }
 
 /**
@@ -619,12 +636,30 @@ void plagueAtmoScatterAt(vec3 pos, vec3 sunDir, PlagueAtmoPhases phases, vec3 su
  */
 #ifdef PLAGUE_ATMO_SHADOWED
 /**
- * How much of the sun reaches a point in the air, 0 in shadow, 1 in the open. Supplied by the pass
- * that turns this on, the same way the table fetchers are.
+ * How much light reaches a point from the sun or moon, whichever one casts shadows here. The
+ * pass that turns this on supplies it, the same way it supplies the table readers; with nothing
+ * supplied, light counts as open.
  *
  * @param posBlocks  camera-relative world position, in blocks
  */
-float plagueAtmoSunShadow(vec3 posBlocks, vec3 sunDir);
+float plagueAtmoSunShadow(vec3 posBlocks, vec3 lightDir);
+
+vec3 plagueAtmoShadowLightDirection() {
+    // Fornax's light camera uses a flat (orthographic) view and looks away from the light.
+    // Reading its depth row backward gives the real light direction, even when u_SkyCelestial
+    // still says sun.
+    vec3 axis = -vec3(u_SunViewProj[0].z, u_SunViewProj[1].z, u_SunViewProj[2].z);
+    float axisLength = length(axis);
+    if (!(axisLength > 0.0) || isinf(axisLength) || isnan(axisLength)) return vec3(0.0);
+    return axis / axisLength;
+}
+#endif
+
+#ifdef PLAGUE_ATMO_LOCAL_MIST
+// The aerial writers fill in this field, keyed by world position. Sky table writers skip it:
+// ground mist near the player is not a planet-wide layer. Read it before adding planet radius,
+// which would lose the local detail.
+float plagueAtmoLocalMistSigma(vec3 cameraRelativeBlocks);
 #endif
 
 vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec3 moonRadiance,
@@ -632,29 +667,99 @@ vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec
     PlagueAtmoPhases phases = plagueAtmoPhases(dir, sunDir);
     vec3 radiance = vec3(0.0);
     transmittance = vec3(1.0);
-    float tPrev = 0.0;
-    for (int i = 0; i < steps; i++) {
-        float s = float(i + 1) / float(steps);
-        float tNext = end * s * s;
+#ifdef PLAGUE_ATMO_SHADOWED
+    vec3 shadowLightDir = plagueAtmoShadowLightDirection();
+    bool hasShadowLight = dot(shadowLightDir, shadowLightDir) > 0.0;
+    // This model puts the moon opposite the sun, so pick whichever one matches the captured
+    // light direction. A missing or broken light matrix must not stop either one from lighting
+    // the scene.
+    bool shadowsSun = dot(shadowLightDir, sunDir) >= 0.0;
+#endif
+    // Beer-Lambert segment composition, far to near: L = I + T_step * L_far.
+    // tools/verify_atmo_integration_gpu.py checks this order against the GPU.
+    int segmentCount = steps;
+#ifdef PLAGUE_ATMO_LOCAL_STEPS
+    // Split the ray at world-grid lines instead of camera distance. Camera-distance steps shift
+    // every sample as the camera moves; a world grid keeps each ray piece at the same fixed spot.
+    // Eight-block cells split each 128-block mist grid cell into 16 parts per side. Smooth air
+    // values are read once per cell; shadow visibility gets eight smaller samples below, instead
+    // of stretching one on/off shadow check across the whole cell. Checking all three axes' grid
+    // lines avoids a sudden jump when the ray's steepest axis changes.
+    const float cellLength = 8.0 * PLAGUE_ATMO_METRES_PER_BLOCK;
+    vec3 cameraRemainder = mod(u_CameraAbs, vec3(8.0)) * PLAGUE_ATMO_METRES_PER_BLOCK;
+    vec3 endpointCell = (cameraRemainder + dir * end) / cellLength;
+    vec3 previousFace = mix(floor(endpointCell) + 1.0, ceil(endpointCell) - 1.0,
+                            greaterThan(dir, vec3(0.0)));
+    bvec3 moving = greaterThan(abs(dir), vec3(0.0));
+    vec3 safeDirection = mix(vec3(1.0), dir, moving);
+    vec3 inverseDirection = 1.0 / safeDirection;
+    vec3 crossings = mix(vec3(-1.0), (previousFace * cellLength - cameraRemainder) * inverseDirection, moving);
+    // A ray piece can cross at most ceil(length * sum(abs(direction)) / cellLength) grid lines,
+    // plus one starting line per axis. This also caps any rounding that stalls at the first line.
+    segmentCount = int(ceil(end * dot(abs(dir), vec3(1.0)) / cellLength)) + 3;
+    float segmentEnd = end;
+#endif
+    for (int i = segmentCount - 1; i >= 0; i--) {
+#ifdef PLAGUE_ATMO_LOCAL_STEPS
+        if (!(segmentEnd > 0.0)) break;
+        float tPrev = clamp(max(crossings.x, max(crossings.y, crossings.z)), 0.0, segmentEnd);
+        // Cut both the step width and the sample point exactly at the solid surface. A fixed
+        // midpoint in a part-used cell could otherwise sample light from behind the surface.
+        float tNext = segmentEnd;
+        // Step past every grid line reached at once, including zero-length edge and corner
+        // crossings.
+        previousFace -= mix(vec3(0.0), sign(dir), greaterThanEqual(crossings, vec3(tPrev)));
+        // Recompute each grid line from whole-number coordinates. Subtracting small steps over
+        // and over would make a line's position drift depending on how far the march started.
+        crossings = mix(vec3(-1.0), (previousFace * cellLength - cameraRemainder) * inverseDirection, moving);
+        segmentEnd = tPrev;
+#else
+        float sPrev = float(i) / float(steps);
+        float sNext = float(i + 1) / float(steps);
+        float tPrev = end * sPrev * sPrev;
+        float tNext = end * sNext * sNext;
+#endif
         float dt = tNext - tPrev;
         float t = 0.5 * (tPrev + tNext);
-        tPrev = tNext;
+#ifdef PLAGUE_ATMO_LOCAL_STEPS
+        // If rounding leaves no point strictly inside the cell, skip it: there is no valid
+        // sample point in this cut-off cell. Never round the midpoint onto the wall itself.
+        if (!(t > tPrev && t < tNext)) continue;
+#endif
 
         vec3 scattered;
         vec3 extinction;
+        vec2 directVisibility = vec2(1.0);
 #ifdef PLAGUE_ATMO_SHADOWED
-        // Terrain between the sun and this point in the air. Without it the ray is lit as if
-        // nothing stood in the way, and a hill with the sun behind it still glows.
-        vec3 stepSun = sunRadiance
-                * plagueAtmoSunShadow(dir * (t / PLAGUE_ATMO_METRES_PER_BLOCK), sunDir);
+        if (hasShadowLight) {
+#ifdef PLAGUE_ATMO_LOCAL_STEPS
+            // Even, evenly spaced samples: one per block across a grid-aligned cell.
+            // verify_atmo_walking_gpu.py has a fixed one-block gap where a single midpoint
+            // sample overcounted light fourfold. This fixes that gap without repeating the
+            // full air-and-density work eight times, only the shadow check itself.
+            float visible = 0.0;
+            for (int shadowStep = 0; shadowStep < 8; shadowStep++) {
+                float shadowT = tPrev + (float(shadowStep) + 0.5) * (dt / 8.0);
+                visible += plagueAtmoSunShadow(dir * (shadowT / PLAGUE_ATMO_METRES_PER_BLOCK), shadowLightDir);
+            }
+            visible *= 1.0 / 8.0;
 #else
-        vec3 stepSun = sunRadiance;
+            float visible = plagueAtmoSunShadow(dir * (t / PLAGUE_ATMO_METRES_PER_BLOCK), shadowLightDir);
 #endif
-        plagueAtmoScatterAt(origin + dir * t, sunDir, phases, stepSun, moonRadiance, air,
-                            scattered, extinction);
+            directVisibility = shadowsSun ? vec2(visible, 1.0) : vec2(1.0, visible);
+        }
+#endif
+#ifdef PLAGUE_ATMO_LOCAL_MIST
+        float localMistSigma = plagueAtmoLocalMistSigma(dir * (t / PLAGUE_ATMO_METRES_PER_BLOCK));
+        plagueAtmoScatterAt(origin + dir * t, sunDir, phases, sunRadiance, moonRadiance, air,
+                            directVisibility, localMistSigma, scattered, extinction);
+#else
+        plagueAtmoScatterAt(origin + dir * t, sunDir, phases, sunRadiance, moonRadiance, air,
+                            directVisibility, scattered, extinction);
+#endif
         vec3 stepTransmittance = exp(-extinction * dt);
         vec3 integrated = (scattered - scattered * stepTransmittance) / max(extinction, vec3(1e-12));
-        radiance += transmittance * integrated;
+        radiance = integrated + stepTransmittance * radiance;
         transmittance *= stepTransmittance;
     }
     return vec4(radiance, dot(transmittance, vec3(0.2126, 0.7152, 0.0722)));

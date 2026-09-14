@@ -20,9 +20,9 @@
 // Underwater fog rides this dispatcher as a third, outermost PlagueFogTerms term plus a scene tint
 // (underwater.glsl). Both are exact identities above water.
 //
-// Tried and dropped: a fullscreen fog pass (a whole rgba16f read and write per frame, buying
-// nothing the owning passes lack); driving the enclosure gate off the camera sky light uniform
-// (unsmoothed, so a cave mouth crossing steps the haze across the whole frame in one frame).
+// The opaque fullscreen fog pass adds up and blends fog using the current depth. The cave/open-sky
+// gate still checks each pixel on its own; using only the camera's sky exposure would jump the
+// whole frame the moment the camera crosses a cave mouth.
 
 // Fog options and the PLAGUE_FOG_DRIVE macro, shared by this dispatcher, the cloud fade and the
 // reflection probe's cloud imposter.

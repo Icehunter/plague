@@ -124,6 +124,8 @@ sliders = [
     "u_AOStrength",
     "u_AuthoredEmission",
     "u_FogDensity",
+    "u_FogLocalMist",
+    "u_AirShadowProbeDistance",
     "u_FogBorderDensity",
     "u_FogDistance",
     "u_FogSharpness",
@@ -365,7 +367,9 @@ elements = [
 #
 # Fog rows ONLY. This page once carried duplicates of the wave/snow/aurora/cloud/star rows that
 # already live on their own pages; a control with two homes drifts in the user's memory and reads
-# as two controls. Every option here is declared in shaders/include/fog_options.glsl, applies
+# as two controls. Fog controls are declared in fog_options.glsl. Local Mist Amount only affects the
+# compute step, so it lives in atmo_mist.glsl instead, to avoid changing the uniform layout that
+# geometry passes read. Each control applies
 # live, and its default is the fitted model's own value.
 [screens.fog]
 title = "Fog"
@@ -382,6 +386,7 @@ elements = [
     "u_FogAdvanced",
     "<group:Main Settings>",
     "u_FogDensity|requires:u_FogEnableDistance",
+    "u_FogLocalMist|requires:u_FogEnableDistance",
     "u_FogDistance|requires:u_FogEnableDistance",
     "u_FogSharpness|requires:u_FogEnableDistance",
     "u_FogBorderDensity|requires:u_FogEnableEdge",
@@ -757,6 +762,8 @@ elements = [
 
     "<group:Fog>",
     "u_FogOpacityView",
+    "PLAGUE_AIR_SHADOW_DEBUG",
+    "u_AirShadowProbeDistance|requires:PLAGUE_AIR_SHADOW_DEBUG",
 ]
 
 [yacl]
@@ -1137,6 +1144,17 @@ The master switch for all fog.
 
 Off removes every fog effect at once and shows the bare edge of your loaded world. The tick boxes \
 below switch individual fog types instead."""
+
+PLAGUE_AIR_SHADOW_DEBUG = """
+Shows which shadow covers the air at one set distance.
+
+Red means no shadow data yet. Green means shadow. Blue means light.
+This is a rough slice through the air; a green-blue mix means partial shadow. Check it over dry
+ground, since water and clouds draw on top and can hide it. Turn off to see the normal scene."""
+
+u_AirShadowProbeDistance = """
+How far from the camera the air slice sits, in blocks. One chunk is 16 blocks.
+Check both nearer and farther than Shadow Distance to tell a real block from missing shadow data."""
 
 u_FogOpacityView = """
 Draws the fog's own strength instead of the world, to find where a haze comes from.

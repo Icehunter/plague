@@ -16,12 +16,12 @@ feature that is off costs nothing because its passes are not in the graph at all
 
 ## The frame, in order
 
-`graph.toml` declares **58 passes** writing **45 targets**. They run in file order. Grouped by job:
+`graph.toml` declares **109 passes** writing **135 targets**. They run in file order. Grouped by job:
 
 ### 0. Atmosphere: 4 compute passes
 
 `atmo_transmittance` → `atmo_multiscatter` → `atmo_skyview` → `atmo_aerial`, first in the file
-because nothing before them needs the sky and the resolve does. Each writes one small fixed-size
+because nothing before them needs the sky and the resolve does. The first four each write one small fixed-size
 table (256 × 64, 32 × 32, 192 × 108, 1088 × 32, all rgba16f): how much light gets
 through from a point in the air to space, what arrives there after more than one bounce, the dome as
 the camera sees it from its own height, and the same march stopped at each screen froxel's depth
@@ -29,15 +29,38 @@ the camera sees it from its own height, and the same march stopped at each scree
 each froxel and one of the frame's transmittance chroma). All lit by the true sun and the moon
 opposite it; the aerial pass adds the fog drive's mist as a shallow layer. The mappings live in
 `shaders/include/atmo_lut.glsl`, one function per writer/reader pair; a compute reader loads the
-tables as storage images, a fullscreen one samples them. Writers and targets are unconditional.
+tables as storage images, a fullscreen one samples them. Those four writers and targets are unconditional.
 The first two passes declare `reuse_when_unchanged`: their output depends only on density, haze,
 ozone, rain and thunder. Fornax skips their kernels when those inputs and resources stay the same,
 but still updates descriptors and keeps sync correct. A shader reload or a new target forces a
 rerun. Sky-view and aerial still run every frame. Sky-view has each workgroup column march its two
 horizon rays once and share them; the pole case and above-horizon rays are unaffected.
-Scattering is the sole atmosphere model: `fog_aerial.glsl` builds
-the same `PlagueFogTerms` from the aerial table and the sky along the ray, so a pixel at the render
-cutoff is the same table read as the sky beside it.
+The opaque `resolve` pass writes `sceneHdrUnfogged`. Right after it, the fullscreen `resolve_hdr`
+pass (`fog_composite.fsh`) reads the depth again, adds up light along the path from camera to
+surface, and mixes in fog, edge fade and underwater effects to make `sceneHdr`. Color and light
+loss are worked out together, in the same shader step: no separate compute pass or lookup table
+stands in for this.
+The fog pass copies its input straight through on sky pixels, when fog is off, and for debug
+views that don't need it. It shares its air, light source and shadow math with `atmo_aerial`
+through `atmo_transport.glsl`; `atmo_transport_compute.glsl` holds only the code that binds and
+reads compute textures. Light along the path is added up from far to near.
+Near the camera, the ray is split at world-grid lines every eight blocks, and the last piece is
+cut short at the solid surface. Each piece uses one smooth reading of air and haze, averaged from
+eight light-visibility checks. Each grid cell always gets the same fixed set of checks, so a
+longer path adds more cells rather than more checks per cell; the far sky march keeps its old,
+wider spacing. `atmo_mist.glsl` adds a test-stage patch of still mist tied to world position,
+turned on by the Local Mist Amount setting. It sits on a smooth 128-block grid and fades with
+height above sea level, adding the same amount to both light loss and haze scatter. It needs no
+extra pass, texture, or history from past frames. The sky tables (planetary light loss and
+multi-bounce light) leave this thin local patch out. The color of light lost through the solid
+surface path stays correct when the patch mixes with colored air, and needs no extra storage. The
+new full-size unfogged color target costs eight bytes per pixel and one extra read and write; the
+new fog step proves the math is right, but its speed has not yet been measured.
+The aerial table still feeds light-loss data to water, reflections and cave detection.
+`fog_aerial.glsl` mixes this with the sky along the ray and the fade at the render edge. Its guard
+against wrong sky light at cave mouths still works, and still misses a lit gap between two
+sheltered points. This new fog step shares no cache and reuses nothing between frames; its speed
+and look still need to be checked on the owner's own machine before tuning it further.
 
 `sky.glsl` retains the shared palette estimates used for surface ambient, water illumination,
 reflection-probe clouds and forward particle/banner fog, plus the scattering sky's warmth and

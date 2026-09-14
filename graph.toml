@@ -114,6 +114,11 @@ outputs = []
 
 # rgba16f, not the resolve writing straight to builtin.output (8-bit): clipping above 1.0 there is
 # irrecoverable — no tonemap can recover a sunlit-white value from an already-clipped one.
+# Material lighting output, read by the fog pass that runs after it.
+[targets.sceneHdrUnfogged]
+format = "rgba16f"
+scale = 1.0
+
 [targets.sceneHdr]
 format = "rgba16f"
 scale = 1.0
@@ -581,7 +586,7 @@ name = "resolve_hdr_rt_shadow"
 type = "fullscreen"
 shader = "shaders/post/rt_shadow_composite.fsh"
 enabled_if = "SHADOWS"
-inputs = ["builtin.depth", "builtin.gNormal", "sunShadowMap", "builtin.depth", "builtin.depth", "sunShadowMapRaw", "builtin.depth", "builtin.depth", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
+inputs = ["builtin.depth", "builtin.gNormal", "sunShadowMap", "builtin.depth", "builtin.depth", "sunShadowMapRaw", "builtin.depth", "builtin.depth", "rtTerrainShadowDepth", "sunEntityShadowMapRaw", "builtin.gMotion"]
 outputs = ["rtShadowComposite"]
 
 [[pass]]
@@ -589,18 +594,25 @@ name = "resolve"
 type = "fullscreen"
 shader = "shaders/post/gbuffer_resolve.fsh"
 # u_InputN is positional — append only. Buffer inputs go last (usamplerBuffer, not sampler2D).
-# sunShadowMapRaw aliases the same texture under a different target name so the comparison-sampler
-# branch (keyed by exact target string) doesn't wrongly attach to this plain-sampler debug read. A
-# shader uniform and its graph.toml binding are one atomic contract — never remove one side alone.
+# Input12 stays empty on purpose; the shadow prepass puts its raw debug map at input18.
 # consolidatedGbuf (u_Input1) is gbuf_consolidate's output, not a [targets.*] entry. See that
 # pass's own comment.
 # rtShadowComposite (u_Input18) holds direct and wide ambient shadow from one combined pass;
 # both use the world-position RT/raster handoff through the shared shadow filter.
 # u_Input19 stays reserved (bound to builtin.depth), so no input numbers shift.
-# voxelLocalRadiance is left out here: gbuffer_resolve.fsh has no u_Input20, so listing it would
-# name a texture nothing reads. It is the last entry, so leaving it out does not shift the numbers
-# before it. The target itself stays live; other passes still read it.
-inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "sunShadowMapRaw", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial", "rtShadowComposite", "builtin.depth"]
+inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "builtin.depth", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial", "rtShadowComposite", "builtin.depth"]
+outputs = ["sceneHdrUnfogged"]
+
+# resolve_hdr is the name Fornax expects for the pass that reads render distance, debug view and
+# active light. It runs right after material resolve and reads the same depth. It just copies its
+# input through when fog is off, on sky, or for other debug views.
+[[pass]]
+name = "resolve_hdr"
+type = "fullscreen"
+shader = "shaders/post/fog_composite.fsh"
+inputs = ["sceneHdrUnfogged", "builtin.depth", "consolidatedGbuf", "builtin.waterDepth",
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "atmoAerial", "builtin.noise",
+          "sunShadowMap", "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
 outputs = ["sceneHdr"]
 
 # Tileable grayscale focusing pattern, sampled by two rotated flowing layers with mirror-repeat UVs.

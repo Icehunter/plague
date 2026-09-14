@@ -1,6 +1,7 @@
 #version 330 core
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:shadow_options.glsl>
+#moj_import <fornax_runtime:shadow_debug.glsl>
 
 uniform sampler2D u_Input0; // builtin.depth
 uniform sampler2D u_Input1; // builtin.gNormal
@@ -10,6 +11,7 @@ uniform sampler2DShadow u_Input2; // complete sunShadowMap
 uniform sampler2D u_Input5; // sunShadowMapRaw (existing reserved binding)
 uniform sampler2D u_Input8; // rtTerrainShadowDepth
 uniform sampler2D u_Input9; // sunEntityShadowMapRaw
+uniform sampler2D u_Input10; // builtin.gMotion, debug views only
 #define SHADOW_COMPARISON_MAP u_Input2
 #define SHADOW_RAW_MAP u_Input5
 #define RT_TERRAIN_SHADOW_DEPTH u_Input8
@@ -46,6 +48,22 @@ float plagueCausticSunVisibility(vec3 receiver, vec3 sunDir) {
 void main() {
     fragColor = vec4(1.0, 1.0, 1.0, 0.0);
 #ifdef SHADOWS
+#ifdef PLAGUE_DEBUG_VIEWS
+    int debugView = int(u_Param3 + 0.5);
+    if (debugView == DBG_MOTION) {
+        // Keep the same brightness boost this debug view already used, before handing off as
+        // RGBA16F. Returning early, before the depth check, also keeps motion visible on sky
+        // pixels and frees up resolve's motion input.
+        fragColor = vec4(abs(texture(u_Input10, texCoord).rg) * 40.0, 0.0, 1.0);
+        return;
+    }
+    if (debugView == DBG_SHADOW_MAP_VIEW) {
+        // This view reads the shadow map directly, including pixels where the camera sees sky.
+        ivec2 mapTexel = ivec2(texCoord * vec2(textureSize(SHADOW_RAW_MAP, 0)));
+        fragColor = plagueShadowDebugMapColor(texelFetch(SHADOW_RAW_MAP, mapTexel, 0).r);
+        return;
+    }
+#endif
     float depth = texture(u_Input0, texCoord).r;
     vec4 worldH = u_InvProjModelView * vec4(texCoord * 2.0 - 1.0, depth, 1.0);
     vec3 worldPos = worldH.xyz / (abs(worldH.w) > 1e-6 ? worldH.w : 1.0);
@@ -58,6 +76,23 @@ void main() {
     planeNormal = planeLength > 1e-6 ? planeNormal / planeLength : shadingNormal;
     if (dot(planeNormal, shadingNormal) < 0.0) planeNormal = -planeNormal;
     if (depth <= 0.0) return;
+#ifdef PLAGUE_DEBUG_VIEWS
+    if (debugView == DBG_SHADOW_QUERY_3) {
+        // Match resolve's fallback for the shading normal and for a missing light direction,
+        // but not its geometric bias.
+        vec3 normal = dot(shadingNormal, shadingNormal) > 1e-6
+                ? normalize(shadingNormal) : vec3(0.0, 1.0, 0.0);
+        vec3 light = u_SunDirection.xyz;
+        vec3 debugSunDir = dot(light, light) > 1e-6
+                ? normalize(light) : normalize(vec3(0.3, 0.9, 0.2));
+        vec3 coordinates = plagueShadowDebugCoordinates(worldH.xyz / worldH.w, normal, debugSunDir);
+        ivec2 mapTexel = ivec2(clamp(coordinates.xy, 0.0, 1.0)
+                              * vec2(textureSize(SHADOW_RAW_MAP, 0)));
+        float storedDepth = texelFetch(SHADOW_RAW_MAP, mapTexel, 0).r;
+        fragColor = vec4(coordinates.z, 0.0, storedDepth, 0.0);
+        return;
+    }
+#endif
     vec3 sunDir = normalize(u_SunDirection.xyz);
     float rainFactor = clamp(u_SkyState.x, 0.0, 1.0);
     float direct = sunVisibility(worldPos, planeNormal, sunDir, rainFactor);

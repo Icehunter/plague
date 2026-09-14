@@ -178,6 +178,19 @@ float plagueCloudPotentialLobe(vec2 local, vec2 centre, float radius) {
     return dot(horizontal, horizontal);
 }
 
+// Picked from a render: cloud depth stays in the top quarter of its shape, 0.75 to 1.0.
+// Lane 3 gives each cloud site a steady growth value that does not depend on its position or rank.
+const float PLAGUE_CLOUD_PARCEL_MIN_DEPTH = 0.75;
+
+float plagueCloudParcelDepthFraction(ivec2 cellId, float family) {
+    if (family <= 0.0) return 1.0;
+    float development = plagueCloudCandidateHash(cellId, 3u);
+    float parcelTop = mix(PLAGUE_CLOUD_PARCEL_MIN_DEPTH, 1.0, development);
+    // Flat sheet clouds keep their full shape. Lumpy cloud types get bumpy tops that vary by
+    // rank. Keeping the fraction at 1 or less keeps the march and cache math safe.
+    return mix(1.0, parcelTop, clamp(family, 0.0, 1.0));
+}
+
 float plagueCloudHeightProfile(float h, float family);
 
 /** Max of the active owner density potentials. Each candidate's rank, site, base offset, lobe
@@ -300,7 +313,8 @@ float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudD
 
             float candidateBase = deck.base
                                 + (jitter.y * 2.0 - 1.0) * PLAGUE_CLOUD_BASE_VARIATION;
-            float h = (worldY - candidateBase) / max(deck.depth, 1e-3);
+            float parcelDepth = deck.depth * plagueCloudParcelDepthFraction(cellId, deck.family);
+            float h = (worldY - candidateBase) / max(parcelDepth, 1e-3);
             if (h <= 0.0 || h >= 1.0) {
                 continue;
             }
@@ -433,7 +447,8 @@ float plagueCloudCandidatePotential(vec2 allocationQ, float worldY, PlagueCloudD
 
             float candidateBase = deck.base
                                 + (jitter.y * 2.0 - 1.0) * PLAGUE_CLOUD_BASE_VARIATION;
-            float h = (worldY - candidateBase) / max(deck.depth, 1e-3);
+            float parcelDepth = deck.depth * plagueCloudParcelDepthFraction(cellId, deck.family);
+            float h = (worldY - candidateBase) / max(parcelDepth, 1e-3);
             if (h <= 0.0 || h >= 1.0) {
                 continue;
             }
@@ -510,14 +525,12 @@ const float PLAGUE_CLOUD_CONDENSE = 0.45;
 //
 // 0.30 is where the wispy share peaks without the solid share falling below the mid one. Both
 // tables are relative-height measurements, sampled at a fixed fraction of a column's own plateau.
-// PLAGUE_CLOUD_PARCEL_MIN_TOP below does not change them.
+// Growth changes a cloud's shape depth on its own, separate from this density curve.
 const float PLAGUE_CLOUD_VIGOUR_FLOOR = 0.30;
 
-// Fraction of the slab a marginal column reaches; a strong one reaches 1.0. Field strength stands
-// in for how deep the updraught went, the same quantity PLAGUE_CLOUD_VIGOUR_FLOOR reads for
-// density. 900x900 sample, shipped cumulus row: 0.35 gives median cloud top 0.45 of slab depth,
-// coefficient of variation 0.30.
+// A 0-to-1 value for how exposed a cloud top is, used for lighting only, not for shape depth.
 const float PLAGUE_CLOUD_PARCEL_MIN_TOP = 0.35;
+
 
 // Third profile anchor: a deep tower whose top SPREADS before it cuts off instead of tapering, the
 // anvil shape a cumulonimbus needs. Solved against the drawn silhouette, the same way SHEET/TOWER

@@ -30,6 +30,12 @@ covers what the pack does, not the engine under it.
 
 ## Clouds and fog
 
+- Test-stage local mist patches, turned on by Local Mist Amount on the Fog screen. The mist sits
+  at fixed points in the world, with broad, smooth changes across the ground and the same Fog
+  Height falloff as normal fog. Solid objects and the aerial table read the mist directly; direct
+  sunlight through it uses the normal terrain shadow check. Mist blocking its own light, and
+  matching fog on particles, are not done yet.
+
 - Volumetric cloud march composited in linear HDR **before** the tonemap, so sunlit cloud tops go
   past display white and bloom. Fast / Fancy (half-res) and Ultra (full-res) tiers, with altitude,
   amount and speed controls. *Opt-in, default off: it is the most costly per-pixel effect here.*

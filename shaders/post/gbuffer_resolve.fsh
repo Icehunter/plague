@@ -5,6 +5,8 @@
 #moj_import <fornax_runtime:light_and_ambient_colors.glsl>
 #moj_import <fornax_runtime:light_options.glsl>
 #moj_import <fornax_runtime:shadow_options.glsl>
+#moj_import <fornax_runtime:shadow_debug.glsl>
+#moj_import <fornax_runtime:atmo_debug_options.glsl>
 #moj_import <fornax_runtime:brdf.glsl>
 #moj_import <fornax_runtime:env_brdf.glsl>
 #moj_import <fornax_runtime:atmosphere.glsl>
@@ -27,10 +29,6 @@
 #moj_import <fornax_runtime:surface_lighting.glsl>
 
 #define PLAGUE_LOCAL_LIGHTING 0 //[0 1] compile "Local Coloured Light" {0="Off" 1="Experimental"}
-
-// Draws fog strength instead of the world, to check against tools/plague_atmo_lut.py. Declared
-// here, not in fog_options.glsl: terrain.fsh imports that and is built with no options block.
-#define u_FogOpacityView 0 //[0 1] runtime "Fog Opacity View" {0="Off" 1="On"}
 
 uniform sampler2D u_Input0; // builtin.gNormal
 #define G_NORMAL u_Input0
@@ -67,11 +65,7 @@ uniform sampler2D u_Input10; // builtin.waterDepth. Reversed-Z, 0.0 = no water s
 #define WATER_DEPTH_TEX u_Input10
 uniform sampler2D u_Input11; // causticsTexture
 #define CAUSTICS_TEX u_Input11
-// Aliases sunShadowMap to a plain sampler2D under a second target string (graph.toml):
-// FullscreenPassRunner keys the comparison-sampler branch on that exact string, so this reads raw
-// stored depth where SUN_SHADOW_MAP can only return a pass/fail compare.
-uniform sampler2D u_Input12; // sunShadowMapRaw (raw, non-comparison. Debug only, see DBG_SHADOW_QUERY_3)
-#define SUN_SHADOW_MAP_RAW u_Input12
+// u_Input12 stays reserved; raw-map debug views come through RT_SHADOW_COMPOSITE instead.
 uniform sampler2D u_Input13; // moonAlbedo, equirectangular, near side centred
 #define MOON_ALBEDO u_Input13
 uniform sampler2D u_Input14; // moonNormal, tangent-space relief for the same projection
@@ -98,10 +92,6 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 uniform sampler2D u_Input18; // rtShadowComposite
 #define RT_SHADOW_COMPOSITE u_Input18
 // u_Input19 stays reserved (bound to builtin.depth) so no input numbers shift.
-// Debug and normal paths read the same applied shadow result. That keeps sampler count under
-// Metal's limit of sixteen, with room for both raw-depth and motion debug views.
-//#define PLAGUE_DEBUG_VIEWS //[] compile "Motion and Shadow-Map Debug Views"
-
 // Must follow NOISE_TEX: PLAGUE_CLOUD_NOISE expands inline where clouds.glsl calls it, so an
 // earlier import would name NOISE_TEX before it exists. clouds.glsl also declares
 // CLOUDS_VOLUMETRIC/u_CloudAltitude/u_CloudAmount/u_CloudSpeed/CLOUD_RESOLUTION for every consumer.
@@ -118,7 +108,6 @@ uniform sampler2D u_Input18; // rtShadowComposite
 #define DBG_NORMALS     1
 #define DBG_ALBEDO      2
 #define DBG_MATERIAL    3
-#define DBG_MOTION      4
 #define DBG_SSAO        5
 #define DBG_AO          7
 #define DBG_BLOCK_LIGHT 8
@@ -153,11 +142,9 @@ uniform sampler2D u_Input18; // rtShadowComposite
 // block computes visibility()/ndotl/worldPos/sunDir. Aim the crosshair at the fragment in question.
 #define DBG_SHADOW_QUERY_1 31
 #define DBG_SHADOW_QUERY_2 32
-#define DBG_SHADOW_QUERY_3 33
 
 // Full-screen view of the shadow map's own contents, not a crosshair readback: splits "write-side"
 // (caster absent from the map) from "read-side" (caster present, addressed wrong) in one look.
-#define DBG_SHADOW_MAP_VIEW 40
 
 // Seven number-carrier ordinals walking one pixel's specular chain: decoded F0, split-sum energy,
 // mirror content, wide content and its trust, the environment term, the direct sun term, the final
@@ -267,6 +254,21 @@ vec3 plagueUnderwaterSunTint(float pattern) {
 #endif
 
 void main() {
+#if PLAGUE_AIR_SHADOW_DEBUG
+    // A slice of air at one fixed distance, not the surface lighting. Cloud and water passes
+    // drawn after this can cover it, so check it over dry solid ground.
+    ivec2 probeCell = clamp(ivec2(texCoord * float(PLAGUE_ATMO_AERIAL_GRID)),
+                             ivec2(0), ivec2(PLAGUE_ATMO_AERIAL_GRID - 1));
+    // Reading the nearest value keeps the true coverage flag; blending between samples would
+    // turn an unknown reading into a fake partial-coverage value.
+    float probeVisibility = texelFetch(ATMO_AERIAL, probeCell
+            + ivec2(PLAGUE_ATMO_AERIAL_SKY_SLICE * PLAGUE_ATMO_AERIAL_GRID, 0), 0).a;
+    float probeCoverage = texelFetch(ATMO_AERIAL, probeCell
+            + ivec2(PLAGUE_ATMO_AERIAL_CHROMA_SLICE * PLAGUE_ATMO_AERIAL_GRID, 0), 0).a;
+    fragColor = vec4(1.0 - probeCoverage, probeCoverage * (1.0 - probeVisibility),
+                     probeCoverage * probeVisibility, 1.0);
+    return;
+#endif
     // Reversed-Z: the buffer clears to 0.0 = far, so depth zero means nothing was drawn here. Let
     // vanilla's sky show through rather than painting over it when this pack does not own the sky.
     float depth = texture(G_DEPTH, texCoord).r;
@@ -280,7 +282,15 @@ int debugView = int(u_Param3 + 0.5);
         if (debugView == DBG_ALBEDO)   { fragColor = vec4(albedoSample.rgb, 1.0); return; }
         if (debugView == DBG_MATERIAL) { fragColor = vec4(texture(G_BUF, vec3(texCoord, 1.0)).rgb, 1.0); return; }
 #ifdef PLAGUE_DEBUG_VIEWS
-        if (debugView == DBG_MOTION)   { fragColor = vec4(abs(texture(G_MOTION, texCoord).rg) * 40.0, 0.0, 1.0); return; }
+        if (debugView == DBG_MOTION) {
+#ifdef SHADOWS
+            fragColor = texelFetch(RT_SHADOW_COMPOSITE, ivec2(gl_FragCoord.xy), 0);
+#else
+            // The shadow prepass is left out of this build; the original motion input still works.
+            fragColor = vec4(abs(texture(G_MOTION, texCoord).rg) * 40.0, 0.0, 1.0);
+#endif
+            return;
+        }
 #endif
         if (debugView == DBG_SSAO)     { fragColor = vec4(vec3(texture(SSAO_TEX, texCoord).r), 1.0); return; }
         if (debugView == DBG_AO)       { fragColor = vec4(vec3(texture(G_BUF, vec3(texCoord, 2.0)).r), 1.0); return; }
@@ -299,32 +309,14 @@ int debugView = int(u_Param3 + 0.5);
             return;
         }
         if (debugView == DBG_SHADOW_MAP_VIEW) {
-            // texCoord is the shadow map's own UV: this is the light's view, so a caster's outline
-            // here does not line up with where it sits on screen.
-            //
-            // No linearization: ShadowCamera is orthographic (setOrtho), so the stored value is
-            // already linear. Forward-Z, clear = 1.0.
-            //
-            // Remapped to be readable: real geometry measures into about the bottom fifth of the
-            // range (SHADOW_MAP_VIEW_OCCUPIED, measured; retune if ShadowCamera.java's
-            // depthHalfExtent changes), and a plain ramp would crush every caster near black. The
-            // clear value gets its own colour so "nothing drawn" cannot read as "far geometry".
 #ifdef SHADOWS
-            const float SHADOW_MAP_VIEW_OCCUPIED = 0.2;
-            const vec3 SHADOW_MAP_VIEW_CLEAR_COLOR = vec3(1.0, 0.0, 0.7);
 #ifdef PLAGUE_DEBUG_VIEWS
-            ivec2 dbgShadowMapTexel = ivec2(texCoord * vec2(textureSize(SUN_SHADOW_MAP_RAW, 0)));
-            float dbgShadowMapDepth = texelFetch(SUN_SHADOW_MAP_RAW, dbgShadowMapTexel, 0).r;
+            // The prepass decodes the value before writing it as RGBA16F, so this view keeps
+            // full precision.
+            fragColor = texelFetch(RT_SHADOW_COMPOSITE, ivec2(gl_FragCoord.xy), 0);
 #else
-            // Without the raw shadow-map read compiled in, the view shows its clear sentinel.
-            float dbgShadowMapDepth = 1.0;
+            fragColor = plagueShadowDebugMapColor(1.0);
 #endif
-            if (dbgShadowMapDepth >= 0.999) {
-                fragColor = vec4(SHADOW_MAP_VIEW_CLEAR_COLOR, 1.0);
-            } else {
-                float dbgShadowMapRescaled = clamp(dbgShadowMapDepth / SHADOW_MAP_VIEW_OCCUPIED, 0.0, 1.0);
-                fragColor = vec4(vec3(dbgShadowMapRescaled), 1.0);
-            }
 #else
             fragColor = vec4(1.0);
 #endif
@@ -697,14 +689,9 @@ int debugView = int(u_Param3 + 0.5);
         return;
     }
     if (debugView == DBG_SHADOW_QUERY_2 || debugView == DBG_SHADOW_QUERY_3) {
-        float dbgSlope = 1.0 - abs(dot(normal, sunDir));
-        vec3 dbgBiased = worldPos + normal * (0.05 + 0.35 * dbgSlope) + sunDir * 0.05;
-        vec4 dbgLightClip = u_SunViewProj * vec4(dbgBiased, 1.0);
-        vec3 dbgLightNdc = dbgLightClip.xyz / dbgLightClip.w;
-        float dbgRadius = length(dbgLightNdc.xy);
-        float dbgDistort = dbgRadius * u_ShadowMapParams.x + (1.0 - u_ShadowMapParams.x);
-        vec2 dbgShadowUv = (dbgLightNdc.xy / dbgDistort) * 0.5 + 0.5;
-        float dbgRawDepth = dbgLightNdc.z;
+        vec3 dbgCoordinates = plagueShadowDebugCoordinates(worldPos, normal, sunDir);
+        vec2 dbgShadowUv = dbgCoordinates.xy;
+        float dbgRawDepth = dbgCoordinates.z;
         bool dbgInRange = dbgShadowUv.x > 0.0 && dbgShadowUv.x < 1.0
                 && dbgShadowUv.y > 0.0 && dbgShadowUv.y < 1.0
                 && dbgRawDepth > 0.0 && dbgRawDepth < 1.0;
@@ -712,18 +699,12 @@ int debugView = int(u_Param3 + 0.5);
             fragColor = vec4(dbgShadowUv, dbgInRange ? 1.0 : 0.0, visibility);
             return;
         }
-        // DBG_SHADOW_QUERY_3: the stored depth at dbgShadowUv, read through SUN_SHADOW_MAP_RAW,
-        // since SUN_SHADOW_MAP can only return a pass/fail compare. The clamped UV means this only
-        // means anything when QUERY_2's inRange was 1.0.
+        // QUERY_3's full raster depth is sampled and packed by the prepass.
 #ifdef PLAGUE_DEBUG_VIEWS
-        ivec2 dbgShadowTexel = ivec2(clamp(dbgShadowUv, 0.0, 1.0) * vec2(textureSize(SUN_SHADOW_MAP_RAW, 0)));
-        float dbgStoredDepth = texelFetch(SUN_SHADOW_MAP_RAW, dbgShadowTexel, 0).r;
+        fragColor = texelFetch(RT_SHADOW_COMPOSITE, ivec2(gl_FragCoord.xy), 0);
 #else
-        float dbgStoredDepth = 0.0;
+        fragColor = vec4(dbgRawDepth, 0.0, 0.0, 0.0);
 #endif
-        // Red = the depth this query compares, blue = what the map holds there, green empty.
-        // Matching red and blue means the comparison would pass.
-        fragColor = vec4(dbgRawDepth, 0.0, dbgStoredDepth, 0.0);
         return;
     }
 
@@ -1465,125 +1446,6 @@ int debugView = int(u_Param3 + 0.5);
     }
 #endif
 
-#if PLAGUE_FOG
-    // Ungated on u_WaterState: plagueFogTerms itself carries the eye-in-water arm (fog.glsl).
-    {
-        // u_RenderFog.y is the headless fallback, not the primary: it tracks fog attribute
-        // distances rather than the chunk grid, so the veil can sit below 1.0 where geometry ends.
-        float renderDistance = u_Param2 > 1.0 ? u_Param2 : max(u_RenderFog.y, 32.0);
-        // atmColorMult is computed above the sky branch (see there) so the dome and the fog it
-        // fades into agree.
-        // The marched air along this pixel's froxel, and the sky it dissolves into, from the tables
-        // (fog_aerial.glsl). texCoord is the froxel coordinate: the same NDC the ray came from.
-        float fogDist = length(worldPos);
-        float fogFar = plagueAtmoAerialFar();
-        vec4 fogAerial = plagueAtmoAerial(texCoord, fogDist, fogFar);
-        float fogNearT = plagueAtmoAerial(texCoord, max(fogDist - PLAGUE_FOG_SKY_LIGHT_REACH, 0.0), fogFar).a;
-        vec3 fogDir = worldPos / max(fogDist, 1e-4);
-        // Same Nether gate as the sky branch: the table assumes an Overworld sun, so this would
-        // fade toward daylight otherwise.
-        vec3 fogSky;
-        if (u_WorldBounds.w == 2.0) {
-            // Varied by noise on the wind clock so it drifts. Stands in until a real aerosol
-            // profile.
-            float syncedTime = u_SkyState.w * 0.05;
-            vec2 driftUv = fogDir.xz * 0.8 + vec2(syncedTime * 0.012, -syncedTime * 0.008);
-            float drift = texture(NOISE_TEX, driftUv).r;
-            fogSky = u_FogColor.rgb * mix(0.55, 1.15, drift);
-        } else if (u_WorldBounds.w == 3.0) {
-            // Terrain fades into the same sky it sits under, so the far islands and the medium
-            // behind them meet instead of showing an edge.
-            fogSky = plagueEndSky(fogDir, plagueEndSkyLevel());
-        } else {
-            fogSky = plagueAtmoSkyView(fogDir, sunDirTrue, plagueAtmoCameraRadius()).rgb;
-            // Same warmth the open dome gets (sky.glsl), sampled along the border's own ray:
-            // without it, geometry fades into a sky warm above eye level and flat white below.
-            fogSky = plagueWarmSkyBand(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y);
-            fogSky = plagueStormDarkenSky(fogSky, fogDir.y, dot(fogDir, sunDirTrue), sunDirTrue.y,
-                                          rainFactor, clamp(u_FrameState.z, 0.0, 1.0));
-            // The same darkening on the air, not only on the sky it fades into. The table marches
-            // plain air and knows nothing about a storm, so the near air keeps tracking the real
-            // sun while the far sky sits on the storm swatch, up to 16 times apart.
-            fogAerial.rgb = plagueStormDarkenSky(fogAerial.rgb, fogDir.y, dot(fogDir, sunDirTrue),
-                                                 sunDirTrue.y, rainFactor,
-                                                 clamp(u_FrameState.z, 0.0, 1.0));
-        }
-        PlagueFogDrive fogDrive = PLAGUE_FOG_DRIVE(lighting);
-        PlagueFogTerms fogTerms = plagueFogTermsAerial(worldPos, skyLight, u_CameraSkyLight.x,
-                                                 renderDistance, fogAerial, fogNearT, fogSky,
-                                                 plagueAtmoAerialChroma(texCoord), fogDrive,
-                                                 u_FogBorderDensity, u_DepthDarkness,
-                                                 plagueChunksToBlocks(u_UnderwaterFogStart),
-                                                 plagueChunksToBlocks(u_WaterDistanceFog),
-                                                 plagueChunksToBlocks(u_WaterDepthFog),
-                                                 vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
-                                                 vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
-                                                      plagueChunksToBlocks(u_WaterDarknessDepth)), lighting, atmColorMult);
-        // No cap on the in-water leg: this fogs the whole eye-to-fragment ray. The water term is
-        // the only thing that seals the horizon underwater, since the border curve
-        // (d/renderDistance)^16 gives nothing below ~160 blocks.
-        if (u_FogOpacityView > 0.5) {
-            // Red edge fog, green distance fog, blue how far the pixel is as a share of the
-            // render distance. Blue is there so strength and distance can be read off one still.
-            fragColor = vec4(clamp(fogTerms.border, 0.0, 1.0),
-                             clamp(dot(fogTerms.atm, vec3(0.3333)), 0.0, 1.0),
-                             clamp(length(worldPos) / max(renderDistance, 1.0), 0.0, 1.0), 1.0);
-            return;
-        }
-        lit = mix(lit, fogTerms.atmColor, clamp(fogTerms.atm, 0.0, 1.0));
-        // plagueBorderColorWeight (fog.glsl): squared so a bright sun-side sky reading doesn't
-        // glow in ahead of the render cutoff. See its own comment for why.
-        lit = mix(lit, fogTerms.borderColor, plagueBorderColorWeight(fogTerms.border));
-        lit = mix(lit, fogTerms.waterColor, clamp(fogTerms.water, 0.0, 1.0));
-
-        lit = max(lit, vec3(0.0));
-        lit *= fogTerms.uwTint;
-
-#if PLAGUE_UNDERWATER
-        // Exponential water fog only approaches closure, leaving loaded chunks as rectangles
-        // against the depth<=0 branch; this hands the far field over before the render-distance
-        // boundary, leaving the near 72% alone.
-        //
-        // uwClosureScale takes the shorter of render distance and (Water Distance Fog x
-        // uwVisibilityMult), so a tight visibility setting closes the horizon near itself. 3x/6x
-        // (night-or-rain/clear-noon) is where the veil above is already ~95% opaque on its own.
-        //
-        // Pure exponential (plagueGetWaterFog), not a near/far smoothstep band: smoothstep on
-        // length(worldPos) is a sphere test against camera-relative position, and a sphere cutting
-        // the frustum draws a curved, camera-following edge no retuning removes.
-        //
-        // Always on rather than a player option: it is redundant whenever distanceFog <=
-        // renderDistance and does real work only past that, so "Water Distance Fog alone decides
-        // underwater visibility" has to hold either way.
-        if (u_WaterState.x > 0.5 && fragSubmerged) {
-            float uwClearNoon = lighting.noonFactor * (1.0 - clamp(lighting.rainFactor, 0.0, 1.0));
-            float uwVisibilityMult = mix(3.0, 6.0, uwClearNoon);
-            float uwClosureScale = min(renderDistance,
-                    plagueChunksToBlocks(u_WaterDistanceFog) * uwVisibilityMult);
-            float uwClosureDist = length(worldPos);
-            float horizonClosure = plagueGetWaterFog(uwClosureDist, uwClosureScale);
-            if (debugView == DBG_UW_CLOSURE) {
-                fragColor = vec4(uwClosureScale, uwClosureDist, horizonClosure, uwVisibilityMult);
-                return;
-            }
-            // Same darkening the geometry veil takes (fog.glsl's terms.waterColor), or the two
-            // paths disagree in brightness the moment the ramps do anything.
-            vec3 closedVeil = plagueWaterFogColor(lighting)
-                            * plagueWaterVeilDarkness(worldPos,
-                                                      plagueChunksToBlocks(u_WaterDistanceFog),
-                                                      plagueChunksToBlocks(u_WaterDarknessDepth),
-                                                      u_WaterDistanceDarkness, u_WaterDepthDarkness)
-                            * plagueAuthoredToLinear(
-                                  plagueUnderwaterMult(renderDistance, renderDistance,
-                                                       u_DepthDarkness, lighting, vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB)) * 0.85);
-            vec3 closedRadiance = plagueUnderwaterClosedRadiance(
-                    normalize(worldPos), closedVeil, lighting.sunFactor,
-                    plagueChunksToBlocks(u_WaterDistanceFog));
-            lit = mix(lit, closedRadiance, horizonClosure);
-        }
-#endif
-    }
-#endif
 
     fragColor = vec4(lit, 1.0);
 }

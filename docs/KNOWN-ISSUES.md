@@ -18,14 +18,12 @@ notes; what is here is what a reader needs to know the limit exists.
 
 ## Atmosphere
 
+- **Camera rotation can shift opaque fog when anti-aliasing is off.** `shaders/post/fog_composite.fsh` reads current depth and adds fog in one step; whether this holds up during motion is not yet checked in game.
 - **The climate signal snaps at biome borders**, so fog character can change sharply across a line.
 - **Thunder is not its own fog driver.** Heavy weather reads as ordinary rain.
-- **The resolve sits close to Metal's ceiling of 16 live samplers per fragment function**, at 14
-  (`tools/check_metal_pipelines.py` counts them). The
-  `gbuf_consolidate` pass (`graph.toml`, see `docs/PACK-FORMAT.md`) already buys back three slots;
-  the motion and raw-shadow-map debug views (`PLAGUE_DEBUG_VIEWS`) are left out of the build either
-  way, and the ceiling itself cannot be raised from where this engine plugs in: Blaze3D's bind-group
-  API has no route to the separate-sampler descriptors Metal argument buffers would need.
+- **Metal allows only 16 live samplers per fragment shader.** The material resolve and fog composite each use 13 with ray-traced shadows on (`tools/check_surface_metal_compat.py` checks the normal and debug builds); adding more inputs needs a fresh count on real hardware.
+- **A lit patch of fog between two sheltered points can lose its direct light** (`shaders/include/fog_aerial.glsl`). Fixing the sky-light guard at cave mouths needs a way to measure enclosed spaces that still keeps caves dark.
+- **Sharp shadow edges in fog stay blurry from some angles** (`shaders/include/atmo_lut.glsl`). A test with a hard-edged shape still shows 17.42% error in total light, even though the same-ray extension is stable; shadow sampling needs an accuracy check across angles, not just motion.
 - **Under the scattering sky, a cloud's DIRECT sun/moon light still comes from the palette**
   (`lighting.light` / `plagueMoonColor` in `shaders/include/clouds.glsl`), so a cloud's lit side can
   disagree with the air under it at dusk. A table-lit direct term was tried and turned down by eye:
@@ -56,10 +54,7 @@ notes; what is here is what a reader needs to know the limit exists.
   palette's level; past six degrees below the horizon the sun reaches only the air above 15 km
   and the glow is a fifth of the palette's by eight. Real skies keep more from high aerosol the
   model does not carry. About twenty seconds of game time.
-- **The aerial table stores one transmittance channel** and readers rebuild the other two
-  with an exponent taken at the camera's height (`plagueAtmoTransmittanceChroma`), exact for
-  one medium and within 3% at sea level for the mixed air. A second table would need a sampler
-  the resolve does not have.
+- **Water and reflection code rebuild full-color light loss from one stored channel** (`plagueAtmoTransmittanceChroma` in `shaders/include/atmo_lut.glsl`). Matching areas where mist mixes unevenly with air needs full-color light-loss data, the same as the solid-surface path uses.
 
 ## Clouds
 
@@ -140,6 +135,8 @@ notes; what is here is what a reader needs to know the limit exists.
   of a surface hides the surface, not the leaf.
 
 ## Performance
+
+- **The test local-air fog step is slower than the speed target** (`shaders/include/atmo_lut.glsl`). A test at 1728 × 1084 measured about 7.6 ms with the compute-based version, against 4.0 ms without local fog. This does not show the cost of the new one-pass graphics version; sharing light data between frames is future work, once the math is confirmed correct.
 
 - **Water scenes run around 55 FPS** against 75 to 110 elsewhere. A long-standing cost rather than a
   recent regression, and not yet measured per-feature.

@@ -22,22 +22,11 @@ vec4 plagueAtmoFetchMultiScatter(vec2 uv) { return texture(u_Input15, uv); }
 vec4 plagueAtmoFetchSkyView(vec2 uv) { return texture(u_Input16, uv); }
 
 #ifdef SHADOWS
+#moj_import <fornax_runtime:atmo_shadow.glsl>
 // Per-pixel state. The march callback gets sample points measured along the segment.
 vec3 plagueVoxelFogOrigin;
 float plagueAtmoSunShadow(vec3 posBlocks, vec3 sunDir) {
-    posBlocks += plagueVoxelFogOrigin;
-    float dist = length(posBlocks);
-    float reach = max(u_ShadowDistance, 1.0);
-    if (dist >= reach) return 1.0;
-    vec4 lightClip = u_SunViewProj * vec4(posBlocks + sunDir * PLAGUE_ATMO_SHADOW_BIAS_BLOCKS, 1.0);
-    vec3 ndc = lightClip.xyz / lightClip.w;
-    float distortion = length(ndc.xy) * u_ShadowMapParams.x + (1.0 - u_ShadowMapParams.x);
-    vec2 uv = (ndc.xy / distortion) * 0.5 + 0.5;
-    if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0 || ndc.z <= 0.0 || ndc.z >= 1.0)
-        return 1.0;
-    // Same shadow-map boundary fade as atmo_aerial.comp; no reflection-specific tuning.
-    return mix(plagueShadowLookup(posBlocks, uv, ndc.z), 1.0,
-               smoothstep(reach * 0.75, reach, dist));
+    return plagueAtmoShadowAt(posBlocks + plagueVoxelFogOrigin, sunDir).x;
 }
 #endif
 

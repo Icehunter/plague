@@ -1078,6 +1078,9 @@ void plagueCloudUpperDecks(out PlagueCloudDeck cirrus, out PlagueCloudDeck cirro
                                         0.0,
                                         plagueCloudAxisSwing(PLAGUE_CLOUD_ALTOCUMULUS_SHEAR),
                                         u_CloudTierAltocumulus);
+    // Lumpy high cloud types use their own height shape; cirrus keeps the flat sheet shape.
+    cirrocumulus.family = PLAGUE_CLOUD_CIRROCUMULUS_CONVECTIVE;
+    altocumulus.family = PLAGUE_CLOUD_ALTOCUMULUS_CONVECTIVE;
 }
 
 /**
