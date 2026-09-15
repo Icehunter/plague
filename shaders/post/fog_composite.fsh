@@ -45,6 +45,9 @@ uniform sampler2D u_Input12; // sunEntityShadowMapRaw
 float plagueAtmoSunShadow(vec3 posBlocks, vec3 sunDir) {
     return plagueAtmoShadowAt(posBlocks, sunDir).x;
 }
+bool plagueAtmoShadowCovers(vec3 posBlocks, vec3 sunDir) {
+    return plagueAtmoShadowBoxCovers(posBlocks, sunDir);
+}
 #endif
 
 vec4 plagueAtmoFetchTransmittance(vec2 uv) { return texture(u_Input4, uv); }

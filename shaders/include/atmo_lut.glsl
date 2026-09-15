@@ -647,6 +647,10 @@ void plagueAtmoScatterAt(vec3 pos, vec3 sunDir, PlagueAtmoPhases phases, vec3 su
  * @param posBlocks  camera-relative world position, in blocks
  */
 float plagueAtmoSunShadow(vec3 posBlocks, vec3 lightDir);
+// Whether this pass's shadow map has data at this point, in that pass's own space. A pass that
+// shifts its lookup must shift this the same way, or the march throws away samples that were
+// inside the box. False has to mean "the answer here is always the same", never "not sure".
+bool plagueAtmoShadowCovers(vec3 posBlocks, vec3 lightDir);
 
 // Where in its slot each of the eight shadow checks below sits, 0..1. A pass may set this per
 // pixel to break up the hard step at the edge of a light shaft. The default 0.5 is the middle of
@@ -768,12 +772,21 @@ vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec
             // All eight checks share the one offset, so they stay evenly spread and the cell's
             // average comes out right wherever the offset lands. Moving the whole set is what
             // softens the edge of a shaft instead of stepping it.
+            // Eight is one check per block across the cell, and stays eight wherever the shadow
+            // map has data. Where it has none, every check in the cell gives the same answer, so
+            // seven of them are copies of the first. If both ends of the cell fall outside the
+            // box, all of it does: the box has no dents and the cell is a straight line. So this
+            // drops work that could not change the answer, not detail.
+            int shadowSamples =
+                    plagueAtmoShadowCovers(dir * (tPrev / PLAGUE_ATMO_METRES_PER_BLOCK), shadowLightDir)
+                 || plagueAtmoShadowCovers(dir * (tNext / PLAGUE_ATMO_METRES_PER_BLOCK), shadowLightDir)
+                    ? 8 : 1;
             float visible = 0.0;
-            for (int shadowStep = 0; shadowStep < 8; shadowStep++) {
-                float shadowT = tPrev + (float(shadowStep) + shadowJitter) * (dt / 8.0);
+            for (int shadowStep = 0; shadowStep < shadowSamples; shadowStep++) {
+                float shadowT = tPrev + (float(shadowStep) + shadowJitter) * (dt / float(shadowSamples));
                 visible += plagueAtmoSunShadow(dir * (shadowT / PLAGUE_ATMO_METRES_PER_BLOCK), shadowLightDir);
             }
-            visible *= 1.0 / 8.0;
+            visible *= 1.0 / float(shadowSamples);
 #else
             float visible = plagueAtmoSunShadow(dir * (t / PLAGUE_ATMO_METRES_PER_BLOCK), shadowLightDir);
 #endif

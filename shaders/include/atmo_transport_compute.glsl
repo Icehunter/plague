@@ -30,6 +30,9 @@ layout(set = 0, binding = 8) uniform sampler2D u_EntityShadowRaw;
 float plagueAtmoSunShadow(vec3 posBlocks, vec3 sunDir) {
     return plagueAtmoShadowAt(posBlocks, sunDir).x;
 }
+bool plagueAtmoShadowCovers(vec3 posBlocks, vec3 sunDir) {
+    return plagueAtmoShadowBoxCovers(posBlocks, sunDir);
+}
 #endif
 
 vec4 plagueAtmoFetchTransmittance(vec2 uv) {

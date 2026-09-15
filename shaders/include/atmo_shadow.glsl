@@ -1,6 +1,21 @@
 #ifndef PLAGUE_ATMO_SHADOW
 #define PLAGUE_ATMO_SHADOW
 
+/**
+ * Whether plagueAtmoShadowAt has an answer for this point.
+ *
+ * False means that function takes one of its early exits and hands back the same no-shadow (1,0)
+ * everywhere in that region. It sits right above this one and uses the same bias and the same
+ * three tests: the pair is only any use while they agree, so a change to one is a change to both.
+ */
+bool plagueAtmoShadowBoxCovers(vec3 posBlocks, vec3 lightDir) {
+    vec4 clip = u_SunViewProj
+            * vec4(posBlocks + lightDir * PLAGUE_ATMO_SHADOW_BIAS_BLOCKS, 1.0);
+    if (!(abs(clip.w) > 0.0)) return false;
+    vec3 ndc = clip.xyz / clip.w;
+    return all(lessThan(abs(ndc.xy), vec2(1.0))) && ndc.z > 0.0 && ndc.z < 1.0;
+}
+
 // x is visibility; y certifies captured light-volume coverage. Unknown retains the analytic
 // unshadowed atmosphere (1,0); it is not a measured clear ray and needs wider caster coverage.
 vec2 plagueAtmoShadowAt(vec3 posBlocks, vec3 lightDir) {

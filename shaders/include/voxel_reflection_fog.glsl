@@ -28,6 +28,11 @@ vec3 plagueVoxelFogOrigin;
 float plagueAtmoSunShadow(vec3 posBlocks, vec3 sunDir) {
     return plagueAtmoShadowAt(posBlocks + plagueVoxelFogOrigin, sunDir).x;
 }
+// Same origin shift as the lookup above. Without the shift this would call a cell empty while
+// its real samples sit inside the box, and the march would drop them.
+bool plagueAtmoShadowCovers(vec3 posBlocks, vec3 sunDir) {
+    return plagueAtmoShadowBoxCovers(posBlocks + plagueVoxelFogOrigin, sunDir);
+}
 #endif
 
 // Only how much light is lost. Same steps as plagueAtmoMarchTo, minus a round of table reads.
