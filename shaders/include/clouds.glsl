@@ -659,8 +659,12 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     vec3 altitudeCorrection = mix(vec3(1.0), deckColumn / max(eyeColumn, vec3(1e-4)),
                                   smoothstep(PLAGUE_CLOUD_SUN_ALT_LO, PLAGUE_CLOUD_SUN_ALT_HI,
                                              sunDirTrue.y));
+    // Clouds take the same sunset warmth as the ground and the water (surface_lighting,
+    // water_composite). Without it the clouds stay a flat colour while the land under them
+    // has gone orange. Colour shifts, brightness does not. Sun only: moonlit clouds and the
+    // End's sky-lit clouds keep their own colour.
     vec3 directRadiance = lightSign > 0.0
-            ? lighting.light * altitudeCorrection
+            ? plagueWarmLowSun(lighting.light, sunDirTrue.y) * altitudeCorrection
             : plagueMoonColor(plagueAirEyePos(cameraPosAbs.y), lightDir);
     if (u_WorldBounds.w == 3.0) {
         // Nothing shines on a cloud in the End. It is lit by the sky it hangs in, so it takes that
@@ -670,7 +674,7 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     }
 #else
     vec3 directRadiance = lightSign > 0.0
-            ? lighting.light
+            ? plagueWarmLowSun(lighting.light, sunDirTrue.y)
             : plagueMoonColor(plagueAirEyePos(cameraPosAbs.y), lightDir);
 #endif
 
