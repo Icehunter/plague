@@ -21,7 +21,15 @@ vec2 plagueAtmoShadowAt(vec3 posBlocks, vec3 lightDir) {
 
     // A receiver can be far along a captured light ray. Camera distance cannot invalidate its
     // blocker; the shared lookup still owns certified RT replacement and raster/entity fallback.
-    return vec2(plagueShadowLookup(posBlocks, uv, ndc.z), 1.0);
+    //
+    // Fade to open sky over the last quarter of the box instead of cutting off at its wall. A
+    // hard cut jumps from full shade to full light with nothing between, and with a low sun that
+    // jump lands beside a hill, where it looks like the hill is failing to shade the air next to
+    // it. ndc.xy is 0 at the camera and 1 at the wall, so the fade follows the box that was
+    // really captured, long side toward the sun and all.
+    float edge = max(abs(ndc.x), abs(ndc.y));
+    float open = smoothstep(0.75, 1.0, edge);
+    return vec2(mix(plagueShadowLookup(posBlocks, uv, ndc.z), 1.0, open), 1.0);
 }
 
 #endif

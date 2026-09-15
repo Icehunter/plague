@@ -72,6 +72,15 @@ vec3 plagueVoxelReflectionFog(vec3 radiance, vec3 origin, vec3 hit, float skyLig
     float radius = PLAGUE_PLANET_RADIUS
             + plagueAtmoAltitude(u_CameraAbs.y + origin.y, plagueAtmoSeaLevel());
     vec3 airOrigin = vec3(0.0, radius, 0.0);
+    // This march starts at the water surface, not the camera. Both hooks inside it count from the
+    // march's start, so both have to be told where that is. Miss one and it reads its field a
+    // whole water surface away, which out at reflection range is several mist cells.
+    //
+    // A guard, not a live fix: PLAGUE_ATMO_LOCAL_MIST is only set by atmo_transport.glsl, which
+    // this program does not include, so the mist arm is left out of the build here and only the
+    // smooth layer runs. Set anyway, because the day that arm is turned on for reflections is the
+    // day the grid would be read from the camera with nothing to say so.
+    plagueAtmoMistOrigin = origin;
 #ifdef SHADOWS
     plagueVoxelFogOrigin = origin;
 #endif

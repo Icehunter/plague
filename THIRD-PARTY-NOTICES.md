@@ -10,6 +10,20 @@ in this repository; see `ASSETS.md` for the same rule applied to binary assets.
 
 ---
 
+## MurmurHash3: `fmix32` finaliser
+
+The last mixing step of `plagueAtmoMistHash` in `shaders/include/atmo_mist.glsl`. It keeps
+next-door mist cells unalike, so the cell grid does not show through the mist.
+
+Source: <https://github.com/aappleby/smhasher/blob/master/src/MurmurHash3.cpp>
+
+```
+MurmurHash3 was written by Austin Appleby, and is placed in the public
+domain. The author hereby disclaims copyright to this source code.
+```
+
+---
+
 ## "Hash without Sine": `hash12`
 
 Defined in `shaders/post/ssr_trace_water.fsh` and `shaders/post/ssao.fsh` (as `hash12`) and in

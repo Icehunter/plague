@@ -6,6 +6,13 @@
 #moj_import <fornax_runtime:color.glsl>
 #moj_import <fornax_runtime:water_options.glsl>
 #define PLAGUE_ATMO_READS_AERIAL
+// Interleaved gradient noise (Jimenez 2014), fixed per pixel. It slides the march's eight shadow
+// checks inside their slots, so the edge of a light shaft breaks up across a block instead of
+// stepping over it as the sun crosses a check. The same every frame: there is no pass behind this
+// one to clean up a moving pattern, and an uncleaned one flickers. Must come before the transport
+// import, where the march that uses it lives. One line, no backslash: GLSL 330 cannot wrap a
+// define over two lines and the engine throws the shader out.
+#define PLAGUE_ATMO_SHADOW_JITTER fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y))
 #moj_import <fornax_runtime:atmo_transport.glsl>
 #moj_import <fornax_runtime:fog_aerial.glsl>
 

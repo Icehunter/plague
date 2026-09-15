@@ -117,6 +117,9 @@ struct PlagueAtmoAir {
     float hazeScale;    // multiplier on the aerosol scale height
     float mistDensity;  // ground-mist scattering per metre at sea level; 0 for the sky tables
     float mistHeight;   // its e-folding height in metres
+    // How much mist the weather asks for, 0..PLAGUE_ATMO_MIST_MAX_DRIVE. The patchy mist reads it
+    // so it fades on a clear day the way the smooth layer above does.
+    float mistDrive;
 };
 
 /**
@@ -131,6 +134,7 @@ PlagueAtmoAir plagueAtmoAir(float rain, float thunder) {
     air.hazeScale = 1.0 - 0.2 * rain;
     air.mistDensity = 0.0;
     air.mistHeight = 1.0;
+    air.mistDrive = 0.0;
     return air;
 }
 
@@ -145,8 +149,8 @@ PlagueAtmoAir plagueAtmoAir(float rain, float thunder) {
  */
 PlagueAtmoAir plagueAtmoAirWithMist(PlagueAtmoAir air, float mistAmount, float fogAmount,
                                     float mistHeightBlocks) {
-    air.mistDensity = PLAGUE_ATMO_MIST_SIGMA
-            * clamp(mistAmount, 0.0, PLAGUE_ATMO_MIST_MAX_DRIVE) * max(fogAmount, 0.0);
+    air.mistDrive = clamp(mistAmount, 0.0, PLAGUE_ATMO_MIST_MAX_DRIVE);
+    air.mistDensity = PLAGUE_ATMO_MIST_SIGMA * air.mistDrive * max(fogAmount, 0.0);
     air.mistHeight = max(mistHeightBlocks, 1.0) * PLAGUE_ATMO_METRES_PER_BLOCK;
     return air;
 }
@@ -644,6 +648,15 @@ void plagueAtmoScatterAt(vec3 pos, vec3 sunDir, PlagueAtmoPhases phases, vec3 su
  */
 float plagueAtmoSunShadow(vec3 posBlocks, vec3 lightDir);
 
+// Where in its slot each of the eight shadow checks below sits, 0..1. A pass may set this per
+// pixel to break up the hard step at the edge of a light shaft. The default 0.5 is the middle of
+// the slot, which is what every pass gets unless it asks for something else.
+// Must stay the same from frame to frame: nothing after this march adds frames together, so a
+// moving pattern would only flicker.
+#ifndef PLAGUE_ATMO_SHADOW_JITTER
+#define PLAGUE_ATMO_SHADOW_JITTER 0.5
+#endif
+
 vec3 plagueAtmoShadowLightDirection() {
     // Fornax's light camera uses a flat (orthographic) view and looks away from the light.
     // Reading its depth row backward gives the real light direction, even when u_SkyCelestial
@@ -659,8 +672,19 @@ vec3 plagueAtmoShadowLightDirection() {
 // The aerial writers fill in this field, keyed by world position. Sky table writers skip it:
 // ground mist near the player is not a planet-wide layer. Read it before adding planet radius,
 // which would lose the local detail.
-float plagueAtmoLocalMistSigma(vec3 cameraRelativeBlocks, out float weatherMistScale);
+float plagueAtmoLocalMistSigma(vec3 cameraRelativeBlocks, float mistDrive,
+                               out float weatherMistScale);
 #endif
+
+// Where this march starts, in blocks from the camera. The march only knows steps from its own
+// start point, but the mist grid is keyed to world position, so a pass that starts anywhere else
+// has to say so here. The shadow hook beside it takes the same fix (plagueVoxelFogOrigin in
+// voxel_reflection_fog.glsl). Silent failure: nothing breaks, the mist is just read from the
+// wrong place.
+//
+// Set outside the PLAGUE_ATMO_LOCAL_MIST arm so a pass can fill it in without knowing whether
+// that arm is on. Zero means the march starts at the camera, which is every other pass.
+vec3 plagueAtmoMistOrigin = vec3(0.0);
 
 vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec3 moonRadiance,
                        PlagueAtmoAir air, float end, int steps, out vec3 transmittance) {
@@ -674,6 +698,9 @@ vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec
     // light direction. A missing or broken light matrix must not stop either one from lighting
     // the scene.
     bool shadowsSun = dot(shadowLightDir, sunDir) >= 0.0;
+    // Worked out once. The macro can be a per-pixel term, and the loop below would run it eight
+    // times a cell across tens of cells.
+    float shadowJitter = PLAGUE_ATMO_SHADOW_JITTER;
 #endif
     // Beer-Lambert segment composition, far to near: L = I + T_step * L_far.
     // tools/verify_atmo_integration_gpu.py checks this order against the GPU.
@@ -737,9 +764,13 @@ vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec
             // verify_atmo_walking_gpu.py has a fixed one-block gap where a single midpoint
             // sample overcounted light fourfold. This fixes that gap without repeating the
             // full air-and-density work eight times, only the shadow check itself.
+            //
+            // All eight checks share the one offset, so they stay evenly spread and the cell's
+            // average comes out right wherever the offset lands. Moving the whole set is what
+            // softens the edge of a shaft instead of stepping it.
             float visible = 0.0;
             for (int shadowStep = 0; shadowStep < 8; shadowStep++) {
-                float shadowT = tPrev + (float(shadowStep) + 0.5) * (dt / 8.0);
+                float shadowT = tPrev + (float(shadowStep) + shadowJitter) * (dt / 8.0);
                 visible += plagueAtmoSunShadow(dir * (shadowT / PLAGUE_ATMO_METRES_PER_BLOCK), shadowLightDir);
             }
             visible *= 1.0 / 8.0;
@@ -751,8 +782,9 @@ vec4 plagueAtmoMarchTo(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunRadiance, vec
 #endif
 #ifdef PLAGUE_ATMO_LOCAL_MIST
         float weatherMistScale;
-        float localMistSigma = plagueAtmoLocalMistSigma(dir * (t / PLAGUE_ATMO_METRES_PER_BLOCK),
-                                                       weatherMistScale);
+        float localMistSigma = plagueAtmoLocalMistSigma(
+                plagueAtmoMistOrigin + dir * (t / PLAGUE_ATMO_METRES_PER_BLOCK),
+                air.mistDrive, weatherMistScale);
         // Morning and weather mist use the same banks as this local mist. Keeping the plain
         // weather density here would hide those banks under one flat layer. Change only this
         // one sample: the next point along the ray must start from the plain weather value.
