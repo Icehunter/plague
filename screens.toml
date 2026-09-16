@@ -2702,9 +2702,15 @@ On, clouds have thickness: the sun lights their near side, they shade what is un
 flying into one puts you inside it. It is the single most expensive setting in the pack."""
 
 CLOUD_RESOLUTION = """
-Resolution the cloud volume is marched at: a quarter, a half or three quarters of the screen.
+How much of the screen the clouds are drawn at: Performance a quarter, Fast a half, Quality three \
+quarters, Ultra all of it.
 
-Applies to every deck at once. Below a half, cloud edges break into blocks."""
+This is what decides whether clouds look clean. Below Ultra the clouds are drawn small and \
+stretched back up, so they look grainy. Smoothing hides the grain, but it blurs the clouds too.
+
+All clouds use this one setting, and the cost goes up with the size. To get speed back, turn the \
+cloud quality settings below down instead: low quality at Ultra looks better than high quality at \
+Fast."""
 
 u_CloudAltitude = """
 How high the clouds sit, in blocks.

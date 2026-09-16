@@ -1195,12 +1195,26 @@ filter = "linear"
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 
+[targets.cloudsVolumeComputeUltra]
+format = "rgba16f"
+scale = 1.0
+filter = "linear"
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
+
 [targets.cloudsVolumeDistanceFull]
 format = "r32f"
 scale = 0.75
 filter = "linear"
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsVolumeDistanceUltra]
+format = "r32f"
+scale = 1.0
+filter = "linear"
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
 
 # Seven independent layers retain float32 march results until the merge.
 # Same-size targets avoid scaled-atlas rounding errors at odd viewport dimensions.
@@ -1210,11 +1224,23 @@ scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 
+[targets.cloudsLayerColour0Ultra]
+format = "rgba32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
+
 [targets.cloudsLayerFront0Full]
 format = "r32f"
 scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront0Ultra]
+format = "r32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
 
 [targets.cloudsLayerColour1Full]
 format = "rgba32f"
@@ -1222,11 +1248,23 @@ scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 
+[targets.cloudsLayerColour1Ultra]
+format = "rgba32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
+
 [targets.cloudsLayerFront1Full]
 format = "r32f"
 scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront1Ultra]
+format = "r32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
 
 [targets.cloudsLayerColour2Full]
 format = "rgba32f"
@@ -1234,11 +1272,23 @@ scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 
+[targets.cloudsLayerColour2Ultra]
+format = "rgba32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
+
 [targets.cloudsLayerFront2Full]
 format = "r32f"
 scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront2Ultra]
+format = "r32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
 
 [targets.cloudsLayerColour3Full]
 format = "rgba32f"
@@ -1246,11 +1296,23 @@ scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 
+[targets.cloudsLayerColour3Ultra]
+format = "rgba32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
+
 [targets.cloudsLayerFront3Full]
 format = "r32f"
 scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront3Ultra]
+format = "r32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
 
 [targets.cloudsLayerColour4Full]
 format = "rgba32f"
@@ -1258,11 +1320,23 @@ scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 
+[targets.cloudsLayerColour4Ultra]
+format = "rgba32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
+
 [targets.cloudsLayerFront4Full]
 format = "r32f"
 scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront4Ultra]
+format = "r32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
 
 [targets.cloudsLayerColour5Full]
 format = "rgba32f"
@@ -1270,11 +1344,23 @@ scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 
+[targets.cloudsLayerColour5Ultra]
+format = "rgba32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
+
 [targets.cloudsLayerFront5Full]
 format = "r32f"
 scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront5Ultra]
+format = "r32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
 
 [targets.cloudsLayerColour6Full]
 format = "rgba32f"
@@ -1282,11 +1368,23 @@ scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 
+[targets.cloudsLayerColour6Ultra]
+format = "rgba32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
+
 [targets.cloudsLayerFront6Full]
 format = "r32f"
 scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+[targets.cloudsLayerFront6Ultra]
+format = "r32f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
 
 [[pass]]
 name = "clouds_march_volume_full"
@@ -1300,6 +1398,17 @@ inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "preci
 outputs = ["cloudsLayerColour0Full", "cloudsLayerFront0Full", "cloudsLayerColour1Full", "cloudsLayerFront1Full", "cloudsLayerColour2Full", "cloudsLayerFront2Full", "cloudsLayerColour3Full", "cloudsLayerFront3Full", "cloudsLayerColour4Full", "cloudsLayerFront4Full", "cloudsLayerColour5Full", "cloudsLayerFront5Full", "cloudsLayerColour6Full", "cloudsLayerFront6Full"]
 
 [[pass]]
+name = "clouds_march_volume_ultra"
+type = "compute"
+shader = "shaders/compute/clouds_march_volume.comp"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
+local_size = [16, 16]
+# X/Y follow the first layer target; Z assigns one workgroup plane to each of seven decks.
+dispatch = [1, 1, 7]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask"]
+outputs = ["cloudsLayerColour0Ultra", "cloudsLayerFront0Ultra", "cloudsLayerColour1Ultra", "cloudsLayerFront1Ultra", "cloudsLayerColour2Ultra", "cloudsLayerFront2Ultra", "cloudsLayerColour3Ultra", "cloudsLayerFront3Ultra", "cloudsLayerColour4Ultra", "cloudsLayerFront4Ultra", "cloudsLayerColour5Ultra", "cloudsLayerFront5Ultra", "cloudsLayerColour6Ultra", "cloudsLayerFront6Ultra"]
+
+[[pass]]
 name = "clouds_merge_layers_full"
 type = "compute"
 shader = "shaders/compute/clouds_merge_layers.comp"
@@ -1310,12 +1419,30 @@ inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "preci
           "cloudsLayerColour0Full", "cloudsLayerFront0Full", "cloudsLayerColour1Full", "cloudsLayerFront1Full", "cloudsLayerColour2Full", "cloudsLayerFront2Full", "cloudsLayerColour3Full", "cloudsLayerFront3Full", "cloudsLayerColour4Full", "cloudsLayerFront4Full", "cloudsLayerColour5Full", "cloudsLayerFront5Full", "cloudsLayerColour6Full", "cloudsLayerFront6Full"]
 outputs = ["cloudsVolumeComputeFull", "cloudsVolumeDistanceFull"]
 
+[[pass]]
+name = "clouds_merge_layers_ultra"
+type = "compute"
+shader = "shaders/compute/clouds_merge_layers.comp"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_HISTORY_DEBUG == 0 && PLAGUE_CLOUD_TEMPORAL == 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
+          "cloudsLayerColour0Ultra", "cloudsLayerFront0Ultra", "cloudsLayerColour1Ultra", "cloudsLayerFront1Ultra", "cloudsLayerColour2Ultra", "cloudsLayerFront2Ultra", "cloudsLayerColour3Ultra", "cloudsLayerFront3Ultra", "cloudsLayerColour4Ultra", "cloudsLayerFront4Ultra", "cloudsLayerColour5Ultra", "cloudsLayerFront5Ultra", "cloudsLayerColour6Ultra", "cloudsLayerFront6Ultra"]
+outputs = ["cloudsVolumeComputeUltra", "cloudsVolumeDistanceUltra"]
+
 [targets.cloudHistoryFull]
 format = "rgba16f"
 scale = 0.75
 storage = true
 history = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+
+[targets.cloudHistoryUltra]
+format = "rgba16f"
+scale = 1.0
+storage = true
+history = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
 
 [targets.cloudHistoryDataFull]
 format = "r32f"
@@ -1324,12 +1451,26 @@ storage = true
 history = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
 
+[targets.cloudHistoryDataUltra]
+format = "r32f"
+scale = 1.0
+storage = true
+history = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+
 [targets.cloudHistoryDistanceFull]
 format = "r32f"
 scale = 0.75
 storage = true
 history = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+
+[targets.cloudHistoryDistanceUltra]
+format = "r32f"
+scale = 1.0
+storage = true
+history = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
 
 [targets.cloudHistoryStateFull]
 format = "r32f"
@@ -1339,6 +1480,14 @@ storage = true
 history = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
 
+[targets.cloudHistoryStateUltra]
+format = "r32f"
+width = 51
+height = 4
+storage = true
+history = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+
 [targets.cloudHistoryProbeFull]
 # Display sampler default; the categorical overlay explicitly uses texelFetch.
 filter = "linear"
@@ -1346,6 +1495,14 @@ format = "rgba16f"
 scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && PLAGUE_CLOUD_HISTORY_DEBUG != 0"
+
+[targets.cloudHistoryProbeUltra]
+# Display sampler default; the categorical overlay explicitly uses texelFetch.
+filter = "linear"
+format = "rgba16f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_HISTORY_DEBUG != 0"
 
 [[pass]]
 name = "clouds_merge_layers_full_history"
@@ -1359,6 +1516,17 @@ inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "preci
 outputs = ["cloudsVolumeComputeFull", "cloudsVolumeDistanceFull", "cloudHistoryFull", "cloudHistoryDataFull", "cloudHistoryDistanceFull", "cloudHistoryStateFull"]
 
 [[pass]]
+name = "clouds_merge_layers_ultra_history"
+type = "compute"
+shader = "shaders/compute/clouds_merge_layers.comp"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
+          "cloudsLayerColour0Ultra", "cloudsLayerFront0Ultra", "cloudsLayerColour1Ultra", "cloudsLayerFront1Ultra", "cloudsLayerColour2Ultra", "cloudsLayerFront2Ultra", "cloudsLayerColour3Ultra", "cloudsLayerFront3Ultra", "cloudsLayerColour4Ultra", "cloudsLayerFront4Ultra", "cloudsLayerColour5Ultra", "cloudsLayerFront5Ultra", "cloudsLayerColour6Ultra", "cloudsLayerFront6Ultra"]
+outputs = ["cloudsVolumeComputeUltra", "cloudsVolumeDistanceUltra", "cloudHistoryUltra", "cloudHistoryDataUltra", "cloudHistoryDistanceUltra", "cloudHistoryStateUltra"]
+
+[[pass]]
 name = "clouds_history_validate_full"
 type = "compute"
 shader = "shaders/compute/clouds_history_validate.comp"
@@ -1370,11 +1538,29 @@ inputs = ["globals", "packOptions", "cloudHistoryFull", "cloudHistoryDataFull", 
           "cloudHistoryDistanceFull", "cloudHistoryDistanceFull.history"]
 outputs = ["cloudHistoryProbeFull"]
 
+[[pass]]
+name = "clouds_history_validate_ultra"
+type = "compute"
+shader = "shaders/compute/clouds_history_validate.comp"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_HISTORY_DEBUG != 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "cloudHistoryUltra", "cloudHistoryDataUltra", "cloudHistoryStateUltra",
+          "cloudHistoryUltra.history", "cloudHistoryDataUltra.history", "cloudHistoryStateUltra.history",
+          "cloudHistoryDistanceUltra", "cloudHistoryDistanceUltra.history"]
+outputs = ["cloudHistoryProbeUltra"]
+
 [targets.cloudHistoryBlendFull]
 format = "rgba16f"
 scale = 0.75
 storage = true
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && PLAGUE_CLOUD_TEMPORAL != 0"
+
+[targets.cloudHistoryBlendUltra]
+format = "rgba16f"
+scale = 1.0
+storage = true
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_TEMPORAL != 0"
 
 [[pass]]
 name = "clouds_history_blend_full"
@@ -1388,6 +1574,18 @@ inputs = ["globals", "packOptions", "cloudHistoryFull", "cloudHistoryDataFull", 
           "cloudHistoryDistanceFull", "cloudHistoryDistanceFull.history"]
 outputs = ["cloudHistoryBlendFull"]
 
+[[pass]]
+name = "clouds_history_blend_ultra"
+type = "compute"
+shader = "shaders/compute/clouds_history_blend.comp"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_TEMPORAL != 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "cloudHistoryUltra", "cloudHistoryDataUltra", "cloudHistoryStateUltra",
+          "cloudHistoryUltra.history", "cloudHistoryDataUltra.history", "cloudHistoryStateUltra.history",
+          "cloudHistoryDistanceUltra", "cloudHistoryDistanceUltra.history"]
+outputs = ["cloudHistoryBlendUltra"]
+
 # Publish via transfer after compute completion; direct compute overwrite would require a WAW barrier.
 # Raw history and distance remain fresh, so blended colour cannot feed the next frame's filter.
 [[pass]]
@@ -1398,6 +1596,13 @@ inputs = ["cloudHistoryBlendFull"]
 outputs = ["cloudsVolumeComputeFull"]
 
 [[pass]]
+name = "clouds_history_publish_ultra"
+type = "copy"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_TEMPORAL != 0"
+inputs = ["cloudHistoryBlendUltra"]
+outputs = ["cloudsVolumeComputeUltra"]
+
+[[pass]]
 name = "clouds_composite_full"
 type = "fullscreen"
 shader = "shaders/post/clouds_composite.fsh"
@@ -1406,6 +1611,15 @@ blend = "translucent"
 # builtin.waterDepth: same underwater-veil input as the half-res composite above.
 # cloudsVolumeComputeFull, not cloudsRawFull: this tier reads the compute march's targets too.
 inputs = ["cloudsVolumeComputeFull", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistanceFull"]
+outputs = ["sceneHdr"]
+
+[[pass]]
+name = "clouds_composite_ultra"
+type = "fullscreen"
+shader = "shaders/post/clouds_composite.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
+blend = "translucent"
+inputs = ["cloudsVolumeComputeUltra", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistanceUltra"]
 outputs = ["sceneHdr"]
 
 # The live tier's cloud front distance, in ONE ungated target. water_composite reads it to reject
@@ -1446,6 +1660,14 @@ type = "fullscreen"
 shader = "shaders/post/cloud_front_copy.fsh"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 inputs = ["cloudsVolumeDistanceFull"]
+outputs = ["cloudFront"]
+
+[[pass]]
+name = "cloud_front_copy_ultra"
+type = "fullscreen"
+shader = "shaders/post/cloud_front_copy.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
+inputs = ["cloudsVolumeDistanceUltra"]
 outputs = ["cloudFront"]
 
 [[pass]]
@@ -2101,6 +2323,15 @@ shader = "shaders/post/clouds_history_overlay.fsh"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && PLAGUE_CLOUD_HISTORY_DEBUG != 0"
 blend = "translucent"
 inputs = ["cloudHistoryProbeFull"]
+outputs = ["builtin.output"]
+
+[[pass]]
+name = "clouds_history_overlay_ultra"
+type = "fullscreen"
+shader = "shaders/post/clouds_history_overlay.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_HISTORY_DEBUG != 0"
+blend = "translucent"
+inputs = ["cloudHistoryProbeUltra"]
 outputs = ["builtin.output"]
 
 # Terrain's source preview reuses the consolidated G-buffer RGB lanes only while enabled. Normal

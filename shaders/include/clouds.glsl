@@ -43,16 +43,26 @@
 // graph.toml to gate every cloud target/pass: an engine contract, not just a pack option.
 #define CLOUDS_VOLUMETRIC 1 //[0 1] compile "Volumetric Clouds" {0="Off" 1="On"}
 
-// March resolution, and only that: 0.25, 0.5, 0.75 of the screen, one target pair each, which is
-// why graph.toml partitions on `== 0`, `== 1` and `== 2`. Step budget is per deck, on u_CloudTier*.
+// March resolution, and only that: a quarter, a half, three quarters or all of the screen, one
+// target pair each, which is why graph.toml splits on `== 0` through `== 3`. Step count is per
+// deck, on u_CloudTier*.
 //
 // Global because it cannot be otherwise: all seven genera march into one target and the pass sorts
 // them per ray by first-hit distance, so a per-deck resolution loses the ordering that puts a near
 // tower in front of far cirrus.
 //
-// At a quarter, one march sample covers four screen pixels. Blending nearby samples softens
-// the blocky look but cannot bring back detail the march never sampled in the first place.
-#define CLOUD_RESOLUTION 1 //[0 1 2] compile "Cloud Resolution" {0="Quarter" 1="Half" 2="Three Quarter"}
+// Defaults to Ultra. This is the one control that decides whether clouds look clean. Each march
+// sample is off by the same amount at any resolution; below full that error is stretched over
+// several screen pixels, the size the eye picks up most. Measured at the owner's own settings and
+// stretched back to the same screen size: grain in the 3-8 pixel band is 4.50% of tile variance at
+// Fast, 4.08% at Quality, 1.52% at Ultra. No filter takes it out, because below Ultra the grain is
+// the same size as the clouds, so blurring one blurs the other.
+//
+// Cost tracks the pixel count: the same scene marches in 10.9 ms at a half and 49.4 ms at full in
+// the offline fixture, 12.1 ms of which is per-workgroup deck setup and the rest ray marching. Get
+// that time back on u_CloudTier* per deck instead of here: a low tier at Ultra looks better than a
+// high one at Fast.
+#define CLOUD_RESOLUTION 3 //[0 1 2 3] compile "Cloud Resolution" {0="Performance" 1="Fast" 2="Quality" 3="Ultra"}
 
 // Multiple of the derived wind speed below; 0 freezes the deck for screenshots/bisection. Top of
 // range moves a cumulus cell past the viewer in about a quarter in-game hour, a squall line on
