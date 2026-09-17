@@ -15,17 +15,17 @@
 #define PLAGUE_AURORA_NOISE_UV (0.000175 * u_AuroraDetail)
 #define PLAGUE_AURORA_SAMPLES 25 //[10 15 20 25 30 40] compile "Aurora Quality" {10="Fastest" 15="Fast" 20="Balanced" 25="High" 30="Very High" 40="Ultra"}
 #define u_AuroraSize 1.0 //[0.50..2.00 step 0.05] runtime "Aurora Size"
-#define u_AuroraIntensity 1.0 //[0.00..2.00 step 0.05] runtime "Aurora Intensity"
+#define u_AuroraIntensity 1.0 //[0.00..2.00 step 0.05] runtime "Aurora Brightness"
 // Where along the curtain each emission line takes over. See the palette block for the physics.
-#define u_AuroraRedOnset 0.62 //[0.20..1.00 step 0.01] runtime "Aurora High-Altitude Red"
+#define u_AuroraRedOnset 0.62 //[0.20..1.00 step 0.01] runtime "Aurora Red Height"
 #define u_AuroraRedWidth 0.30 //[0.05..0.80 step 0.01] runtime "Aurora Red Blend"
-#define u_AuroraVioletExtent 0.18 //[0.00..0.60 step 0.01] runtime "Aurora Low-Altitude Violet"
+#define u_AuroraVioletExtent 0.18 //[0.00..0.60 step 0.01] runtime "Aurora Violet Reach"
 
 // Isolates the aurora from every other sky element so "the aurora is blocky" can be told apart
 // from "something later in the frame is blocky" (vanilla's cloud silhouettes measure 58.7%
 // axis-aligned vs a 22% baseline and sit on top of it). Turn Bloom to 0 too, to rule out the post chain.
-//#define PLAGUE_DEBUG_AURORA_ONLY //[] compile "Show Only the Aurora"
-#define u_AuroraDebugGain 20.0 //[1.0..100.0 step 1.0] runtime "Aurora View Brightness"
+//#define PLAGUE_DEBUG_AURORA_ONLY //[] compile "Test View: Aurora Only"
+#define u_AuroraDebugGain 20.0 //[1.0..100.0 step 1.0] runtime "Test: Aurora View Brightness"
 
 const float PLAGUE_AURORA_DRAW_DISTANCE = 0.65;
 

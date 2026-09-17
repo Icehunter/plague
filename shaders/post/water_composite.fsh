@@ -80,17 +80,17 @@ layout(std140) uniform u_PassParams {
     vec4  u_MoonSpriteRect;
 };
 
-#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
+#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Best Look" 2="Fastest"}
 
-#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
-#define PLAGUE_WATER_REFLECTION_DEBUG 0 //[0 1 2 3 4] compile "Water Reflection View" {0="Off" 1="Roughness" 2="Trace Confidence" 3="Fallback Sky" 4="Source Mix"}
+#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Plain" 1="Shaded" 2="Reflective"}
+#define PLAGUE_WATER_REFLECTION_DEBUG 0 //[0 1 2 3 4] compile "Test View: Water Reflections" {0="Off" 1="Roughness" 2="Reflection Confidence" 3="Backup Sky" 4="Source Blend"}
 // Byte-identical to clouds.glsl's declaration: the option scanner merges same-name declarations
 // and rejects any mismatch. Read here only to know whether cloudFront has a writer this build.
-#define CLOUDS_VOLUMETRIC 1 //[0 1] compile "Volumetric Clouds" {0="Off" 1="On"}
+#define CLOUDS_VOLUMETRIC 1 //[0 1] compile "3D Clouds" {0="Off" 1="On"}
 #define WATER_FOAM //[] compile "Shoreline Foam"
 // Must match terrain.vsh/terrain.fsh byte-identically: the settled-surface classification below
 // undoes the wave lift before classifying, and needs to know whether the vertex stage applied one.
-#define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Mesh Displacement" {0="Off" 1="Standard"}
+#define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Wave Motion" {0="Off" 1="Standard"}
 #moj_import <fornax_runtime:water_options.glsl>
 #define PLAGUE_RAIN_SPLASHES //[] compile "Rain Splashes"
 #moj_import <fornax_runtime:material_options.glsl>

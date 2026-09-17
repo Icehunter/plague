@@ -28,7 +28,7 @@
 #moj_import <fornax_runtime:end_sky.glsl>
 #moj_import <fornax_runtime:surface_lighting.glsl>
 
-#define PLAGUE_LOCAL_LIGHTING 0 //[0 1] compile "Local Coloured Light" {0="Off" 1="Experimental"}
+#define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="Experimental"}
 
 uniform sampler2D u_Input0; // builtin.gNormal
 #define G_NORMAL u_Input0
@@ -160,7 +160,7 @@ uniform sampler2D u_Input18; // rtShadowComposite
 
 // Declared here as well as in ssao.fsh, byte-identical (the loader requires that): without this
 // line the #ifdef below never fires and SSAO is computed every frame and thrown away.
-#define SSAO_ENABLED //[] compile "Ambient Occlusion"
+#define SSAO_ENABLED //[] compile "Corner Shadows"
 
 #moj_import <fornax_runtime:material_options.glsl>
 #moj_import <fornax_runtime:water_options.glsl>
@@ -168,7 +168,7 @@ uniform sampler2D u_Input18; // rtShadowComposite
 // Read BY THE ENGINE, by name (ParticleEngineRainImpactMixin); nothing in this file consumes it.
 // Vanilla's splash spawns on the tick path, not the weather render pass this replaces, so leaving
 // it enabled doubles with this pack's own impact rings.
-#define PACK_RAIN_IMPACTS //[] compile "Pack Rain Impacts"
+#define PACK_RAIN_IMPACTS //[] compile "Rain Impact Ripples"
 
 // Scaled by each texel's labPBR POROSITY so porous stone soaks up and glazed terracotta barely
 // changes. Driven by the engine's ACCUMULATED wetness (not instantaneous rain), so surfaces darken
@@ -178,12 +178,12 @@ uniform sampler2D u_Input18; // rtShadowComposite
 // SSR_QUALITY is declared byte-identically in ssr_trace.fsh, ssr_blur.fsh, terrain.fsh and the
 // water shaders (option-scanner merge contract), and the ENGINE also reads this exact name to
 // gate the water pre-pass.
-#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
+#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Best Look" 2="Fastest"}
 #define u_SsrStrength 1.15 //[0.0..1.5 step 0.05] runtime "Reflection Strength"
 
 // The ENGINE reads this exact name to cancel vanilla's sky pass (GraphRunner.packOwnsSky). Off:
 // vanilla's sky shows through and this shader discards those fragments.
-#define SKY_PROCEDURAL //[] compile "Procedural Sky"
+#define SKY_PROCEDURAL //[] compile "Dynamic Sky"
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;

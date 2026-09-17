@@ -21,7 +21,7 @@
 #define PLAGUE_SHOOTING_STARS //[] compile "Shooting Stars"
 #define PLAGUE_SS_COUNT 4 //[1 2 3 4 5 6 7 8 9 10] compile "Shooting Star Count"
 #define u_ShootingStarSpeed 8.0 //[4.00..15.00 step 0.25] runtime "Shooting Star Speed"
-#define u_ShootingStarChance 0.5 //[0.10..1.00 step 0.05] runtime "Shooting Star Frequency"
+#define u_ShootingStarChance 0.5 //[0.10..1.00 step 0.05] runtime "Shooting Star Chance"
 #define u_ShootingStarSize 0.50 //[0.20..0.85 step 0.01] runtime "Shooting Star Size"
 #define u_ShootingStarThickness 0.60 //[0.20..2.00 step 0.05] runtime "Shooting Star Thickness"
 #define u_ShootingStarTrail 0.60 //[0.20..1.50 step 0.05] runtime "Shooting Star Trail Length"

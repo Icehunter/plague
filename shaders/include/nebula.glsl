@@ -15,14 +15,14 @@
 
 #define PLAGUE_NEBULA_ENABLED //[] compile "Night Nebula"
 
-#define u_NebulaIntensity 1.0 //[0.00..2.00 step 0.05] runtime "Nebula Intensity"
+#define u_NebulaIntensity 1.0 //[0.00..2.00 step 0.05] runtime "Nebula Brightness"
 #define u_NebulaZoom 3.5 //[1.00..5.00 step 0.05] runtime "Nebula Zoom"
 #define u_NebulaAmount 0.5 //[0.15..0.70 step 0.01] runtime "Nebula Amount"
 // Where the hydrogen envelope gives way to the ionised (teal) core, and over how much density.
-#define u_NebulaIonisedOnset 0.06 //[0.00..0.60 step 0.01] runtime "Nebula Core Onset"
-#define u_NebulaIonisedWidth 0.34 //[0.05..0.90 step 0.01] runtime "Nebula Core Blend"
-#define u_NebulaDrift 1.0 //[0.00..4.00 step 0.05] runtime "Nebula Drift Speed"
-#define u_NebulaStarGlow 7.0 //[0.00..20.00 step 0.5] runtime "Nebula Star Glow"
+#define u_NebulaIonisedOnset 0.06 //[0.00..0.60 step 0.01] runtime "Nebula Core Start"
+#define u_NebulaIonisedWidth 0.34 //[0.05..0.90 step 0.01] runtime "Night Sky Nebula Blend"
+#define u_NebulaDrift 1.0 //[0.00..4.00 step 0.05] runtime "Night Sky Nebula Drift"
+#define u_NebulaStarGlow 7.0 //[0.00..20.00 step 0.5] runtime "Night Sky Nebula Glow"
 
 // Bent further toward the sphere than the star field: a gnomonic-stretched cloud smears at the
 // horizon, where individual stars still read as points.

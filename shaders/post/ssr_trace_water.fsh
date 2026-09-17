@@ -21,9 +21,9 @@ layout(std140) uniform u_PassParams {
     vec3  u_SunDirection;
 };
 
-#define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "Voxel SSR Recovery" {0="Off" 1="On"}
-#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
-#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
+#define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "World Reflections" {0="Off" 1="On"}
+#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Best Look" 2="Fastest"}
+#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Plain" 1="Shaded" 2="Reflective"}
 
 const int WATER_MARCH_SAMPLES = 30;
 const int WATER_MARCH_REFINEMENTS = 8;  // halvings per bracket: what is left = bracket / 256

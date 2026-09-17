@@ -87,7 +87,7 @@ struct PlagueFogDrive {
     float altFloor;    // residual haze weight above the layer (Mountain Haze)
     float rainDepth;   // how far rain stretches the layer (Rain Fog Height)
     float climbRise;   // the looking-down-into-the-layer boost, already Advanced-gated
-    float advanced;    // 1.0 while Advanced Overrides is on, gates the dispatcher's fine tuning
+    float advanced;    // 1.0 while Advanced Fog Settings is on, gates the dispatcher's fine tuning
 };
 
 // Day fraction with SUNRISE at 0.0 (noon 0.25, sunset 0.5, midnight 0.75). Built from the sun
@@ -127,7 +127,7 @@ PlagueFogDrive plagueFogDrive(float rainRaw, float wetness, float precipType,
     d.rain = clamp(rainRaw * optRainResponse, 0.0, 1.0);
     d.altFloor = optHighAlt;
     d.rainDepth = optRainDepth;
-    // Applies only under Advanced Overrides; the literal matches the option's own declared
+    // Applies only under Advanced Fog Settings; the literal matches the option's own declared
     // default (harness-pinned equal) so off, nothing drifts.
     d.climbRise = mix(0.44, optClimbRise, adv);
 
@@ -169,7 +169,7 @@ PlagueFogDrive plagueFogDrive(float rainRaw, float wetness, float precipType,
     float aridMult = 1.0 - 0.7 * optDryClear * arid * enableDryAdv.x;
 
     // Each fog type carries its own Amount/Distance/Sharpness copy, engaging only while present
-    // (weighted by how present) and only under Advanced Overrides: at the default of 1.0 every
+    // (weighted by how present) and only under Advanced Fog Settings: at the default of 1.0 every
     // mix below is an exact identity.
     float wMorning = min(0.9 * morningMist, 1.0) * adv;
     float wNight = clamp(nightFactor, 0.0, 1.0) * enableMNWC.y * adv;

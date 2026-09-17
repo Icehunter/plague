@@ -255,7 +255,7 @@ sliders = [
 # Air and sunset controls shape the scattering sky. Sky fill and forward-fog glow retain the
 # shared palette estimates used by ambient lighting, water and translucent geometry.
 [screens.atmosphere]
-title = "Atmosphere"
+title = "Air and Haze"
 elements = [
     "<group:Air>",
     "u_AirDensity",
@@ -517,7 +517,7 @@ elements = [
 ]
 
 [screens.occlusion]
-title = "Ambient Occlusion"
+title = "Corner Shadows"
 elements = [
     "SSAO_ENABLED",
     "SSAO_TAPS|requires:SSAO_ENABLED",
@@ -684,7 +684,7 @@ elements = [
 ]
 
 [screens.materials]
-title = "Materials"
+title = "Surfaces"
 elements = [
     "u_BumpStrength",
     "u_AOStrength",
@@ -717,7 +717,7 @@ elements = [
 ]
 
 [screens.parallax]
-title = "Parallax"
+title = "Bumpy Surfaces"
 elements = [
     "u_PomQuality",
     "u_PomDepth",
@@ -737,7 +737,7 @@ elements = [
 ]
 
 [screens.tonemap]
-title = "Tonemapping"
+title = "Colour and Brightness"
 elements = [
     "TONEMAP_OPERATOR",
     "u_Exposure",
@@ -769,7 +769,7 @@ elements = [
 # their features, each of these read as a normal setting until its tooltip was opened; collected
 # here, the page itself says "these change what you SEE only to help you diagnose".
 [screens.debug]
-title = "Debug"
+title = "Test Views"
 elements = [
     "<group:Aurora>",
     "PLAGUE_DEBUG_AURORA_ONLY",
@@ -810,140 +810,190 @@ pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "occlusion
 # Prose shown in each option's tooltip, above the mechanical Default/Range/Applies lines.
 [descriptions]
 PLAGUE_CLOUD_HISTORY_DEBUG = """
-Compares raw previous clouds against the fresh march at the selected temporal sample budget in a corner panel.
-Candidates: green = single-layer match (not blend acceptance); yellow = overlapping layers; magenta = moving cirrus;
-blue = frame/state reset; red = outside history; cyan = source/layer mismatch; black = empty.
-Error: candidate pixels show relative colour error in red, opacity error in green and depth-proxy error in blue.
-Rejected pixels keep their marker colours. Dark candidate pixels are closer to the fresh result.
-Pan, move, change time/weather and resize to inspect correspondence. Temporarily adds history memory and work.
-The panel can appear in reflections or AA history while enabled. Off removes it.
-No cloud pixels are skipped in either mode."""
+A test view for checking how well the clouds kept from earlier frames match freshly drawn \
+clouds, in a small panel in the corner.
+
+Candidates colours: green means a single layer matched, but does not by itself mean the old \
+picture was kept; yellow means overlapping layers; magenta means moving high cirrus; blue means \
+the picture was reset; red means the old picture was too old to use; cyan means the wrong layer \
+or source; black means empty.
+
+Error colours: red shows how far the colour is off, green shows how far the see-through amount \
+is off, and blue shows how far the depth guess is off. Rejected pixels keep their Candidates \
+colours. Darker candidate pixels are closer to the fresh clouds.
+
+Move around, change the time of day or weather, and resize the window to compare the two. It \
+briefly uses more memory and work while on, and its panel can show up in reflections or in the \
+effect that blends frames together for smoother motion. Off removes it. Neither view skips any \
+cloud pixels."""
 
 PLAGUE_VOXEL_REFLECTIONS = """
-Recovers missing water reflections from nearby world geometry, including terrain outside the screen.
-Needs Water Surface set to Reflective and Reflections set to Fancy or Fast.
-Voxel Reach and loaded terrain limit coverage; fine geometry and shading can differ from the visible scene.
-Works above water with both still water and waves."""
+Lets the game find water reflections from nearby world shapes, including things off screen.
+
+Needs Water Surface set to Reflective and Reflections set to Best Look or Fastest. Light Reach \
+(Chunks) and how much of the world is loaded around you limit how much it can find, and small \
+shapes or lighting can look a little different from the real scene. Works above water, on both \
+still water and waves."""
 PLAGUE_VOXEL_PROFILE = """
-Adds five timed diagnostic draws without replacing the visible water reflection.
-F10 logs show primary trace (including alpha), material decode, direct lighting, all reflected rays without segment fog, and a full repeat.
-Temporarily lowers FPS. Hold the same view until timings settle, capture the log, then turn Off.
-Full minus no-fog estimates fog cost; no-fog minus direct estimates secondary reflection cost. These are marginal draw differences, not exact timings inside the normal shader.
-Requires Voxel SSR Recovery and reflective water with Fancy or Fast reflections."""
+A test view for measuring how much World Reflections costs, without changing what you see.
+
+It runs five extra timed passes and writes them to the F10 log: the main reflection trace \
+(including see-through parts), reading the material, direct light, reflected rays without fog, \
+and one full repeat. It runs slower while on. Hold your view still until the numbers settle, \
+save the log, then turn it Off. The full pass minus the no-fog pass is roughly what fog costs; \
+the no-fog pass minus the direct-light pass is roughly what extra bounced reflections cost. \
+These are rough differences, not exact costs during normal play.
+
+Needs World Reflections on, and reflective water with Reflections set to Best Look or Fastest."""
 PLAGUE_LOCAL_LIGHTING = """
-Experimental voxel block lighting. Disables vanilla block light on every surface, including
-unsupported surfaces and missing voxel data. Sun, sky, held light and glowing surfaces remain.
-Light sources opt in through lighting.voxel in blocks.toml. Supported full block faces light
-nearby opaque cube faces within four blocks. Unsupported shapes, crowded source sets and
-distant terrain can remain dark.
-The small camera-local cache and half-block shadow samples are unfinished quality limits.
-This is direct light, not bounced GI.
-"""
+Experimental block-by-block lighting, separate from Minecraft's normal light.
+
+Turns off Minecraft's normal block light on every surface, even ones it doesn't fully support \
+and where its block data is missing. Sunlight, skylight, the light from items you hold, and \
+glowing blocks still work as normal.
+
+Only blocks the pack has specifically set up as light sources work with this. A full, solid \
+block face can light nearby solid cube faces up to four blocks away. Shapes it doesn't support, \
+places with many light sources close together, and distant terrain can stay dark.
+
+It only remembers lighting in a small area around you, and checks shadows at a coarse, \
+half-block scale; both are known rough edges. This is direct light only: it does not bounce off \
+surfaces to light up other surfaces."""
 PLAGUE_LOCAL_EMITTER_SIZE = """
-The part of each lit face that casts light. Quarter block is smallest and gives the sharpest
-shadows from thin blocks such as a fence post or a hopper. Full face spreads light across the
-whole face for the softest result. The light's total energy is the same for all three; only the
-size it appears to shine from changes.
-"""
+The size of the glowing area each light source appears to shine from.
+
+Quarter block is the smallest, and gives the sharpest shadows from thin blocks such as a fence \
+post or a hopper. Full face spreads the light across the whole face for the softest result. All \
+three give off the same total amount of light; only how spread out it looks changes."""
 PLAGUE_SOURCE_DIAGNOSTIC = """
-Section overlay, not coloured light or a reflection view. Reads terrain depth, including terrain behind water.
-Sources: red = a light source; green = a glowing material the pack supports; yellow = both; grey = no known source.
-Purple stripes = a material or shape the pack can't read; solid purple = old or missing material data.
-Freshness: green = section has data; cyan = section is empty but current.
-Both views: solid red = section not ready or is being reused; amber = outside the voxel window; white = data missing or mismatched.
-Face Colours: corner panel of up to 4096 admitted faces, with 4x4 texture samples per face. It adds no scene light.
-Black = valid non-emitting sample or cutout gap; grey = unused pool entry; magenta = rejected/stale data.
-These sparse samples can miss tiny glowing texels. The pool includes hidden faces and is not a complete or nearest-source list.
-F10 records source counts, deferred faces and upload work. Deferred faces are not represented by the pool.
-Animated, cropped, layered, overflow-atlas and other unsupported models stay unknown. Off removes the overlay; voxel reflections still build their own grid."""
+A test view for checking which blocks the pack can read as light sources. It is not coloured \
+light or a reflection preview. It reads terrain depth, including terrain hidden behind water.
+
+Sources: red is a light source; green is a glowing material the pack supports; yellow is both; \
+grey is no known source. Purple stripes mean a material or shape the pack can't read; solid \
+purple means its data is old or missing.
+
+Freshness: green means the area has data; cyan means the area is empty but up to date.
+
+Both of these views: solid red means the area isn't ready yet or is being reused; amber means \
+it's outside the Light Reach (Chunks) range; white means data is missing or doesn't match.
+
+Face Colours shows a corner panel of up to 4096 accepted block faces, each with a 4-by-4 grid \
+of colour samples taken from its texture. It adds no light to the scene. Black is a normal, \
+non-glowing sample or a see-through gap; grey is an unused slot; magenta is rejected or old \
+data. These samples are sparse and can miss tiny glowing spots. The list includes hidden faces \
+and is not a complete or nearest-first list of sources.
+
+The F10 log records source counts, faces still waiting to be processed, and upload work; those \
+waiting faces are not shown in the panel. Animated, cropped, layered, and other unsupported \
+textures stay unknown. Off removes the overlay; World Reflections still builds its own grid \
+without it."""
 PLAGUE_SOURCE_RADIANCE = """
-Shows the emitted colour of visible solid and cutout terrain. It does not light nearby surfaces.
-Source Colour uses texture and biome tint, intrinsic emission and authored material glow, without baked shade or block exclusions.
-Compare Emission shows the existing emission rule on the left and this material-based rule on the right.
-Black means no emission, sky, or a surface outside this terrain preview. Terrain behind water is still terrain; water, glass and held items may draw over the view.
-Both sides use the same fixed brightness mapping, without exposure, bloom or colour grading.
-This view takes priority over other diagnostic overlays. Turn Off to restore normal lighting."""
+A preview of the glow colour of the solid and see-through blocks you can see. It does not light \
+up nearby surfaces.
+
+Source Colour works out this glow from the block's texture and biome colour, its own built-in \
+glow, and any glow the pack has given its material, without normal shading or block exceptions. \
+Compare Glow shows the game's usual glow rule on the left and this material-based glow on the \
+right.
+
+Black means no glow, sky, or a surface this preview doesn't cover. Terrain behind water still \
+counts as terrain, but water, glass and the item in your hand can still draw over the preview. \
+Both sides use the same fixed brightness, without Auto Brightness, Bloom or Colour Style \
+applied.
+
+This view overrides other test views. Turn it Off to see normal lighting again."""
 PLAGUE_VOXEL_COVERAGE = """
-Test overlay on water, not a reflection.
-Green: hit a solid block. Magenta: cutout or cross block, alpha not tested.
-Amber: the water sits outside the grid. Red: that part of the world is not in the grid yet.
-Cyan: clear all the way to the edge of the grid. This does not prove open sky.
-White: the buffers are missing or do not match.
-Behind Cutouts skips whole cutout cells, to show whether solid ground stands behind them.
-Telling empty apart from not-yet-loaded needs the engine's summary set up correctly.
-Off removes both test passes. Voxel SSR Recovery asks for the grid on its own."""
+A test view painted onto water, showing what the World Reflections grid can see. It is not a \
+reflection.
+
+Green means it hit a solid block. Magenta means a cutout or cross-shaped block, with its \
+see-through parts not checked. Amber means the water sits outside the grid. Red means that part \
+of the world isn't in the grid yet. Cyan means the way is clear all the way to the edge of the \
+grid, though that doesn't prove there's open sky above. White means the stored data is missing \
+or doesn't match.
+
+Behind Cutouts skips whole cutout blocks, to show whether solid ground stands behind them.
+
+Telling truly empty space apart from not-yet-loaded space depends on the game keeping track of \
+the world correctly. Off removes both test passes. World Reflections asks for the grid on its \
+own either way."""
 
 u_LightReach = """
-How far the block grid reaches around the camera, in chunks, for water reflection recovery and the coverage overlay.
-Set 1 to 16 in one-chunk steps. Larger values cover more terrain and cost more memory and time.
-The engine may cap this at render distance or at its own detail limit.
-Blocks outside this range are not there to reflect."""
+How far the block grid used for World Reflections and Test View: Reflection Coverage reaches \
+around you, in chunks.
+
+Set from 1 to 16, one chunk at a time. Higher values cover more terrain, but use more memory \
+and take more time. The game may cap this at your render distance or at its own limit. Blocks \
+outside this range can't be reflected."""
 
 
 OUTLINE_ENABLED = """
-Lines along the world's geometric edges.
+Draws lines along the edges of blocks and other shapes in the world.
 
-It draws where surfaces fold, or where one thing stands in front of another, so a block corner and \
-a rooftop against the sky both get a line. A flat wall of a hundred blocks gets one outline around \
-the wall, not a grid. Water, glass and the item in your hand are never outlined, and nothing under \
-water is. Lines follow the surface's lighting and colour and disappear with it in darkness. \
-Costs a handful of depth reads per pixel."""
+It draws where surfaces fold, or where one thing stands in front of another, so a block corner \
+and a rooftop against the sky both get a line. A flat wall of a hundred blocks gets one outline \
+around the wall, not a grid. Water, glass and the item in your hand are never outlined, and \
+nothing under water is. Lines follow the surface's lighting and colour and disappear with it in \
+darkness. Costs a small amount of extra work for every pixel on screen."""
 
 u_OutlineConvex = """
-Strength of outside edges: corners pointing toward you, and anything silhouetted against what is \
-behind it.
+Strength of outside edges: corners pointing toward you, and anything standing out against \
+what's behind it.
 
-Draws rooflines, ridges and the near side of a doorway. Below 0 it darkens those edges instead of \
-brightening them, so this one slider gives you ink lines or chalk ones."""
+Draws rooflines, ridges and the near side of a doorway. Below 0 it darkens those edges instead \
+of brightening them, so this one slider gives you ink lines or chalk ones."""
 
 u_OutlineConcave = """
 Strength of inside corners: a floor meeting a wall, the back of an alcove.
 
-Below 0 it darkens them instead, which is closer to how light behaves there. Ambient Occlusion \
-already shades these corners, so a positive value works against it. Ships at 0."""
+Below 0 it darkens them instead, which is closer to how light behaves there. Corner Shadows \
+already shades these corners, so a value above 0 works against it. It starts at 0."""
 
 u_OutlineThickness = """
 Line width, in pixels.
 
-It only widens. What counts as an edge is decided by the angle a surface turns through, so raising \
-this does not sweep more of the world into the effect. A band this many pixels wide at the very \
-edge of the screen draws no lines."""
+It only widens. What counts as an edge is decided by the angle a surface turns through, so \
+raising this does not sweep more of the world into the effect. A band this many pixels wide at \
+the very edge of the screen draws no lines."""
 
 u_OutlineDistance = """
 How far out, in chunks, lines are drawn. They fade over the last quarter of it.
 
-This decides whether natural ground reads as outlined shapes or as a wire mesh. A line's brightness \
-does not change with distance, but the number of lines does: a far pixel covers many blocks, and \
-every step between two of them is a real edge. Lower it until the hills look like hills. It also \
-makes the effect cheaper, since nothing past the fade is computed."""
+This decides whether natural ground reads as outlined shapes or as a wire mesh. A line's \
+brightness does not change with distance, but the number of lines does: a far pixel covers many \
+blocks, and every step between two of them is a real edge. Lower it until the hills look like \
+hills. It also makes the effect cheaper, since nothing past the fade is worked out."""
 
 OUTLINE_FOLIAGE = """
 Whether leaves, grass and fences are outlined.
 
-They are cut-out textures, so every gap between leaves is a real edge and a tree comes out as a \
-mass of lines rather than a shape with an outline. Distant canopy turns into a haze that crawls as \
-you move. Skip is the sane setting."""
+They are cutout textures, so every gap between leaves is a real edge and a tree comes out as a \
+mass of lines rather than a shape with an outline. Distant canopy turns into a haze that crawls \
+as you move. Skip is the better choice."""
 
 
 
 
 u_SkyBrightness = """
-Brightness of the sky fill used by ambient lighting, water illumination, reflected clouds and \
-translucent particle/banner fog.
+Brightness of the sky fill used for ambient lighting, lighting on water, reflected clouds, and \
+fog around see-through particles and banners.
 
-The sky fill keeps its hue. The visible scattering sky has its own lighting."""
+This changes brightness only; the sky fill keeps its same colour. The sky you actually see in \
+the background has its own separate lighting."""
 
 u_SkyBiomeTint = """
-How much the biome's sky colour tints ambient sky fill, water illumination, reflected clouds \
-and translucent particle/banner fog.
+How much the biome's sky colour tints the ambient sky fill, lighting on water, reflected \
+clouds, and fog around see-through particles and banners.
 
-At 0 the fill ignores biome tint. Higher values shift its hue while preserving brightness."""
+At 0 the fill ignores the biome's colour. Higher values shift its hue while keeping its \
+brightness the same."""
 
 u_SunsetSkyWarmth = """
 How orange the sunset sky gets.
 
-It only touches the warm band on the sun's side of the sky, and only around sunrise and sunset. At \
-midday and midnight it does nothing. The temperature slider below sets the exact shade of orange."""
+It only touches the warm band on the sun's side of the sky, and only around sunrise and sunset. \
+At midday and midnight it does nothing. The slider below sets the exact shade of orange."""
 
 u_SunsetLightWarmth = """
 The same warmth, applied to the light instead of the sky: the sunlight, and the glow it bounces \
@@ -959,34 +1009,35 @@ Low is a deep ember red, around 2000 K is a low sun through thick air, and high 
 at all. The sky and the light share this value, so they always warm toward the same colour."""
 
 u_AmbientSkyBleed = """
-Whether ambient light samples the whole sky colour estimate or just its overhead colour.
+Whether the ambient light on the world uses the whole sky's colour, or just the colour straight \
+overhead.
 
-At 1 surfaces are lit by everything above them, so a sunset casts a warm glow across the world. \
-At 0 only the sky directly overhead counts, and sunsets stop colouring the ground."""
+At 1, surfaces are lit by everything above them, so a sunset casts a warm glow across the \
+world. At 0, only the sky directly overhead counts, and sunsets stop colouring the ground."""
 
 u_SunDiscSize = """
-The sun's angular radius, in radians.
+The sun's size in the sky, as an angle, in radians.
 
-The real sun is 0.005 and covers a handful of pixels. Vanilla's is 0.29, wide enough to swallow \
-its own glow, so the aureole only shows below about 0.12."""
+The real sun is 0.005 and covers a handful of pixels. Regular Minecraft's is 0.29, wide enough \
+to swallow its own glow, so the glow around it only shows below about 0.12."""
 
 u_MoonRelief = """
 How pronounced the moon's craters are.
 
-The relief is baked at three times true scale, which is 1 here. It shows most along the \
-terminator, where the light grazes the surface."""
+The relief is baked at three times true scale, which is 1 here. It shows most along the line \
+between the moon's light and dark sides, where the light grazes the surface."""
 
 u_MoonLibration = """
 How far the moon's face rocks between nights, in degrees.
 
-The real moon keeps one face turned toward us, but its orbit tilts and its speed varies, so about \
-8 degrees of each limb swings into view and back. 0 pins the face."""
+The real moon keeps one face turned toward us, but its orbit tilts and its speed varies, so \
+about 8 degrees of each edge swings into view and back. 0 pins the face still."""
 
 u_MoonDiscSize = """
-The moon's angular radius, in radians.
+The moon's size in the sky, as an angle, in radians.
 
-The real moon is 0.0045, within a few percent of the sun's, which is why eclipses work. Vanilla's \
-is 0.20."""
+The real moon is 0.0045, within a few percent of the sun's, which is why eclipses work. Regular \
+Minecraft's is 0.20."""
 
 u_SunDiscBrightness = """
 How much brighter the sun's disc is than the light it casts.
@@ -997,51 +1048,57 @@ the disc and leaves only its glow."""
 u_MoonDiscBrightness = """
 The same, for the moon.
 
-Dimmer than the sun's by default, so the stars and nebula still show against the night sky."""
+Dimmer than the sun's by default, so the stars and Night Nebula still show against the night \
+sky."""
 
 u_TwilightSpan = """
 How long the added sunrise and sunset warmth lasts.
 
-Higher spreads the warmth and ambient sky colour transitions across more time. The sun's \
-movement and the atmospheric scattering still follow the game clock."""
+Higher spreads the warmth and the sky's colour change across more time. The sun's movement and \
+the sky's own lighting still follow the game clock."""
 
 u_SkyGradient = """
-How quickly the ambient sky colour estimate changes from overhead to horizon.
+How quickly the ambient sky colour changes between overhead and the horizon.
 
-Low spreads the horizon colour through more of the fill. High concentrates it near the horizon. \
-This also affects water illumination, reflected clouds and translucent particle/banner fog."""
+Low spreads the horizon's colour through more of the sky. High keeps it close to the horizon. \
+This also affects lighting on water, reflected clouds, and fog around see-through particles and \
+banners."""
 
 u_SunsetBandWidth = """
 How far around the horizon the warm sunset colour reaches.
 
-Low wraps the warmth almost all the way around you. High keeps it in a narrow wedge on the sun's \
-side and leaves the opposite horizon cool, the way a real sunset does."""
+Low wraps the warmth almost all the way around you. High keeps it in a narrow wedge on the \
+sun's side and leaves the opposite horizon cool, the way a real sunset does."""
 
 u_SunsetBandHeight = """
 How high up the sky the sunset colour climbs.
 
-Higher keeps the warmth in a thin strip along the horizon. Lower lets it climb toward the top of \
-the sky, which is most of what makes a sunset feel like one."""
+Higher keeps the warmth in a thin strip along the horizon. Lower lets it climb toward the top \
+of the sky, which is most of what makes a sunset feel like one."""
 
 u_SunGlowStrength = """
-Strength of the sunward glow in translucent particle and banner fog near the render limit.
+Strength of the sunward glow in fog around see-through particles and banners, near the edge of \
+your render distance.
 
-0 removes this fog glow. The visible sky's sun halo comes from atmospheric scattering."""
+0 removes this fog glow. The halo you see around the sun in the sky comes from the sky itself, \
+not from this effect."""
 
 u_SunGlowTightness = """
-Spread of the sunward glow in translucent particle and banner fog.
+Spread of the sunward glow in fog around see-through particles and banners.
 
-High concentrates it around the sun direction; low spreads it across more of the horizon."""
+High concentrates it around the sun's direction; low spreads it across more of the horizon."""
 
 u_MoonGlowStrength = """
-Strength of the moonward glow in translucent particle and banner fog near the render limit.
+Strength of the moonward glow in fog around see-through particles and banners, near the edge of \
+your render distance.
 
-0 removes this fog glow. The visible sky's moon halo comes from atmospheric scattering."""
+0 removes this fog glow. The halo you see around the moon in the sky comes from the sky itself, \
+not from this effect."""
 
 u_MoonGlowTightness = """
-Spread of the moonward glow in translucent particle and banner fog.
+Spread of the moonward glow in fog around see-through particles and banners.
 
-High concentrates it around the moon direction; low spreads it across more of the horizon."""
+High concentrates it around the moon's direction; low spreads it across more of the horizon."""
 
 u_AirDensity = """
 How thick the air is. This is the main sunset control.
@@ -1079,163 +1136,177 @@ fully night-adjusted eyes; 0.0 shows the night as a camera would, slightly warm.
 
 
 PLAGUE_SHORE_DEBUG = """
-Paints the shoreline spill field's internal state over the world, as flat colours.
+A test view for checking why Shoreline Spill does or does not appear, painted as flat colours.
 
-Black means the field was never written. Red means no ground data here. Blue is water. Orange is \
-ground with no water beside it. Yellow is ground beside water, with the waves staying below its \
-top. Green is ground the water is washing over. For diagnosing why a spill does or does not \
-appear; leave it off for play."""
+Black means this spot was never checked. Red means there's no ground data here. Blue is water. \
+Orange is ground with no water next to it. Yellow is ground next to water, where the waves stay \
+below the top of the block. Green is ground the water is washing over. Leave this Off for \
+normal play."""
 
 PLAGUE_SHORE_SPILL = """
 Water washing over the ground it reaches, and drying out again.
 
 Where a wave crest clears the top of a block beside the water, that block goes wet and \
-reflective, then dries from the edges in over the next minute. Needs Water Simulation Boundaries \
-on: without them nothing knows where the water ends."""
+reflective, then dries from the edges in over the next minute. Needs Water Simulation \
+Boundaries on: without them nothing knows where the water ends."""
 
 PLAGUE_WATER_INTERACTION = """
 Waves and wakes made by you and by boats.
 
-They spread out from you and linger on the water as you move. Quality looks sharper and \
-smoother; Performance is cheaper and a little coarser. No extra mods needed."""
+They spread out from you and linger on the water as you move. Best Look looks sharper and \
+smoother; Fastest is cheaper on your frame rate and a little coarser. No extra mods needed."""
 
 SURFACE_FLUID_DETAIL = """
-Stops your waves from crossing land or leaking into separate pools of water.
+Stops your waves from crossing onto land or leaking into separate pools of water.
 
-Standard is the default. Quality follows the water's edges more carefully, at a higher cost; Off \
-lets waves pass straight through shorelines."""
+Standard is the default. Best Look follows the water's edges more carefully, at a higher cost \
+to your frame rate; Off lets waves pass straight through shorelines."""
 
 PLAGUE_WATER_MESH_DISPLACEMENT = """
-Lets waves actually raise and lower the water surface, instead of only changing how it is \
-shaded.
+Lets waves actually raise and lower the water's surface, instead of only changing how the light \
+on it looks.
 
-Standard is the default. Off keeps the water flat like vanilla, with the waves showing only in \
-the lighting."""
+Standard is the default. Off keeps the water flat like it is in regular Minecraft, with waves \
+only showing up in the lighting."""
 
 WATER_VEIL = """
-The haze that builds between you and whatever you look at underwater.
+The haze that builds up between you and whatever you're looking at, underwater.
 
-The underwater fog sliders drive this effect and do nothing while it is off. It is separate from \
-Water Tint: the tint colours everything at any distance, while this haze thickens with distance."""
+The underwater fog sliders drive this effect and do nothing while it's off. It's separate from \
+Underwater Tint: that tints everything at any distance, while this haze only thickens the \
+farther away things are."""
 
 WATER_ABSORPTION_TINT = """
-The colour water gives everything you see through it, even up close.
+The colour water gives everything you see through it, even close up.
 
-It tints and darkens the whole underwater view at any distance. The Water Tint sliders set the \
-colour."""
+It tints and darkens your whole view while you're underwater, no matter how far away things \
+are. The Water Tint Red, Green and Blue sliders set the colour."""
 
 
 
 WATER_SUN_TINT = """
 Turns sunlight blue-green once it has passed through water.
 
-Water soaks up red light first, so light reaching the seabed is already blue-green. Off, \
-underwater surfaces are lit by plain, unfiltered sunlight."""
+Water soaks up red light first, so the light reaching the seabed is already blue-green. Turn \
+this off and underwater surfaces are lit by plain, unfiltered sunlight."""
 
 WATER_AMBIENT_FLOOR = """
-A small minimum of light on underwater surfaces, coloured like the water.
+Keeps a small amount of light on underwater surfaces, coloured like the water around them.
 
-Without it, anything in shadow underwater goes completely black, and even a lantern barely \
-lights it."""
+Turn this off and anything in shadow underwater goes completely black, and even holding a \
+lantern barely lights it up."""
 
 WATER_HELD_LIGHT_FILTER = """
-Filters a held torch or lantern through the water it shines into.
+Changes the colour of a torch or lantern you are holding once it shines into water.
 
-Water swallows red light within a few blocks, so the glow keeps a warm core and fades to teal. \
-Off, the held light fills the water with the same orange it casts in air."""
+Water swallows red light within a few blocks, so the glow keeps a warm centre and fades to \
+teal further out. Turn this off and a held light fills the water with the same orange it \
+casts in air."""
 
 
 
 WATER_BLUR = """
-The soft, out-of-focus look of distant things underwater. Master switch for the four sliders \
-below it (Start, End, Radius, Strength).
+Turns on the soft, out-of-focus look of things far away underwater. This is the main switch \
+for the four sliders below it: Underwater Blur Start, Underwater Blur End, Underwater Blur \
+Size and Underwater Blur Strength.
 
-Those sliders do nothing while this is off. Water does not just darken the view with distance, \
-it blurs it, which keeps far-off blocks from staying unnaturally sharp."""
+Those sliders do nothing while this is off. Water does not just darken your view with \
+distance, it blurs it too, which stops far-off blocks from staying unnaturally sharp."""
 
 WATER_CAUSTICS = """
-The shifting patterns of light the water casts on the sea floor.
+The moving patterns of light that water casts on the sea floor.
 
-This is the most expensive underwater effect. If performance suffers underwater, turn it off \
-first."""
+This costs more frame rate than any other underwater effect. If your frame rate drops \
+underwater, turn this off first."""
 
 TONEMAP_OPERATOR = """
-How the scene's bright and dark extremes are squeezed onto your screen.
+Sets how the scene's brightest and darkest parts are fitted onto your screen.
 
-Filmic is this pack's usual look. ACES is the film standard, warmer in the highlights; \
-Reinhard is the simplest and flattest; None does no squeezing at all and is only useful for \
-comparison."""
+Smooth is this pack's normal look. Natural is warmer in the brightest parts. Simple is the \
+plainest and flattest look. Raw makes no change at all and is only for comparing."""
 
 SHADOW_SAMPLES = """
-How smooth the soft edges of shadows are.
+How smooth the soft edges of shadows look.
 
-Higher is smoother, at a performance cost paid on every lit pixel."""
+Higher looks smoother, but costs frame rate everywhere a shadow falls on the screen."""
 
 PLAGUE_FOG = """
-The master switch for all fog.
+The main switch for every kind of fog.
 
-Off removes every fog effect at once and shows the bare edge of your loaded world. The tick boxes \
-below switch individual fog types instead."""
+Turn this off and every kind of fog disappears at once, showing the bare edge of your \
+loaded world. The tick boxes below turn each kind of fog on or off on its own."""
 
 PLAGUE_AIR_SHADOW_DEBUG = """
-Shows which shadow covers the air at one set distance.
+A test view for checking where the game has worked out shadow in the air, at one set \
+distance from you.
 
-Red means no shadow data yet. Green means shadow. Blue means light.
-This is a rough slice through the air; a green-blue mix means partial shadow. Check it over dry
-ground, since water and clouds draw on top and can hide it. Turn off to see the normal scene."""
+Red: no shadow data yet.
+Green: shadow.
+Blue: light.
+This is a rough slice through the air, so a green and blue mix means part shadow. Check it \
+over dry ground, since water and clouds are drawn on top and can hide it. Turn this off to \
+see the normal view."""
 
 u_AirShadowProbeDistance = """
-How far from the camera the air slice sits, in blocks. One chunk is 16 blocks.
-Check both nearer and farther than Shadow Distance to tell a real block from missing shadow data."""
+How far from you the test air slice sits, in blocks. One chunk is 16 blocks.
+
+Check it both nearer and farther than Shadow Distance to tell a real block from missing \
+shadow data."""
 
 u_FogOpacityView = """
-Draws the fog's own strength instead of the world, to find where a haze comes from.
+A test view for finding where a hazy look is coming from. It draws the fog's own strength \
+instead of the normal scene.
 
-Red is edge fog, green is distance fog, blue is how far away the pixel is."""
+Red: edge fog.
+Green: distance fog.
+Blue: how far away that spot is.
+Turn this off to see the normal scene."""
 
 u_FogEnableDistance = """
-The haze that builds over distance, so far hills look softer and further away.
+The haze that builds up with distance, so far-off hills look softer and further away.
 
-Off keeps the world crisp all the way out, with only Edge Fog hiding the world's edge."""
+Turn this off and the world stays crisp all the way to the horizon, with only Edge Fog \
+hiding the edge of your loaded world."""
 
 u_FogEnableEdge = """
 The fog that hides the edge of your loaded world.
 
-Off shows chunks ending mid-air in the distance. Mostly useful for comparing, or with very high \
-render distances."""
+Turn this off and you can see chunks stopping in mid-air in the distance. Mostly useful for \
+comparing, or if you already play with a very high render distance."""
 
 u_FogEnableMorning = """
-Mist at dawn. It builds before sunrise and burns off during the morning."""
+Mist that appears at dawn. It builds up before sunrise and clears away during the morning."""
 
 u_FogEnableNight = """
-Lets the Night Fog Amount slider change how thick the air is at night."""
+Lets the Night Fog Amount slider make the air thicker or thinner at night."""
 
 u_FogEnableWet = """
-Mist that lingers after rain stops, clearing as the ground dries."""
+Mist that lingers after rain stops, and clears away as the ground dries."""
 
 u_FogEnableCold = """
-Low ground mist in snowy places like tundra and ice fields."""
+Low mist over the ground in snowy places, like tundra and ice fields."""
 
 u_FogEnableDry = """
 Clearer air in deserts, mesas and savannas, where rain never falls."""
 
 u_FogAdvanced = """
-Unlocks the Advanced sections at the bottom of this page.
+Unlocks the advanced settings further down this page.
 
-While off, those sliders keep whatever you set but do nothing, and the fog runs on the main \
-settings above. Tick it to apply them."""
+While this is off, those sliders keep whatever you set but do nothing, and fog uses the \
+main settings above instead. Turn it on to make them count."""
 
 u_FogDensity = """
-How much haze the air carries.
+How much haze hangs in the air.
 
-0 is crystal-clear air (the world's edge is still hidden by Edge Fog). Higher is thicker haze on \
-distant terrain."""
+0 gives crystal-clear air, though the edge of your world is still hidden by Edge Fog. \
+Higher gives thicker haze over distant land."""
 
 u_FogBorderDensity = """
-How far in from the edge of your view the edge fog starts.
+How far in from the edge of your view Edge Fog starts to appear.
 
-The edge itself is always fully hidden, at every setting. This only moves where the fade begins. \
-Low keeps it a thin band at the far edge; high lets it reach much closer."""
+The very edge is always fully hidden, no matter the setting. This only moves where the fade \
+begins. Low keeps it a thin band right at the far edge; high lets it reach much closer to \
+you."""
 
 u_FogDistance = """
 Where the haze starts to build.
@@ -1250,37 +1321,38 @@ Low is a gradual wash. High keeps the foreground clear, then closes in quickly."
 u_FogHeight = """
 How high the fog sits, in blocks above sea level.
 
-Lower pools it into valleys and leaves hilltops clear; higher carries it up the mountainsides."""
+Lower pools it into valleys and leaves hilltops clear; higher carries it up the \
+mountainsides."""
 
 u_FogHighAltitude = """
-The faint haze left on far mountain tops above the fog.
+A faint haze left on far mountain tops, above the main fog.
 
-0 makes high peaks perfectly sharp, which can look like cardboard cut-outs. A little keeps them \
-reading as far away."""
+0 makes high peaks perfectly sharp, which can end up looking like flat cardboard cut-outs. \
+A little haze keeps them looking properly far away."""
 
 u_FogMistReach = """
 How close the mists come to you.
 
-Applies to morning, after-rain and snow mist. At 0 they only shade the distance; higher brings \
-the wall of fog right up near you."""
+Applies to morning, after-rain and snow mist. At 0 they only shade the distance; higher \
+brings the wall of fog right up near you."""
 
 u_FogMorningMist = """
 How thick the dawn mist gets.
 
-It builds in the last stretch of night and burns off through the morning. Evenings stay clear. \
-See Random Mornings for day-to-day variety."""
+It builds in the last stretch of night and clears away through the morning. Evenings stay \
+clear. See Random Mornings for day-to-day variety."""
 
 u_FogDayVariance = """
 How different one morning is from the next.
 
-Every in-game day rolls its own mist strength: some dawns come up clear, some as fog banks. \
-0 makes every morning identical."""
+Every in-game day gets its own mist strength: some dawns come up clear, some as fog banks. \
+0 makes every morning the same."""
 
 u_FogNight = """
 Night air compared to day.
 
-1.0 is no change. Lower gives clear, starry nights; higher gives heavy night fog. It fades in \
-and out with dusk and dawn."""
+1.0 is no change. Lower gives clear, starry nights; higher gives heavy night fog. It fades \
+in and out with dusk and dawn."""
 
 u_FogRainResponse = """
 How much rain thickens the fog and pulls it closer.
@@ -1305,7 +1377,8 @@ It follows the place you are standing in, not the weather."""
 u_FogDryClear = """
 How much clearer the air is where rain never falls.
 
-Deserts, mesas and savannas get thinner haze and a longer view. The world's edge stays hidden."""
+Deserts, mesas and savannas get thinner haze and a longer view. The edge of your world \
+stays hidden."""
 
 u_NetherFogDensity = """
 How thick the Nether's own edge fog is, on top of the world's edge fog setting.
@@ -1318,472 +1391,498 @@ How close the Nether's edge fog sits. Lower brings it right up around you.
 Only affects the Nether."""
 
 u_FogMorningDensity = """
-Fog Amount used during morning mist, instead of the main setting.
+How much haze morning mist uses, instead of the main Fog Amount.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies while Advanced Fog Settings is ticked."""
 
 u_FogMorningDistance = """
-Fog Distance used during morning mist. Lower brings the dawn fog closer.
+How far out morning mist starts to build. Lower brings the dawn fog closer to you.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies while Advanced Fog Settings is ticked."""
 
 u_FogMorningSharpness = """
-Fog Sharpness used during morning mist.
+How suddenly morning mist thickens once it starts.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies while Advanced Fog Settings is ticked."""
 
 u_FogNightDensity = """
-Fog Amount used at night, instead of the main setting.
+How much haze the air carries at night, instead of the main Fog Amount.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies while Advanced Fog Settings is ticked."""
 
 u_FogNightDistance = """
-Fog Distance used at night. Lower brings the night fog closer.
+How far out night fog starts to build. Lower brings the night fog closer to you.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies while Advanced Fog Settings is ticked."""
 
 u_FogNightSharpness = """
-Fog Sharpness used at night.
+How suddenly night fog thickens once it starts.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies while Advanced Fog Settings is ticked."""
 
 u_FogWetDensity = """
-Fog Amount used while after-rain mist is out, instead of the main setting.
+How much haze after-rain mist uses, instead of the main Fog Amount.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies while Advanced Fog Settings is ticked."""
 
 u_FogWetDistance = """
-Fog Distance used while after-rain mist is out. Lower brings it closer.
+How far out after-rain mist starts to build. Lower brings it closer to you.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies while Advanced Fog Settings is ticked."""
 
 u_FogWetSharpness = """
-Fog Sharpness used while after-rain mist is out.
+How suddenly after-rain mist thickens once it starts.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies while Advanced Fog Settings is ticked."""
 
 u_FogColdDensity = """
-Fog Amount used in snowy places, instead of the main setting.
+How much haze the air carries in snowy places, instead of the main Fog Amount.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies while Advanced Fog Settings is ticked."""
 
 u_FogColdDistance = """
-Fog Distance used in snowy places. Lower brings the snow mist closer.
+How far out snow mist starts to build. Lower brings the snow mist closer to you.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies while Advanced Fog Settings is ticked."""
 
 u_FogColdSharpness = """
-Fog Sharpness used in snowy places.
+How suddenly snow mist thickens once it starts.
 
-Only applies while Advanced Overrides is ticked."""
-
+Only applies while Advanced Fog Settings is ticked."""
 u_FogDryDensity = """
-Fog Amount used in deserts and other dry places, instead of the main setting.
+How much fog you get in deserts and other dry places, used instead of the main Fog Amount \
+there.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies when Advanced Fog Settings is turned on."""
 
 u_FogDryDistance = """
-Fog Distance used in dry places. Higher pushes the little remaining haze further out.
+How far you can see through the fog in deserts and other dry places, used instead of the main \
+Fog Distance there.
 
-Only applies while Advanced Overrides is ticked."""
+Higher pushes the small amount of remaining haze further out. Only applies when Advanced Fog \
+Settings is turned on."""
 
 u_FogDrySharpness = """
-Fog Sharpness used in dry places.
+How sharp the edge of the fog looks in deserts and other dry places, used instead of the main \
+Fog Sharpness there.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies when Advanced Fog Settings is turned on."""
 
 u_FogClimbRise = """
-Extra fog you see looking down into the fog layer from a mountain or tower.
+How much extra fog you see when you look down into the fog layer from a mountain or tower.
 
-Only applies while Advanced Overrides is ticked."""
+Only applies when Advanced Fog Settings is turned on."""
 
 u_FogCaveGuardLo = """
-Below this light level, nearby surfaces count as underground and get no fog.
+Below this light level, nearby blocks count as underground and get no fog.
 
-Keeps caves from filling with sky-coloured haze. Only applies while Advanced Overrides is \
-ticked."""
+This keeps caves from filling up with sky-coloured haze. Only applies when Advanced Fog \
+Settings is turned on."""
 
 u_FogCaveGuardHi = """
-Above this light level, nearby surfaces always get their full fog.
+Above this light level, nearby blocks always get their full amount of fog.
 
-Kept low so forests and doorways still fog normally. Only applies while Advanced Overrides is \
-ticked."""
+This is kept low so forests and doorways still fog normally. Only applies when Advanced Fog \
+Settings is turned on."""
 
 u_FogBorderGateNear = """
-How far out the edge fog starts ignoring whether a surface is underground.
+How far out Edge Fog starts covering everything, whether or not a spot counts as underground.
 
-Only changes what you see inside caves, never the horizon. Only applies while Advanced \
-Overrides is ticked."""
+This only changes what you see inside caves, never the horizon. Only applies when Advanced \
+Fog Settings is turned on."""
 
 u_FogBorderGateFar = """
-Past this distance the edge fog covers everything regardless of light.
+Past this distance, Edge Fog covers everything no matter how light or dark it is there.
 
-It has to, or the world's edge would show through dark terrain. Only applies while Advanced \
-Overrides is ticked."""
+It has to, or the edge of the world would show through dark ground and caves. Only applies \
+when Advanced Fog Settings is turned on."""
 
 SKY_PROCEDURAL = """
-Whether this pack draws its own sky instead of vanilla's.
+Whether the pack draws its own sky instead of Minecraft's plain one.
 
-On gives the full sky: the gradient, the sunset band and the sun's glare. Off shows vanilla's \
-flat sky."""
+On gives you the full sky: the colour fade from the horizon to overhead, the sunset band and \
+the glow around the sun. Off shows the plain default sky instead."""
 
 SKY_AMBIENT = """
-Takes the world's ambient light from the sky actually above you.
+Lights shaded and shadowed spots with the actual colour of the sky above you.
 
-As the sky reddens at sunset, so does the light it casts. The two always match. Needs \
-Procedural Sky to be on."""
+As the sky turns red at sunset, the light filling in your shadows turns red too, so the two \
+always match. Needs Dynamic Sky to be turned on."""
 
 u_AmbientBounceWarmth = """
-Warms shadows with sunlight bounced off the surrounding ground.
+How much sunlight bounced off the ground around you warms up open-air shadows.
 
-Open-air shadows are filled by the blue sky AND by sunlight reflecting off nearby terrain. \
-Higher values lean the fill warmer without changing its brightness; 0 keeps the sky's own blue. \
-Follows the sun, so nights stay cool."""
+Shadows outdoors are lit both by the blue sky and by sunlight reflecting off nearby ground. \
+Higher makes that fill light warmer without making it brighter; at 0 it stays as blue as the \
+sky itself. This follows the sun, so nights are not affected and stay cool."""
 
 PLAGUE_AURORA_STYLE = """
-The shape of the aurora.
+The shape the aurora borealis takes.
 
-Smooth gives flowing ribbons. Blocky builds the curtain from hard-edged squares to suit a \
-pixel-art resource pack. That look is on purpose, not a glitch.
+Smooth gives flowing ribbons of light. Blocky builds the curtain out of hard-edged squares to \
+match a pixel-art resource pack. That blocky look is meant to be that way, it is not a glitch.
 
 If the aurora looks like floating blocks instead of a ribbon, check this setting first."""
 
 PLAGUE_DEBUG_AURORA_ONLY = """
-Shows only the aurora, brightened, on a black sky.
+A test view that shows only the aurora borealis, made brighter, against a plain black sky.
 
-A troubleshooting view, not a look. Stars, moon and everything else are hidden, so anything you \
-see is the aurora. Vanilla's clouds sit in front of it and are easy to mistake for it."""
+It is for finding problems, not for normal play. Stars, the moon and everything else are \
+hidden, so anything you see is the aurora. Minecraft's own clouds still sit in front of it and \
+can be mistaken for it. Turn this off to return to the normal sky."""
 
 u_AuroraDebugGain = """
-How much the aurora-only view is brightened.
+How much brighter the aurora is made in the Test View: Aurora Only screen.
 
-Only matters while Show Only the Aurora is on. A curtain can be truly there but too dim to \
-judge; turning this up makes it obvious without changing the real sky."""
+Only matters while that test view is turned on. The aurora can be really there but too dim to \
+see clearly; turning this up makes it obvious without changing how it looks in the normal game."""
 
 PLAGUE_WATER_REFLECTION_DEBUG = """
-Paints water with one layer of its reflection instead of the finished picture.
+A test view that shows one layer of water's reflection on its own, instead of the finished \
+picture.
 
-A troubleshooting view. Roughness shows how blurry each spot is allowed to be, Trace Confidence \
-shows where the screen trace trusted its hit, Fallback Sky shows what fills in when it could \
-not, and Source Mix shows which of the two each pixel ended up using."""
+It is for finding problems. Roughness shows how blurry each spot's reflection is allowed to \
+be. Reflection Confidence shows where the game trusted what it found on screen. Backup Sky \
+shows what fills in when it could not find a good reflection on screen. Source Blend shows \
+which of the two each spot ended up using. Turn this off to see the normal, finished water."""
 
 CUSTOM_LIGHT_COLORS = """
 Where the colour of sunlight, moonlight and torchlight comes from.
 
-Physical (the default) works the colours out from the air the light passes through, so sunsets \
-turn orange on their own and come out dimmer than a hand-picked palette would, because that is \
-what real air does. Custom switches to the palette below: hand-picked colours you set yourself, \
-with sunsets you can make as dramatic as you like."""
+Natural, the default, works the colours out from the air the light passes through, so sunsets \
+turn orange on their own and come out dimmer than a hand-picked set of colours would, because \
+that is what real air does. Custom switches to the colours below: ones you pick yourself, with \
+sunsets you can make as bright and dramatic as you like."""
 
 u_BlockLightTemp = """
-The colour of torch and lantern light, in kelvin. Only used while Light Colours is set to Physical.
+The colour of torch and lantern light, measured in kelvin. Only used while Light Colours is \
+set to Natural.
 
-4000 K is a warm bulb, roughly what a torch is. Lower goes toward candlelight and firelight; \
-higher cools it toward white and eventually blue."""
+4000 K is a warm light bulb, close to what a torch looks like. Lower moves it toward \
+candlelight and firelight; higher cools it toward white and, further still, toward blue."""
 
 u_LightPaletteNoonR = """
-The direct sunlight colour at true noon, on a clear day.
+The colour of direct sunlight at true noon on a clear day, when Light Colours is set to Custom.
 
-Sets the red channel. Paired with the green and blue sliders below it, this is the brightest, \
-most neutral point the Custom palette's direct light ever reaches."""
+This sets the amount of red. Together with the green and blue settings below it, this is the \
+brightest and most neutral the sunlight ever gets under Custom."""
 
-u_LightPaletteNoonG = """Green channel of the noon direct-light colour. See Light Noon R."""
+u_LightPaletteNoonG = """The amount of green in the noon sunlight colour. See Custom Noon Light: Red."""
 
-u_LightPaletteNoonB = """Blue channel of the noon direct-light colour. See Light Noon R."""
+u_LightPaletteNoonB = """The amount of blue in the noon sunlight colour. See Custom Noon Light: Red."""
 
 u_LightPaletteSunsetR = """
-The direct sunlight colour at dawn and dusk, on a clear day.
+The colour of direct sunlight at dawn and dusk on a clear day, when Light Colours is set to \
+Custom.
 
-Sets the red channel. Deliberately brighter overall than the noon colour, before the rest of the \
-pack's tonemapping and exposure get to it, because a low sun crossing more air reads more intense, \
-not less. The Warmth slider below controls how much further this shifts as the sun nears the \
-horizon."""
+This sets the amount of red. It is on purpose brighter overall than the noon colour, before \
+the rest of the pack's brightness and colour adjustments are applied, because a low sun \
+crossing more air looks more intense, not less. The Custom Sunset Light Warmth setting below \
+controls how much further this shifts as the sun gets close to the horizon."""
 
-u_LightPaletteSunsetG = """Green channel of the sunset/dawn direct-light colour. See Light Sunset R."""
+u_LightPaletteSunsetG = """The amount of green in the sunset and dawn sunlight colour. See Custom Sunset Light: Red."""
 
-u_LightPaletteSunsetB = """Blue channel of the sunset/dawn direct-light colour. See Light Sunset R."""
+u_LightPaletteSunsetB = """The amount of blue in the sunset and dawn sunlight colour. See Custom Sunset Light: Red."""
 
 u_LightPaletteSunsetWarmth = """
-How much further the sunset/dawn colour above warms as the sun actually nears the horizon.
+How much further the sunset and dawn light colour above warms up as the sun actually gets \
+close to the horizon.
 
-1.00 is the authored default. Lower flattens the walk toward a single fixed sunset colour; \
-higher makes the last stretch before the horizon noticeably warmer than the rest of the transition."""
+1.00 is the default. Lower flattens the change toward one fixed sunset colour; higher makes \
+the last stretch before the horizon noticeably warmer than the rest of the change."""
 
 u_LightPaletteNightR = """
-The direct light colour on a clear night (moonlight).
+The colour of direct moonlight on a clear night, when Light Colours is set to Custom.
 
-Sets the red channel. Kept low but never fully black, so a clear night still has a faint colour \
-rather than reading as an absence of light."""
+This sets the amount of red. It is kept low but never fully black, so a clear night still has \
+a faint colour of its own instead of looking like no light at all."""
 
-u_LightPaletteNightG = """Green channel of the clear-night direct-light colour. See Light Night R."""
+u_LightPaletteNightG = """The amount of green in the clear-night moonlight colour. See Custom Night Light: Red."""
 
-u_LightPaletteNightB = """Blue channel of the clear-night direct-light colour. See Light Night R."""
+u_LightPaletteNightB = """The amount of blue in the clear-night moonlight colour. See Custom Night Light: Red."""
 
 u_LightPaletteRainDayR = """
-The direct light colour during daytime rain.
+The colour of direct light during rain in the daytime, when Light Colours is set to Custom.
 
-Sets the red channel. Independent of the clear-day colours above, so rain can read as genuinely \
-overcast rather than just a dimmed version of a clear day."""
+This sets the amount of red. It is set on its own, apart from the clear-day colours above, so \
+rain can look like real overcast weather rather than just a dimmed clear day."""
 
-u_LightPaletteRainDayG = """Green channel of the daytime-rain direct-light colour. See Light Rain Day R."""
+u_LightPaletteRainDayG = """The amount of green in the daytime-rain light colour. See Custom Rainy Day Light: Red."""
 
-u_LightPaletteRainDayB = """Blue channel of the daytime-rain direct-light colour. See Light Rain Day R."""
+u_LightPaletteRainDayB = """The amount of blue in the daytime-rain light colour. See Custom Rainy Day Light: Red."""
 
 u_LightPaletteRainNightR = """
-The direct light colour during night-time rain.
+The colour of direct light during rain at night, when Light Colours is set to Custom.
 
-Sets the red channel. Independent of the clear-night colour above, and typically the darkest of \
-all six direct-light entries."""
+This sets the amount of red. It is set on its own, apart from the clear-night colour above, \
+and is usually the darkest of all six direct-light colours."""
 
-u_LightPaletteRainNightG = """Green channel of the night-rain direct-light colour. See Light Rain Night R."""
+u_LightPaletteRainNightG = """The amount of green in the night-rain light colour. See Custom Rainy Night Light: Red."""
 
-u_LightPaletteRainNightB = """Blue channel of the night-rain direct-light colour. See Light Rain Night R."""
+u_LightPaletteRainNightB = """The amount of blue in the night-rain light colour. See Custom Rainy Night Light: Red."""
 
 u_LightPaletteRainMagnitude = """
-An overall brightness knob for both rain colours above, applied after they are already blended \
-for time of day.
+An overall brightness control for both rain light colours above, applied after they are \
+already mixed for the time of day.
 
-1.00 changes nothing. Lower makes rainy weather read darker across the board without having to \
-re-tune both rain colours separately; higher brightens it."""
+1.00 changes nothing. Lower makes rainy weather look darker all around, without having to \
+change both rain colours separately; higher makes it brighter."""
 
 u_AtmPaletteNoonExponent = """
-Shapes how the sky's own colour becomes the noon ambient light. A contrast curve, not a colour.
+Shapes how the sky's own colour turns into the fill light at noon. This changes contrast, not \
+colour.
 
-The ambient light at noon takes its hue from whatever the sky actually looks like, then this \
-exponent reshapes it. Below 1.00 lifts the shadows; above 1.00 deepens them. 0.85 is the default."""
+The fill light at noon takes its colour from whatever the sky actually looks like, then this \
+setting reshapes it. Below 1.00 lifts up the shadows; above 1.00 deepens them. 0.85 is the \
+default."""
 
 u_AtmPaletteNoonBrightness = """
-Overall brightness of the noon ambient light, on top of the shaping above.
+The overall brightness of the noon fill light, on top of the shaping above.
 
-1.00 is neutral. This is the main lever for how bright open shade reads at midday."""
+1.00 is neutral. This is the main control for how bright open shade looks at midday."""
 
 u_AtmPaletteSunsetTintR = """
-A tint multiplied onto the noon ambient colour to make the sunset/dawn ambient colour.
+A tint applied to the noon fill light colour to make the sunset and dawn fill light colour.
 
-Sets the red channel. 1.00 leaves that channel unchanged from the noon colour; this is a relative \
-tint, not an independent colour, so it always tracks whatever the sky is actually doing."""
+This sets the amount of red. 1.00 leaves that colour unchanged from the noon colour. This is a \
+tint relative to the noon colour, not a colour on its own, so it always follows whatever the \
+sky is actually doing."""
 
-u_AtmPaletteSunsetTintG = """Green channel of the sunset/dawn ambient tint. See Ambient Sunset Tint R."""
+u_AtmPaletteSunsetTintG = """The amount of green in the sunset and dawn fill light tint. See Custom Sunset Sky: Red."""
 
-u_AtmPaletteSunsetTintB = """Blue channel of the sunset/dawn ambient tint. See Ambient Sunset Tint R."""
+u_AtmPaletteSunsetTintB = """The amount of blue in the sunset and dawn fill light tint. See Custom Sunset Sky: Red."""
 
 u_AtmPaletteNightR = """
-The ambient (sky-fill) light colour on a clear night.
+The fill light colour on a clear night.
 
-Sets the red channel. Unlike the noon and sunset ambient colours, this one is not derived from the \
-sky. It is set directly here."""
+This sets the amount of red. Unlike the noon and sunset fill colours, this one is not worked \
+out from the sky. It is set directly here."""
 
-u_AtmPaletteNightG = """Green channel of the clear-night ambient colour. See Ambient Night R."""
+u_AtmPaletteNightG = """The amount of green in the clear-night fill light colour. See Custom Night Sky: Red."""
 
-u_AtmPaletteNightB = """Blue channel of the clear-night ambient colour. See Ambient Night R."""
+u_AtmPaletteNightB = """The amount of blue in the clear-night fill light colour. See Custom Night Sky: Red."""
 
 u_AtmPaletteRainDayR = """
-The ambient (sky-fill) light colour during daytime rain.
+The fill light colour during rain in the daytime.
 
-Sets the red channel. Set directly, independent of the sky-derived noon ambient colour."""
+This sets the amount of red. It is set directly here, apart from the noon fill colour that is \
+worked out from the sky."""
 
-u_AtmPaletteRainDayG = """Green channel of the daytime-rain ambient colour. See Ambient Rain Day R."""
+u_AtmPaletteRainDayG = """The amount of green in the daytime-rain fill light colour. See Custom Rainy Day Sky: Red."""
 
-u_AtmPaletteRainDayB = """Blue channel of the daytime-rain ambient colour. See Ambient Rain Day R."""
+u_AtmPaletteRainDayB = """The amount of blue in the daytime-rain fill light colour. See Custom Rainy Day Sky: Red."""
 
 u_AtmPaletteRainNightR = """
-The ambient (sky-fill) light colour during night-time rain.
+The fill light colour during rain at night.
 
-Sets the red channel. Typically the darkest of the six ambient entries."""
+This sets the amount of red. It is usually the darkest of the six fill light colours."""
 
-u_AtmPaletteRainNightG = """Green channel of the night-rain ambient colour. See Ambient Rain Night R."""
+u_AtmPaletteRainNightG = """The amount of green in the night-rain fill light colour. See Custom Rainy Night Sky: Red."""
 
-u_AtmPaletteRainNightB = """Blue channel of the night-rain ambient colour. See Ambient Rain Night R."""
+u_AtmPaletteRainNightB = """The amount of blue in the night-rain fill light colour. See Custom Rainy Night Sky: Red."""
 
 u_ScreenBrightness = """
-Stands in for Minecraft's own Brightness slider.
+Takes the place of Minecraft's own Brightness slider.
 
-It brightens nights and rainy weather only, leaving clear daylight alone, so dark scenes get \
-easier to see without washing out the day. The default matches vanilla's slider at its middle \
-position."""
+It only brightens night and rainy weather, and leaves clear daylight alone, so dark scenes are \
+easier to see without washing out the day. The default matches the game's slider set to the \
+middle."""
 
 LIGHT_COLOR_MULTS = """
 Fine-tune the colour of the light by hand, separately for morning, noon, night and rain.
 
-Each time of day gets its own R/G/B/Intensity sliders below. Everything defaults to 1.00, which \
-changes nothing. You can push one time of day warmer or dimmer without touching the others."""
+Each time of day gets its own Red, Green, Blue and Brightness sliders below. Everything starts \
+at 1.00, which changes nothing. You can push one time of day warmer or dimmer without touching \
+the others."""
 
 ATM_COLOR_MULTS = """
 Fine-tune the colour of the sky by hand, separately for morning, noon, night and rain.
 
-Moves the sky dome, the aerial haze and edge fog terrain fades into, the cloud deck's fade-to-sky, \
-and sky reflections all together, so the horizon never disagrees with the haze in front of it. \
-The same idea as Light Colour Multipliers, applied to the sky instead of the sun. Everything \
-defaults to 1.00, which changes nothing."""
+Moves the sky itself, the haze in the air, the Edge Fog your view fades into, the point where \
+clouds fade into the sky, and sky reflections, all together, so the horizon always matches the \
+haze in front of it. This works like Light Colour Adjustments, but for the sky instead of the \
+sun. Everything starts at 1.00, which changes nothing."""
 
 BLOOM_ENABLED = """
-The glow that bleeds out of very bright things, the way it does in a camera or your own eyes.
+The glow that spreads out from very bright things, the way it does in a camera or your own eyes.
 
-It is also what lets bright things look truly bright instead of clipping to flat white. Turning \
-it off saves a fair amount of performance and memory."""
+It is also what lets bright things look truly bright, instead of just turning flat white. \
+Turning it off saves some frame rate and memory."""
 
 u_BloomStrength = """
-How much of the glow reaches the final image.
+How much of the glow reaches the final picture.
 
-Higher lets bright areas bleed further into their surroundings; push it too far and the whole \
-picture goes soft. The default keeps the glow gentle."""
+Higher lets bright areas spread further into what is around them; push it too far and the whole \
+picture looks soft. The default keeps the glow gentle."""
 u_BloomFalloff = """
-How far the glow around bright things reaches.
+How far the glow around bright things spreads.
 
-Low is a hard, tight shine hugging light sources; the top of the range spreads an even, hazy \
-halo across everything bright. The default sits at a natural, restrained falloff."""
+Low gives a tight, hard shine hugging the light itself; high spreads an even, hazy glow across \
+everything bright. The default is a natural, restrained spread."""
 
 
 
 
 
 u_Exposure = """
-Overall brightness of the image.
+Overall brightness of the picture.
 
-It works on top of Auto Exposure rather than replacing it. The two combine, so your setting here \
-still matters while the scene adapts on its own."""
+It works together with Auto Brightness instead of replacing it. The two combine, so this \
+setting still matters even while the scene adjusts on its own."""
 
 AUTO_EXPOSURE = """
-Adjusts brightness to the scene automatically, the way your eyes do.
+Adjusts brightness to the scene on its own, the way your eyes do.
 
-Caves brighten and open daylight settles down on their own, smoothly rather than flickering. \
-Off, the fixed Exposure slider is all you get."""
+Caves get brighter and open daylight settles down by itself, smoothly rather than flickering. \
+With this off, the fixed Brightness slider is all you get."""
 
 u_AutoExposureMin = """
-The darkest Auto Exposure is allowed to make the picture.
+The darkest Auto Brightness is allowed to make the picture.
 
-Stops a very bright scene, like open sky or lava up close, from being pushed down toward black."""
+Stops a very bright scene, like open sky or lava up close, from being pushed down toward \
+black."""
 
 u_AutoExposureMax = """
-The brightest Auto Exposure is allowed to make the picture.
+The brightest Auto Brightness is allowed to make the picture.
 
-Stops a cave or deep water from being brightened all the way to daylight, so dark places stay \
-recognisably dark."""
+Stops a cave or deep water from being brightened all the way up to daylight, so dark places \
+stay recognisably dark."""
 
 u_ExposureStormDarkening = """
-How much of a storm's darker sky survives Auto Exposure.
+How much of a storm's darker sky survives Auto Brightness.
 
-Auto Exposure normally brightens the picture back up to compensate for a darker sky, which can \
-make rain and thunder look barely different from a clear day. Raising this holds some of that \
+Auto Brightness normally brightens the picture back up to make up for a darker sky, which can \
+make rain and thunder look almost the same as a clear day. Raising this holds some of that \
 darkening back, like your eyes only partly adjusting. 0 turns it off."""
 
 u_ExposureAdaptSpeedDarken = """
 How quickly your view adjusts when the scene gets darker.
 
-Slower by default, like real eyes: stepping into a cave takes a moment before it stops looking \
-black."""
+This is slower by default, like real eyes: stepping into a cave takes a moment before it stops \
+looking black."""
 
 u_ExposureAdaptSpeedBrighten = """
 How quickly your view adjusts when the scene gets brighter.
 
-Faster by default, like real eyes: stepping out into daylight is a near-instant wince, not a slow \
-brightening."""
+This is faster by default, like real eyes: stepping out into daylight is a near-instant wince, \
+not a slow brightening."""
 
 u_TmContrast = """
-How punchy the image is.
+How punchy the picture looks.
 
 Higher deepens shadows and brightens highlights, losing a little detail at both ends."""
 
 u_TmWhitePath = """
-How readily very bright colours fade to white.
+How easily very bright colours fade to white.
 
-Eyes and film both do this; without it an intense light keeps its colour, and a bright sun reads \
-yellow instead of white."""
+Eyes and cameras both do this; without it, an intense light keeps its colour, and a bright sun \
+looks yellow instead of white."""
 
 u_Saturation = """
-How vivid the colours of the final image are.
+How vivid the colours in the final picture are.
 
 Lower drains colour toward grey; higher makes everything more intense."""
 
 u_Contrast = """
-The separation between light and dark in the final image.
+The gap between light and dark in the final picture.
 
-It pivots on middle grey, so raising it deepens shadows and brightens highlights at once instead \
-of just darkening everything."""
+It pivots around middle grey, so raising it deepens shadows and brightens highlights at the \
+same time, instead of just darkening everything."""
 
 u_TmDarkDesaturation = """
 How much colour drains out of dark areas.
 
-Eyes lose colour in low light; without this a dim scene stays fully colourful and reads as \
-tinted rather than dark."""
+Eyes lose colour in low light; without this, a dim scene stays fully colourful and looks tinted \
+rather than dark."""
 u_PomQuality = """
-Quality of the 3D texture effect that gives brick, cobblestone and planks real-looking depth.
+How closely the bump effect follows your resource pack's height map, for brick, cobblestone \
+and planks.
 
-Higher smooths the stair-stepping you can see when looking across a surface at a shallow angle; \
-zero turns the effect off. Needs a resource pack with height maps. Without one it does nothing."""
+Higher smooths out the stair-step look you can see when a surface is viewed at a shallow angle; \
+zero turns the effect off. It needs a resource pack with height maps; without one, this setting \
+does nothing."""
 
 u_PomDepth = """
-How deep the 3D texture effect makes surfaces look.
+How deep the bump effect makes surfaces look.
 
-Higher is stronger relief, but very high values make textures swim at shallow viewing angles. It \
-is an illusion on the surface and cannot truly reshape a block."""
+Higher gives stronger relief, but very high values can make textures swim when seen from a \
+shallow angle. It is a trick of light and shadow on a flat surface, and cannot truly reshape a \
+block."""
 
 u_PomDistance = """
-How far away the 3D texture effect is still drawn.
+How far away the bump effect is still drawn.
 
-It fades out gradually past this range, so there is no visible line where it stops. Shorter \
-saves performance on detail too distant to see anyway."""
+It fades out gradually past this range, so there is no visible line where it stops. A shorter \
+distance saves performance on detail too far away to see anyway."""
 
 u_PomDebug = """
-Shows troubleshooting views instead of the normal world. Leave at 0 to play.
+A test view for checking the bump effect. Leave it off to play.
 
-1 shows the height map from your resource pack, 2 shows the effect's self-shadowing, and 3 shows \
-how deep into each surface the effect looked."""
+Height: the height map from your resource pack.
+
+Shadow: the effect's own shadows.
+
+Travel: how deep into each surface the effect looked."""
 
 u_AlbedoIdentityDebug = """
-A developer troubleshooting switch. Leave it off.
+A test view for checking a block's raw surface colour. Leave it off to play.
 
-It repaints the world with raw texture data so a debug readout can inspect it. It is not meant to \
-be looked at while playing."""
+It repaints the world using only its texture data, with no lighting added, so that colour can \
+be checked on its own."""
 
 
 u_PomShadowStrength = """
-How strongly nearby relief shadows itself when lit from a low or side angle.
+How strongly the bump effect shadows itself when lit from a low or side angle.
 
-Raise it to make brick courses, log ends and plank edges read as more deeply carved; lower it \
-for a flatter, softer look. Only changes the shading, never the displacement itself."""
+Raise it to make brick courses, log ends and plank edges look more deeply carved; lower it for \
+a flatter, softer look. It only changes the shading, never the depth itself."""
 u_PomAllowCutout = """
-Extends the 3D texture effect to see-through blocks like leaves, doors and grass.
+Extends the bump effect to see-through blocks like leaves, doors and grass.
 
-Off by default for a reason: on these blocks the effect can make edges flicker and change shape \
-as the camera moves."""
+It is off by default for a reason: on these blocks, the effect can make edges flicker and \
+change shape as you move the camera."""
 u_ShadowDistance = """
 How far from you shadows are drawn, in blocks.
 
-Shorter makes nearby shadows noticeably crisper, because the same shadow detail covers less \
-ground. Shadows fade out gently near the limit rather than stopping at a hard line."""
+A shorter distance makes nearby shadows noticeably crisper, because the same shadow detail \
+covers less ground. Shadows fade out gently near the limit, rather than stopping at a hard \
+line."""
 
 u_ShadowSoftness = """
-How soft the edges of shadows are, with regular or ray traced shadows.
+How soft the edges of shadows are, with plain shadows or with Realistic Shadows turned on.
 
-Low is crisp, high is a wide, diffuse edge. Changing Shadow Resolution does not change this \
-look."""
+Low gives a crisp edge, high gives a wide, soft edge. Changing Shadow Sharpness does not change \
+this look."""
 
 u_ShadowStrength = """
-How dark shadows are, with regular or ray traced shadows.
+How dark shadows are, with plain shadows or with Realistic Shadows turned on.
 
 At 1.0 shadowed ground gets no direct sunlight at all, only light from the sky. Lower lets some \
 sun bleed through, which reads like soft bounced light. Above 1.0 the sky light inside shadows \
 fades too, gradually, and never all the way to black."""
 
 RT_SHADOWS = """
-Uses ray tracing for sun and moon shadows on nearby surfaces when the engine supports it.
+Uses a more realistic method for sun and moon shadows on nearby surfaces, when your graphics \
+card supports it.
 
-Distant blockers still cast onto those surfaces. Farther surfaces and unavailable RT data use \
-regular shadows. Softness, Samples and Strength apply to both."""
+Distant blockers can still cast shadows onto those surfaces. Farther surfaces, and surfaces \
+where this isn't available, fall back to plain shadows. Shadow Softness, Shadow Quality and \
+Shadow Strength apply to both."""
 
 u_RtShadowDistance = """
-Horizontal distance from you to surfaces receiving ray traced shadows, in chunks (16 blocks each).
+Horizontal distance from you to surfaces that get Realistic Shadows, in chunks (16 blocks \
+each).
 
-The default is 2 chunks (32 blocks). The effective reach is the smaller of this setting and \
-Shadow Distance, which is in blocks. Farther surfaces use regular shadows. Distant or elevated \
-blocks can still cast onto nearby surfaces; this does not limit where blockers may be."""
+The default is 2 chunks (32 blocks). The actual reach is whichever is smaller: this setting, or \
+Shadow Distance, which is measured in blocks. Farther surfaces use plain shadows. Distant or \
+raised blocks can still cast a shadow onto nearby surfaces; this setting does not limit where \
+those blocks may be."""
 
 HIDE_VANILLA_BLOB_SHADOWS = """
-Hides the dark oval vanilla draws under every player and mob.
+Hides the dark oval shape Minecraft normally draws under every player and mob.
 
-With real shadows on, that oval just sits under the true shadow like a smudge. Turn it back on \
-if you play with shadows off or prefer the vanilla look."""
+With Shadows turned on, that oval just sits under the true shadow like a smudge. Turn this back \
+on if you play with Shadows off, or if you prefer the game's normal look."""
 
 
 
@@ -1795,9 +1894,9 @@ if you play with shadows off or prefer the vanilla look."""
 PLAGUE_SNOW_DUSTING = """
 A dusting of snow on exposed, upward-facing ground in snowy biomes.
 
-It does not build up or melt. It is there, fixed in place, and ground under a tree, \
-overhang or roof stays bare. Off by default because it repaints a lot of a snowy biome; it costs \
-nothing outside one."""
+It does not build up or melt. It is there, fixed in place, and ground under a tree, overhang or \
+roof stays bare. Off by default because it repaints a lot of a snowy biome; it costs nothing \
+outside one."""
 
 u_SnowAmount = """
 How much of a snowy biome the dusting covers.
@@ -1809,36 +1908,37 @@ PLAGUE_SNOW_ON_FOLIAGE = """
 Extends the snow dusting to leaves and bushes.
 
 Snow only settles on the parts of a tree that face the sky, so you get white on top with green \
-showing through, not one flat white slab. Grass and flowers are untouched, because snow cannot sit \
-on them."""
+showing through, not one flat white slab. Grass and flowers are untouched, because snow cannot \
+sit on them."""
 
 u_RefractStrength = """
 How far glass bends what is behind it.
 
-Low is a thin window, high is a thick uneven slab. Set it while looking through a pane at something \
-with detail a few blocks behind it."""
+Low gives a thin window, high gives a thick, uneven slab. Set it while looking through a pane \
+at something with detail a few blocks behind it."""
 
 PLAGUE_GLASS_REFRACTION = """
-Bends the view through glass, ice and stained panes, the way real glass shifts what is behind it.
+Bends the view through glass, ice and stained panes, the way real glass shifts what is behind \
+it.
 
-How far it bends comes from the texture pack's own material maps. Set the amount with Glass \
-Refraction Strength below. Nearly transparent panes do not refract."""
+How far it bends comes from the resource pack's own material data. Set the amount with Glass \
+Warp Strength below. Panes that are almost fully see-through do not bend the view."""
 
 PLAGUE_WETNESS_PCT = """
-Makes rain wet the world: puddles in the low spots, and a darker, slicker look on everything the \
+Makes rain wet the world: puddles in low spots, and a darker, slicker look on everything the \
 rain can reach.
 
-Off means no puddles at all, and rain leaves surfaces exactly as they are dry. It is the master \
-control for this page: at Off, Puddle Shape, Puddle Ripples and Rain Splashes all go quiet with \
-it. Damp is a passing shower, Very Wet is ordinary rain, and Flooded is a storm that should look \
-like it has been raining for hours."""
+Off means no puddles at all, and rain leaves surfaces exactly as they are when dry. This is the \
+master switch for this page: at Off, Puddle Shape, Puddle Ripples and Rain Splashes all go \
+quiet with it. Damp is a passing shower, Very Wet is ordinary rain, and Flooded is a storm that \
+should look like it has been raining for hours."""
 
 PLAGUE_PUDDLE_SHAPE = """
-Whether rain collects into puddles or coats every surface evenly.
+Whether rain collects into puddles, or coats every surface evenly instead.
 
-On, water pools in the low spots and mirrors the sky, and Puddle Ripples land on those puddles. \
-Off, the same wetness spreads evenly over everything instead, so the whole world goes slightly \
-glossy, with no puddles to speak of."""
+On, water pools in low spots and mirrors the sky, and Puddle Ripples land on those puddles. \
+Off, the same wetness spreads evenly over everything instead, so the whole world looks slightly \
+glossy, with no puddles to see."""
 
 PLAGUE_RAIN_SPLASHES = """
 Raindrop rings on open water: lakes, rivers and the sea.
@@ -1849,40 +1949,40 @@ Puddles have their own ripples, under Puddle Ripples."""
 u_SplashDensity = """
 How closely the raindrop rings are packed on open water.
 
-Low spaces them out to about a block and a half apart; high packs them to about half a block. \
+Low spaces them about a block and a half apart; high packs them to about half a block apart. \
 How many appear at once still follows how hard it is raining."""
 
 PLAGUE_PUDDLE_RIPPLE_PCT = """
 How strongly raindrops ripple across puddles.
 
-Rings spread from each drop and fade, and only while rain is actually falling. When the sky \
-clears the impacts stop while the puddles linger and dry. Past Heavy the surface stops looking \
-like rained-on water and starts looking like frosted glass."""
+Rings spread out from each drop and fade, and only while rain is actually falling. When the sky \
+clears, the drops stop landing while the puddles themselves linger and dry. Past Heavy, the \
+surface stops looking like rained-on water and starts looking like frosted glass."""
 
 u_WaterClarity = """
 How far you can see into the water.
 
-Raising it makes deep water read like shallow water. Red light dies off first, which is why deep \
-water turns blue-green before it goes dark."""
+Raising it makes deep water look like shallow water. Red light fades out first, which is why \
+deep water turns blue-green before it goes dark."""
 
 u_WaterReflectionStrength = """
 Strength of reflections on water only.
 
 Kept separate from the main Reflection Strength setting, so tuning lake reflections cannot \
-change how metals look."""
+change how metal looks."""
 
 u_WaterSplashStrength = """
-How strongly the view warps when the camera crosses the water surface, in or out.
+How strongly the view warps when the camera crosses the water surface, going in or out.
 
-Zero turns the crossing effect off without touching the underwater look itself. This is separate \
-from Underwater Distortion, which is the shimmer you see while already submerged, not the moment \
-of crossing."""
+Zero turns the crossing effect off without touching the underwater look itself. This is \
+separate from Underwater Distortion, which is the shimmer you see while already underwater, \
+not the moment of crossing."""
 
 u_WaterSunGlitterStrength = """
 Strength of the sun's sparkle on the water surface.
 
-It follows the waves, the sun's actual position and the weather. Zero removes just the sparkle. \
-Reflections are untouched."""
+It follows the waves, the sun's actual position and the weather. Zero removes just the \
+sparkle; reflections are untouched."""
 
 u_UnderwaterSunGlitterStrength = """
 Strength of the sunlight glinting through the surface when seen from below.
@@ -1892,23 +1992,24 @@ Zero removes the glint and changes nothing else about the underwater view."""
 u_UnderwaterDiscSoftness = """
 How soft and hazy the sun or moon looks from underwater.
 
-Low keeps a crisp disc, high blurs it into a glow, and deeper water is always hazier than the \
-surface, so this sets the ceiling. The wobble is the water itself and never changes; if the disc \
-shimmers, raise this."""
+Low keeps a crisp shape, high blurs it into a glow, and deeper water is always hazier than the \
+surface, so this sets the ceiling. The wobble is the water itself and never changes; if the sun \
+or moon shimmers, raise this."""
 
 u_UnderwaterWarpBends = """
-How many broad half-waves fit into one screen-height of the underwater view.
+How many broad ripples fit across the height of your screen when the view bends underwater.
 
-Low produces a slow whole-view lean; high breaks the deformation into smaller ripples. This is \
-screen-scale rather than block-scale, so moving toward a wall does not silently change the control's \
-meaning."""
+Low gives one slow lean across the whole view; high breaks the bending into smaller ripples. \
+This is based on your screen, not on blocks, so walking toward a wall does not change what the \
+number means."""
 
 u_UnderwaterViewWarpPixels = """
 A slow, gentle sway of your whole view while underwater.
 
-The value is the maximum displacement in screen pixels before the edge-safe overscan. Straight \
-edges bend near and far alike, and the whole finished scene, including shafts, blur and bloom, \
-moves together. Separate from Underwater Distortion, which is a fine world-anchored shimmer."""
+The number sets how far, in pixels, your view can drift to one side; the picture is drawn a \
+little larger than the screen so the edges never show a gap. Straight edges bend near and far \
+alike, and the whole finished view, including light shafts, blur and glow, moves together. This \
+is different from Underwater Distortion, which is a finer shimmer that stays anchored to the world."""
 
 CLOUD_SHADOWS = """
 Clouds cast moving shadows on the ground.
@@ -1937,16 +2038,16 @@ change how much foam there is. That is Foam Amount."""
 u_FoamPomDepth = """
 How much real thickness the foam appears to have, in blocks.
 
-It uses the foam texture's height map to shift with your view angle instead of lying flat like a \
-sticker. Zero turns it off and skips its cost entirely."""
+It uses the bumps built into the foam pattern to shift with your view angle, instead of lying \
+flat like a sticker. Zero turns it off and skips its cost entirely."""
 
 SSR_WATER_MODE = """
 What the water surface is.
 
-Vanilla draws it the way the game does: a flat textured plane, no waves. Shaded switches to this \
-pack's surface, with animated waves, foam, caustics, a sun track and the sky reflected in it. \
-Reflective adds the screen-space reflection on top, so the shore and anything else on screen \
-appears in the water as well as the sky.
+Plain draws it the way the game does by default: a flat textured plane, no waves. Shaded switches \
+to this pack's surface, with animated waves, foam, light ripples, a sun track and the sky \
+reflected in it. Reflective adds a reflection of everything else on screen on top, so the shore \
+and anything else visible appears in the water as well as the sky.
 
 Reflective needs Reflections on; without it, it renders as Shaded."""
 
@@ -1998,7 +2099,7 @@ stays crisp near the surface turns dense and short further down.
 
 Zero holds the whole column at whatever Water Clarity is set to. Higher leaves the top few metres \
 alone and thickens the water below them, so a deep ocean shows it and a shallow pond barely does. \
-It adds scattering, not darkness: the beams down there brighten rather than the view closing in. \
+This makes the light spread and soften as it goes down, rather than the view going dark. \
 Light shafts only; the underwater fog and darkness sliders are unaffected."""
 u_WaterMoteAmount = """
 Specks of drifting matter suspended in the water, the sort that catches a torch beam in a flooded \
@@ -2006,7 +2107,7 @@ cave. They sit at fixed points in the world and sink slowly, so they slide past 
 rather than sticking to the screen.
 
 Each speck lights up from whatever light is reaching that spot, so they flare as they cross a sun \
-shaft and dim again in shadow. Turbidity With Depth above is a different thing entirely: that \
+shaft and dim again in shadow. Water Murkiness By Depth above is a different thing entirely: that \
 thickens the water itself, this puts things in it.
 
 Set it to 0.00 for perfectly clean water. Above about 1.50 the field starts to read as busy \
@@ -2030,7 +2131,7 @@ u_SsrMaxDistance = """
 How far away a reflection can reach, in blocks.
 
 Longer finds more distant reflections but spreads the same effort thinner, so raise Reflection \
-Quality along with it."""
+Detail along with it."""
 
 u_SsrTraceQuality = """
 Quality of the reflections.
@@ -2092,8 +2193,8 @@ How much the stars behind the End's clouds glow through them."""
 u_EndStormIntensity = """
 How strong the sheets of light tearing through the End are. Zero turns them off.
 
-They are shock fronts in the same gas the sky is made of, seen edge-on, which is why they read as \
-curtains rather than as clouds."""
+They are walls of light moving through the same gas the sky is made of, seen from the side, which \
+is why they read as curtains rather than as clouds."""
 
 u_EndStormSize = """
 How big the sheets are. Lower makes fewer, wider ones."""
@@ -2160,59 +2261,64 @@ u_NetherHeatAmbient = """
 How strong the Nether's baseline heat haze is, on its own dial from the wobble above."""
 
 u_NetherHeatDistance = """
-How close the Nether's baseline haze reaches. Lower brings it nearer to the camera."""
+How close the Nether's baseline haze reaches. Lower brings it nearer to you."""
 
 u_NetherHeatBlurStrength = """
-Softens distant air in the Nether into haze, the way scattering blur does underwater.
+Blurs distant air in the Nether into a soft haze, like the blur you see looking through deep \
+water.
 
-Zero turns it off."""
+Zero turns it off. Higher makes the haze stronger."""
 
 u_NetherHeatBlurStart = """
-How far out the Nether's heat blur begins. Lower brings the soft haze closer."""
+How close the Nether haze starts. Lower brings the haze nearer to you; higher pushes it further \
+away."""
 
 SSAO_ENABLED = """
 Soft shading in corners, creases and where things meet the ground.
 
 It comes from the shape of the world itself: where a block meets the floor, inside an alcove, \
-under a plant. It works alongside Texture AO Strength below, which is the fine shading painted \
-into your resource pack's textures; the two stack."""
+under a plant. It works alongside Corner Shading Strength below, which is the fine shading \
+painted into your resource pack's textures; the two stack together."""
 
 SSAO_TAPS = """
 Quality of the corner shading.
 
-Higher is smoother; lower shows up as fine grain on cluttered scenes. The cost rises roughly in \
-step with the setting."""
+Higher looks smoother; lower can show up as fine speckling on busy scenes. The frame rate cost \
+rises roughly along with the setting."""
 
 u_SsaoRadius = """
-How far, in blocks, the corner shading reaches.
+How far, in blocks, the corner shading spreads out from where surfaces meet.
 
-Small catches only the tight shadows where surfaces meet. Large darkens whole alcoves and rooms, \
-but costs more and can shade across gaps that are not really connected."""
+A small setting only catches the tight shadow right where two surfaces touch. A large setting \
+darkens whole alcoves and rooms, but costs more and can shade across gaps that are not really \
+touching."""
 
 u_AOStrength = """
 Strength of the fine shading painted into your resource pack's textures: mortar between bricks, \
 the weave of wool, dents in metal.
 
-The partner to Screen-Space AO above: this gives surfaces their fine texture, while that one \
-grounds objects in the scene. Does nothing on resource packs without normal-map textures."""
+This pairs with Corner Shadows above: this option gives surfaces their fine texture, while that \
+one grounds objects into the scene around them. Does nothing on resource packs without normal-map \
+textures."""
 
 u_AuthoredEmission = """
 How strongly the glow painted into textures shines, mostly the glint on ores.
 
-Ores give off no real light, so this decides whether a copper vein glitters or reads as dull \
-grey stone. Glowstone, lanterns and lava are untouched, because they run on the block's real light. 0.00 \
-turns the painted glow off entirely."""
+Ores give off no real light of their own, so this decides whether a vein of copper glitters or \
+reads as plain grey stone. Glowstone, lanterns and lava are untouched, since they already give off \
+real light. Set it to 0 to turn the painted glow off completely."""
 
 u_BumpStrength = """
 How strongly light picks out the bumps in textures: brick edges, wood grain, stone pitting.
 
-At 0.0 every surface is lit as if perfectly flat. Needs a resource pack with normal maps."""
+At 0 every surface is lit as if it were perfectly flat. Needs a resource pack with normal maps to \
+do anything."""
 
 u_SsaoStrength = """
 How dark the corner shading gets.
 
-It only darkens ambient light, so a crevice in full sunlight stays bright. That is why it shows \
-most at night, indoors and in shade."""
+It only darkens soft background light, not direct sun or fire, so a crevice in full sunlight \
+stays bright. That is why it shows up most at night, indoors and in shade."""
 
 # --- Light colour multipliers (Lighting screen) -------------------------------------------------
 # Four time-of-day slots, each with a red/green/blue channel and an intensity. All default to 1.00,
@@ -2222,88 +2328,89 @@ u_LightMorningR = """
 Tints the sunlight red at dawn and dusk.
 
 Above 1.00 the low sun throws a redder light across the world; below 1.00 it drains the red out \
-and the morning turns cold. Affects the light only, not the sky it comes from."""
+and dawn and dusk turn cold. Changes the light only, not the sky above it."""
 
 u_LightMorningG = """
 Tints the sunlight green at dawn and dusk.
 
-Green is the middle of the three, so moving it alone shifts dawn light between magenta below \
-1.00 and a yellow-green cast above it."""
+Green sits in the middle of the three colours, so moving it alone shifts the light between \
+pinkish magenta below 1.00 and a yellow-green cast above it."""
 
 u_LightMorningB = """
 Tints the sunlight blue at dawn and dusk.
 
-Lowering it deepens the warm orange a sunrise already has; raising it cools dawn toward the \
-flat blue-white of midday."""
+Lowering it deepens the warm orange a sunrise already has; raising it cools dawn toward the flat \
+blue-white light of midday."""
 
 u_LightMorningI = """
 How bright dawn and dusk sunlight is, without changing its colour.
 
-Scales the red, green and blue above together, so the shade of the light stays put and only \
-its strength moves."""
+Scales the red, green and blue sliders above together, so the shade of the light stays the same \
+and only its strength changes."""
 
 u_LightNoonR = """
 Tints the midday sunlight red.
 
-Midday light is the brightest the world gets, so a small move here reads across the whole scene \
-rather than only on lit faces."""
+Midday light is the brightest the world gets, so even a small move here shows across the whole \
+scene, not just on faces facing the sun."""
 
 u_LightNoonG = """
 Tints the midday sunlight green.
 
-Below 1.00 noon takes a magenta cast; above it, a slightly sickly yellow-green. Small moves are \
-usually enough."""
+Below 1.00 noon takes on a magenta cast; above it, a slightly sickly yellow-green. Small moves are \
+usually all you need."""
 
 u_LightNoonB = """
 Tints the midday sunlight blue.
 
-Raising it gives a cold, overcast-looking noon; lowering it warms midday toward late afternoon \
-without changing the time of day."""
+Raising it gives a cold, overcast look at noon; lowering it warms midday toward the feel of late \
+afternoon, without changing the actual time of day."""
 
 u_LightNoonI = """
 How bright midday sunlight is, without changing its colour.
 
-The single strongest control over how bright the world reads. Auto-exposure will claw some of \
-a large change back, so move it in small steps."""
+The single strongest control over how bright the world looks. Auto Brightness will claw back part \
+of a large change, so move this one in small steps."""
 
 u_LightNightR = """
 Tints the moonlight red.
 
-Night light is dim, so this mostly changes the character of shadowed ground rather than any \
-bright surface."""
+Night light is dim, so this mostly changes the feel of shadowed ground rather than any bright \
+surface."""
 
 u_LightNightG = """
 Tints the moonlight green.
 
-Above 1.00 gives night a faint sickly cast; below, a mauve one."""
+Above 1.00 gives night air a faint sickly cast; below 1.00, a soft mauve one."""
 
 u_LightNightB = """
 Tints the moonlight blue.
 
-Moonlight is already the coolest light in the pack. Raising this makes nights read as colder \
-and more silver; lowering it makes them grey."""
+Moonlight is already the coolest light in the pack. Raising this makes nights look colder and \
+more silver; lowering it makes them look grey."""
 
 u_LightNightI = """
 How bright moonlight is, without changing its colour.
 
-This one opens all the way down to 0.01, because a genuinely dark night is a look people ask \
-for and every other slider bottoms out at half."""
+This slider opens all the way down to 0.01, because a truly dark night is a look many players \
+want, while every other light slider only goes down to half."""
 
 u_LightRainR = """
 Tints the sunlight red while it is raining.
 
-Rain light is already grey and flat, so this decides whether a storm reads as warm and muggy or \
-cold and bleak."""
+Rain light is already grey and flat, so this decides whether a storm feels warm and muggy or cold \
+and bleak."""
 
 u_LightRainG = """
 Tints the sunlight green while it is raining.
 
-Small lifts here read as the green-grey of a summer storm."""
+Even a small increase gives the green-grey look of a summer storm."""
 
 u_LightRainB = """
 Tints the sunlight blue while it is raining.
 
-Raising it pushes rain toward a cold blue-grey; lowering it toward a brown, dusty storm."""
+Raising it pushes rain toward a cold blue-grey; lowering it pushes it toward a brown, dusty \
+storm."""
 
 u_LightRainI = """
 How bright the light is while it is raining, without changing its colour.
@@ -2321,8 +2428,8 @@ Rain already darkens the world; this decides by how much."""
 u_AtmMorningR = """
 Tints the sky and haze red at dawn.
 
-Moves the dome, the aerial haze terrain fades into, the render-distance edge, cloud fade and sky \
-reflections together."""
+Moves the sky dome, the haze that distant land fades into, the edge of your view distance, where \
+clouds fade into the sky, and sky reflections, all together."""
 
 u_AtmMorningG = """
 Tints the sky and haze green at dawn."""
@@ -2330,7 +2437,8 @@ Tints the sky and haze green at dawn."""
 u_AtmMorningB = """
 Tints the sky and haze blue at dawn.
 
-Dawn sky leans blue on its own; lower this to fight that, raise it to lean into it."""
+A dawn sky already leans blue on its own; lower this slider to fight that, or raise it to lean \
+into it."""
 
 u_AtmMorningI = """
 How bright the sky and haze are at dawn, without changing their colour."""
@@ -2338,18 +2446,18 @@ How bright the sky and haze are at dawn, without changing their colour."""
 u_AtmNoonR = """
 Tints the sky and haze red at midday.
 
-Moves the dome, the aerial haze terrain fades into, the render-distance edge, cloud fade and sky \
-reflections together."""
+Moves the sky dome, the haze that distant land fades into, the edge of your view distance, where \
+clouds fade into the sky, and sky reflections, all together."""
 
 u_AtmNoonG = """
 Tints the sky and haze green at midday.
 
-A useful counterweight if the sky reads too magenta."""
+Useful for balancing things out if the sky looks too pink or magenta."""
 
 u_AtmNoonB = """
 Tints the sky and haze blue at midday.
 
-The most direct control over how blue the sky and distant haze go at noon."""
+The most direct control over how blue the sky and distant haze look at noon."""
 
 u_AtmNoonI = """
 How bright the sky and haze are at midday, without changing their colour."""
@@ -2363,7 +2471,8 @@ Tints the sky and haze green at night."""
 u_AtmNightB = """
 Tints the sky and haze blue at night.
 
-Raising it gives the classic silver-blue night sky; lowering it makes it read closer to black."""
+Raising it gives the classic silver-blue night sky; lowering it makes the night look closer to \
+plain black."""
 
 u_AtmNightI = """
 How bright the sky and haze are at night, without changing their colour."""
@@ -2377,7 +2486,7 @@ Tints the sky and haze green while it is raining."""
 u_AtmRainB = """
 Tints the sky and haze blue while it is raining.
 
-The main control over whether an overcast sky reads cold or warm."""
+The main control over whether an overcast sky looks cold or warm."""
 
 u_AtmRainI = """
 How bright the sky and haze are while it is raining, without changing their colour."""
@@ -2387,279 +2496,287 @@ How bright the sky and haze are while it is raining, without changing their colo
 # reads distance in game.
 
 PLAGUE_UNDERWATER = """
-The master switch for everything that happens when the camera is under water.
+The master switch for everything that happens once your view goes under water.
 
-Off leaves plain vanilla water: no fog column, no caustics on the sea floor, no blur, no \
-distortion. Everything else on this page stops doing anything."""
+Off leaves plain vanilla water: no fog underwater, no Underwater Light Ripples on the sea floor, \
+no blur, no distortion of your view. Every other option on this page stops doing anything."""
 
 WATER_SCATTERING_QUALITY = """
-Whether sunlight casts visible shafts down through the water, and how carefully they are traced.
+Whether sunlight casts visible shafts of light down through the water, and how carefully they are \
+drawn.
 
-Off skips the volume march entirely and costs nothing. Balanced traces it at a cheaper step \
-count; High takes more steps, so the shafts hold their shape at a distance instead of banding."""
+Off skips this entirely and costs nothing. Balanced draws it more cheaply; High takes more steps, so \
+the shafts keep their shape at a distance instead of breaking into bands."""
 
 u_WaterTintSaturation = """
-How coloured the water looks from above the surface.
+How coloured the water looks when you view it from above the surface.
 
-At 0 the surface reads as plain grey glass with a reflection on it; higher lets the water's own \
-blue-green through. It does not touch what you see once you are under the surface."""
+At 0 the surface looks like plain grey glass with a reflection on it; higher lets the water's own \
+blue-green colour show through. It does not change what you see once you go under the surface."""
 
 u_DepthDarkness = """
-How dark the water gets as it deepens, seen from outside it.
+How dark the water looks as it gets deeper, seen from above the surface.
 
-This is the shading on the water surface that says "there is a lot of water under this". At 0 a \
-deep ocean looks as light as a puddle."""
+This is the extra shading on the water's surface that tells you "there is a lot of water under \
+this". At 0 a deep ocean looks just as light as a puddle."""
 
 u_WaterTintR = """
-The red channel of the water's own colour.
+How much red is mixed into the water's own colour.
 
-The three tint sliders set the colour the water column takes on, meaning what light picks up \
-passing through it. Raising red turns a lake toward tea-coloured swamp water."""
+These three sliders (red, green and blue) set the colour that light takes on as it passes through \
+the water. Raising red turns a lake toward tea-coloured swamp water."""
 
 u_WaterTintG = """
-The green channel of the water's own colour.
+How much green is mixed into the water's own colour.
 
-High green with low red is tropical shallows; dropping it moves toward deep-ocean blue."""
+High green with low red gives the look of tropical shallows; dropping green moves the water \
+toward deep-ocean blue."""
 
 u_WaterTintB = """
-The blue channel of the water's own colour.
+How much blue is mixed into the water's own colour.
 
-Highest of the three by default, because water absorbs red first and blue last. That is why deep \
-water is blue."""
-
+This is the highest of the three by default, because real water soaks up red light first and blue \
+light last. That is why deep water looks blue."""
 u_WaterDistanceFog = """
-How far you can see horizontally under water, in chunks.
+How far you can see sideways under water, in chunks.
 
-The point at which the water haze has closed completely. Lower means murky; higher opens the \
-view up. Set with Water Fog Start below, which is where the haze begins."""
+This is the point where the underwater haze closes in completely. Lower means the water is \
+murkier; higher opens the view up. It works with Underwater Fog Start Depth below, which sets \
+where the haze begins."""
 
 u_WaterDepthFog = """
-The same closing distance, measured downward instead of outward, in chunks.
+The same closing distance as above, but measured downward instead of sideways, in chunks.
 
-Kept separate from the horizontal distance so a lake can be clear to look across but still go \
+Kept separate from the sideways distance so a lake can be clear to look across but still turn \
 dark below you."""
 
 u_UnderwaterFogStart = """
 How far away the underwater haze starts, in chunks.
 
-Inside this distance the view is fully clear. Raising it keeps nearby geometry crisp; at 0 the \
-haze starts immediately at the camera."""
+Inside this distance everything looks fully clear. Raising it keeps things close to you sharp; \
+at 0 the haze starts right where you are standing or swimming."""
 
 u_WaterDistanceDarkness = """
-How much dimmer things get with horizontal distance under water.
+How much darker things look the farther away they are, under water.
 
-Separate from fog: fog adds the water's colour over what you see, this takes light away from it. \
-Together they decide whether distance reads as misty or as gloomy."""
+This is separate from fog: fog paints the water's colour over what you see, while this takes \
+light away from it. Together they decide whether distance under water feels misty or feels \
+gloomy."""
 
 u_WaterDepthDarkness = """
-How much dimmer things get with depth under water."""
+How much darker things get the deeper under water they are."""
 
 u_WaterDarknessDepth = """
-The depth at which the darkening above has fully arrived, in chunks.
+How deep you need to go before the Darker with Depth effect above has fully taken hold, in \
+chunks.
 
-Lower makes water go dark almost immediately; higher stretches the falloff so only genuine \
-ocean trenches go black."""
+Lower makes water turn dark almost right away; higher stretches it out, so only truly deep \
+ocean trenches turn black."""
 
 u_UwBlurStart = """
 How far away the underwater blur starts, in chunks.
 
-Inside this the view stays sharp. Water scatters light, so distant things go soft as well as hazy. \
-This is where that begins."""
+Inside this the view stays sharp. Water scatters light, so distant things look soft as well as \
+hazy under water. This is where that begins."""
 
 u_UwBlurEnd = """
-How far away the underwater blur reaches full strength, in chunks.
+How far away the underwater blur reaches its full strength, in chunks.
 
-Deliberately independent of the fog distance: how soft water goes is a property of the water, \
-not of how far the fog happens to draw."""
+This is deliberately separate from the fog distance: how soft the water makes things look is a \
+property of the water itself, not of how far the fog happens to reach."""
 
 u_UwBlurRadius = """
-How far the blur reaches, in screen pixels.
+How far the underwater blur reaches, in screen pixels.
 
-Radius is how wide the smear is; Strength below is how much of the picture it is allowed to eat. \
-Large radius with low strength is a gentle haze; both high is a proper murk."""
+This is how wide the blur is; Underwater Blur Strength below is how much of the picture it is \
+allowed to affect. A large blur with low strength gives a gentle haze; both set high gives a \
+proper murk."""
 
 u_UwBlurStrength = """
 How much detail the underwater blur removes.
 
-At 0 the view stays sharp however large the radius is. At 1 distant geometry loses its edges \
-entirely."""
+At 0 the view stays sharp no matter how large the blur is set. At 1 distant blocks lose their \
+edges entirely."""
 
 u_UnderwaterFlowPixels = """
 How far the water's flow pushes what you see, in screen pixels.
 
-The fine, moving ripple distortion over everything under water. 0 turns it off and leaves the \
-view geometrically true."""
+This is the fine, moving ripple that plays over everything under water. 0 turns it off and \
+leaves the view undistorted."""
 
 u_UnderwaterFlowScale = """
-How large the flow ripples are.
+How large the ripples from the water's flow are.
 
 Low values give broad, slow swells across the whole view; high values give a tight, busy \
-shimmer. It changes the size of the distortion, not how strong it is."""
+shimmer. It changes the size of the ripple, not how strong it is."""
 
 u_CausticStrength = """
-How bright the light patterns on the sea floor are.
+How bright the light pattern on the sea floor is.
 
-The web of bright lines the waves focus onto whatever is under them. This is a plain multiplier. \
-1.0 is the tuned look, and it goes past that for taste."""
+This is the web of bright lines the waves focus onto whatever sits below them. It is a plain \
+multiplier: 1.0 is the tuned look, and you can push it higher to taste."""
 
 u_CausticGlow = """
-How much the caustics flare and shimmer rather than sitting as a steady web.
+How much the sea floor light pattern flares and shimmers rather than sitting still as a steady \
+web.
 
-Near the surface the focused light is still sharp, so peaks glint. This decides how strong that \
-glinting is; 0 leaves a flat, even pattern."""
+Near the surface the focused light is still sharp, so its brightest points glint. This controls \
+how strong that glinting is; 0 leaves a flat, even pattern."""
 
 u_CausticBounce = """
-How much caustic light bounces back up onto walls and overhangs.
+How much of the sea floor light pattern bounces back up onto walls and overhangs.
 
 At 0 the pattern only lands on the floor. Higher throws some of it onto the sides of a trench, \
-which is what makes a cave under water read as lit rather than painted."""
+which is what makes an underwater cave look lit rather than just painted."""
 
 u_CausticGlowDepth = """
-How deep the caustic shimmer survives, in chunks.
+How deep the sea floor light keeps its shimmer, in chunks.
 
-Caustics are focused by the surface, so their sharpness washes out as the water column between \
-them and the waves gets thicker. Shallower means only the top of the water sparkles."""
+The waves at the surface focus this light, so it loses its sharp edges the more water sits \
+between the sea floor and them. A lower value means only the top of the water sparkles."""
 
 u_CausticScale = """
-How large the caustic pattern is, as a percentage of the tuned size.
+How large the light pattern on the sea floor is, as a percentage of its tuned size.
 
-100 is what the pattern was designed at. Below 100 tightens the web into finer cells; above 100 \
-spreads it into broad, slow shapes."""
+100 is the pattern as it was made. Below 100 tightens it into finer cells; above 100 spreads it \
+into broad, slow shapes."""
 
 u_CausticSpeed = """
-How fast the caustic pattern moves, as a percentage of the tuned rate.
+How fast the light pattern on the sea floor moves, as a percentage of its tuned speed.
 
-0 freezes it. Whether this is measured against real time or against the waves depends on the \
-switch below."""
+0 freezes it in place. Whether this is measured against real time or against the waves depends \
+on the Seafloor Light Follows Waves switch below."""
 
 u_CausticSyncWaves = """
-Whether the caustics move with the waves or on their own clock.
+Whether the sea floor light pattern moves with the waves or keeps its own clock.
 
-Caustics are formed by the wave surface, so while this is on, the default, slowing the waves down \
-slows the pattern they focus. Off lets the web keep its own rate whatever the water is doing. The \
-speed slider stays live either way."""
+This light is shaped by the waves at the surface, so while this is on, the default, slowing the \
+waves down also slows the pattern they focus. Turning it off lets the pattern keep its own pace \
+whatever the water is doing. The Seafloor Light Speed slider above still works either way."""
 
 # --- Sky screen ---------------------------------------------------------------------------------
 
 PLAGUE_STAR_AMOUNT = """
-How many stars the night sky holds.
+How many stars fill the night sky.
 
-The defaults put a few hundred stars in view at once, which is roughly what a naked eye sees \
-under a dark sky. Dense is far past that and reads as a science-fiction sky rather than Earth's."""
+The default puts a few hundred stars in view at once, close to what a naked eye sees under a \
+dark sky. Dense goes far past that and looks more like a science-fiction sky than Earth's own."""
 
 u_StarDensity = """
-Fine adjustment on the star count, on top of the amount setting above.
+A fine adjustment to the star count, on top of the Star Amount setting above.
 
-The amount picks the population; this nudges it without jumping to the next preset."""
+Star Amount picks how many stars there are overall; this nudges that number without jumping to \
+the next setting."""
 
 u_StarBrightness = """
 How bright the stars are.
 
-0 removes them without removing the nebula behind them. Bright stars also feed bloom, so pushing \
-this high gives every star a halo."""
+0 removes them without removing the coloured clouds behind them. Bright stars also add to the \
+soft glow around bright lights, so turning this up high gives every star a halo."""
 
 u_StarMagnitudeFalloff = """
-How steeply the faint stars fall off against the bright ones.
+How steeply the faint stars fade out compared with the bright ones.
 
-Low makes most stars roughly equal, which reads as flat and artificial. High dims the faint tail \
-until only a handful of bright stars remain: the same number of stars, just fewer you can see."""
+Low makes most stars roughly the same brightness, which looks flat and artificial. High fades \
+the faint ones away until only a handful of bright stars remain: the same number of stars is \
+still there, just fewer that you can actually see."""
 
 u_StarColorSpread = """
 How much stars differ in colour from one another.
 
-Real skies mix red giants with blue-white stars. 0 tints every star identically; high enough and \
-the field starts to read as coloured noise rather than as stars."""
+Real skies mix red giants with blue-white stars. 0 tints every star the same; push it high \
+enough and the field starts to look like coloured static rather than stars."""
 
 u_StarSize = """
-How large each star is drawn.
-
-Size and brightness are separate on purpose. A large dim star and a small bright one look nothing \
-alike."""
+How large each star is drawn."""
 
 u_StarRoundness = """
 The shape of each star, from square at -1.00 through to round at 1.00.
 
-Round is the honest answer for a point of light. Square is there because at very small sizes a \
-hard-edged dot can read crisper on some displays."""
+Round is the honest choice for a point of light. Square exists because at very small sizes a \
+hard-edged dot can look crisper on some screens."""
 
 u_StarSoftness = """
-How feathered the edge of each star is.
+How feathered the edge of each star looks.
 
-Some feathering is applied automatically so stars do not flicker while you turn. This adds to it. \
-High values give soft glowing points; 0 leaves them as sharp as they can safely be."""
+Some feathering is applied automatically so stars do not flicker while you turn to look around. \
+This adds more on top. High values give soft, glowing points; 0 leaves them as sharp as they \
+can safely be."""
 
 PLAGUE_NEBULA_ENABLED = """
-Whether faint clouds of interstellar gas show in the night sky.
+Whether faint clouds of coloured gas show up in the night sky.
 
-Off leaves stars against plain black. The nebula only shows on clear nights, and never in \
-daylight."""
+Off leaves the stars against plain black. This only shows on clear nights, and never during the \
+day."""
 
 u_NebulaIntensity = """
-How bright the nebula is.
+How bright the night sky's coloured clouds are.
 
-Subtle by default. It should be something you notice on a dark night, not the main event."""
+Subtle by default. It should be something you notice on a dark, clear night, not the main \
+event."""
 
 u_NebulaAmount = """
-How much of the sky the nebula covers.
+How much of the sky the coloured clouds cover.
 
-At the default roughly a tenth of the sky sits under some gas. Raising it grows the clouds \
-outward from their bright cores rather than brightening everything at once."""
+At the default, roughly a tenth of the sky has some gas in it. Raising this grows the clouds \
+outward from their brightest points rather than brightening everything at once."""
 
 u_NebulaZoom = """
-How large the nebula's structures are.
+How large the coloured clouds' shapes are.
 
-Low gives a few broad clouds across the whole sky; high breaks it into finer, more distant \
+Low gives a few broad clouds across the whole sky; high breaks it up into finer, more distant \
 detail."""
 
 u_NebulaIonisedOnset = """
 How dense the gas must get before it turns from red to teal.
 
-Thin hydrogen glows red; dense enough gas ionises and goes teal. This is the density where that \
-changeover starts, so lowering it turns more of the cloud teal."""
+Thin gas glows red; thick enough gas turns teal. This sets how dense it must be for that change \
+to start, so lowering it turns more of the cloud teal."""
 
 u_NebulaIonisedWidth = """
-How gradual the red-to-teal changeover is.
+How gradual the change from red to teal is.
 
-Narrow gives a hard boundary between the two colours; wide blends them through purple across most \
-of the cloud."""
+Narrow gives a hard line between the two colours; wide blends them together through purple \
+across most of the cloud."""
 
 u_NebulaStarGlow = """
-How much the stars light up the gas around them.
+How much the stars light up the coloured gas around them.
 
-Stars multiply the cloud rather than sitting on top of it, so raising this makes them read as \
-embedded in the nebula. 0 leaves the gas evenly lit."""
+Stars brighten the cloud around them rather than just sitting on top of it, so raising this \
+makes them look embedded in it. 0 leaves the gas evenly lit."""
 
 u_NebulaDrift = """
-How fast the nebula drifts across the sky.
+How fast the coloured clouds drift across the sky.
 
-Slow by default. This is on top of the sky's own rotation, so 0 still leaves it turning with the \
-stars."""
+Slow by default. This is on top of the sky's own turning, so even at 0 they still move along \
+with the stars."""
 
 PLAGUE_SHOOTING_STARS = """
 Whether meteors streak across the night sky.
 
-Off removes them entirely and costs nothing."""
+Off removes them completely and costs nothing."""
 
 PLAGUE_SS_COUNT = """
 How many meteors can be in the sky at the same time.
 
-Not how often they appear. That is the frequency slider. This is the ceiling, and each one \
-costs a little to draw, so higher is more expensive whether or not they are visible."""
+This is not how often they show up; that is the Shooting Star Chance slider. This is the most \
+there can ever be, and each one costs a little to draw, so a higher number costs more even when \
+none happen to be visible."""
 
 u_ShootingStarChance = """
-How often meteors appear.
+How often meteors show up.
 
-Low means a rare event worth looking up for; high turns the sky into a meteor shower."""
+Low means a rare sight worth looking up for; high turns the sky into a meteor shower."""
 
 u_ShootingStarBrightness = """
 How bright each meteor is.
 
-0 leaves them present but invisible; high enough and they leave a bloom trail behind them."""
+0 leaves them there but invisible; high enough and they leave a glowing trail behind them."""
 
 u_ShootingStarSpeed = """
 How fast meteors cross the sky.
 
-Slow reads as a satellite, fast as a genuine meteor."""
+Slow looks like a satellite; fast looks like a real meteor."""
 
 u_ShootingStarSize = """
 How long each meteor's head is."""
@@ -2667,84 +2784,83 @@ How long each meteor's head is."""
 u_ShootingStarThickness = """
 How wide each meteor's streak is.
 
-Thin is a scratch on the sky; thick is closer to a fireball."""
+Thin looks like a scratch across the sky; thick looks closer to a fireball."""
 
 u_ShootingStarTrail = """
 How far the tail stretches behind the head.
 
-Short gives a bright dot with a hint of motion; long gives the classic drawn-out streak."""
+Short gives a bright dot with just a hint of motion; long gives the classic drawn-out streak."""
 
 PLAGUE_AURORA_ENABLED = """
-Whether aurora curtains appear on clear nights.
+Whether aurora curtains of light appear on clear nights.
 
-Off removes the effect and its cost entirely."""
+Off removes the effect completely, along with its cost."""
 
 PLAGUE_AURORA_CONDITION = """
 When the aurora is allowed to appear.
 
-Every clear night makes it a normal part of the world. Full moon only makes it rare enough to be \
-an event."""
+Every clear night makes it a normal part of the world. Full moon only makes it rare enough to \
+feel like a special event."""
 
 PLAGUE_AURORA_SAMPLES = """
-How carefully the aurora is traced, and so how much it costs.
+How carefully the aurora is drawn, and so how much it costs.
 
-Higher tiers smooth the curtains out; the fast ones leave visible banding in them, most obviously \
-near the horizon. This is the aurora's main performance control. Each tier is a separate shader \
-build, so changing it rebuilds the pack rather than applying while you drag."""
+Higher settings smooth the curtains out; the fastest ones leave visible bands in them, most \
+noticeable near the horizon. This is the aurora's main cost control. Changing this rebuilds \
+part of the pack, so it takes a moment to switch instead of updating right away as you drag."""
 
 u_AuroraIntensity = """
 How bright the aurora is.
 
-0 leaves it enabled but invisible, which is a cheap way to check whether it is what you are \
-seeing."""
+0 leaves it turned on but invisible, which is a simple way to check whether it is what you are \
+actually seeing."""
 
 u_AuroraSize = """
 How large the curtains are across the sky."""
-
 u_AuroraDetail = """
-How fine the structure inside each curtain is.
+How fine the pattern inside each light curtain is.
 
-Low gives broad, smooth sheets; high breaks them into narrow filaments. It does not change how \
-bright or how large the aurora is."""
+Low gives broad, smooth sheets of light; high breaks them into thin streaks. It does not change \
+how bright or how big the aurora is."""
 
 u_AuroraRedOnset = """
-How high up the curtain turns red.
+How high up the curtain of light turns red.
 
-Aurora colour comes from altitude: green through the body, red at the top where the air is thin \
-enough for the slow red emission to survive. Lowering this brings the red band further down."""
+The colour of the aurora changes with height: green through the middle, red near the top where \
+the air is thin. Lowering this number brings the red band further down."""
 
 u_AuroraRedWidth = """
-How gradual the green-to-red change is.
+How slowly the colour changes from green to red.
 
-Narrow gives a distinct red cap on a green curtain; wide blends the two through most of its \
-height."""
+Narrow gives a clear red cap on top of a green curtain; wide blends the two colours together \
+through most of its height."""
 
 u_AuroraVioletExtent = """
-How far up the violet fringe at the bottom of the curtain reaches.
+How far up the curtain the violet fringe at the bottom reaches.
 
-Violet is the lowest and rarest of the three bands. 0 removes it and leaves green from the base \
-upward."""
+Violet is the lowest and rarest of the three colours. 0 removes it and leaves green from the \
+bottom upward."""
 
 # --- Clouds and Shadows screens -----------------------------------------------------------------
 
 CLOUDS_VOLUMETRIC = """
-Whether clouds have real depth or stay a flat painted layer.
+Whether clouds have real depth, or stay a flat painted layer.
 
-On, the sun lights their near side, they cast shade below them, and flying into one puts \
-you inside it. It is the most expensive setting in the pack."""
+On, the side facing the sun lights up, they cast shade on the ground below them, and flying \
+into one puts you inside it. It costs more frame rate than any other setting in the pack."""
 
 CLOUD_RESOLUTION = """
-How much of the screen clouds are drawn at, from Performance up to Ultra.
+How sharp clouds look on screen, from Fastest up to Sharpest.
 
 Higher looks cleaner. Lower draws clouds smaller and stretches them back up, which looks \
-soft. This is the biggest cost in the pack, so raise it before turning down the cloud \
-settings below."""
+soft. This costs more than anything else in the pack, so raise it before turning down the \
+cloud settings below."""
 
 u_CloudAltitude = """
 How high the clouds sit, in blocks.
 
-The default sits well above build height, so clouds read as sky. Bring it down and you \
-can fly through them."""
+The clouds start well above build height, so they look like part of the sky. Bring this down \
+and you can fly through them."""
 
 u_CloudAmount = """
 How much of the sky is covered.
@@ -2755,13 +2871,13 @@ set; see Weather Response."""
 u_CloudScale = """
 How large individual clouds are.
 
-Low values give many small clouds. High values give a few broad banks."""
+Low makes many small clouds. High makes a few broad banks."""
 
 u_CloudShadowStrength = """
 How dark a cloud's shadow on the ground is.
 
 1 matches how thick the cloud looks from below, so a thin cloud casts a light shadow and \
-an overcast sky casts a hard one."""
+a fully overcast sky casts a strong one."""
 
 u_CloudTierCumulus = """
 The puffy heaped clouds, and the storm towers they can grow into.
@@ -2778,7 +2894,7 @@ one worth turning down for speed."""
 u_CloudTierStratocumulus = """
 The rolling low banks that sit just above the overcast lid.
 
-Off removes them. They share the lid's height, so toggling one at a time shows which \
+Off removes them. They share the lid's height, so turning one off at a time shows which \
 layer is doing what."""
 
 u_CloudTierNimbostratus = """
@@ -2799,15 +2915,15 @@ Off removes them. Higher settings show more fine detail in the streaks and cost 
 draw."""
 
 u_CloudTierCirrocumulus = """
-High cloud: the fine rippled patches that show up in unsettled air.
+High cloud: the fine rippled patches that show up in unsettled weather.
 
 Off removes them. Higher settings show more ripple detail and cost more to draw."""
 
 u_CloudDetailFade = """
-How far away cloud detail survives, in chunks.
+How far away fine cloud detail lasts, in chunks.
 
-Detail fades by half again each time a view crosses this far sideways through a layer. \
-Lower is faster and blurs distant cloud; the highest setting turns the fade off."""
+Detail fades by half again each time you move this far sideways through a cloud layer. \
+Lower is faster and blurs distant clouds; the highest setting turns the fade off."""
 
 u_CloudFadeCumulus = """
 How far past your view distance the heaped fair-weather deck keeps going before it fades \
@@ -2909,9 +3025,10 @@ within your normal view distance are never softened."""
 u_CloudSilverLining = """
 How much brighter a cloud glows when the sun sits behind it.
 
-Clouds scatter light forward, so one lit from behind glows bright at its edge. 1 makes \
-that glow about eight times brighter than the rest of the cloud; 0 treats every side the \
-same. The cloud's size never changes, only how much of its edge glows."""
+A cloud lit from behind glows brightly around its edge, because light passes through its \
+thin part and spreads out. 1 makes that glow about eight times brighter than the rest of \
+the cloud; 0 treats every side the same. The cloud's size never changes, only how bright \
+its edge glows."""
 
 u_CloudSpeed = """
 How fast clouds move across the sky.
@@ -2921,29 +3038,31 @@ How fast clouds move across the sky.
 u_CloudWeatherResponse = """
 How much rain changes the clouds.
 
-0 keeps the sky a fair-weather deck no matter the weather. At 1, rain builds the clouds \
-taller, darker, and a little more widespread, the way a real sky thickens before a \
-storm."""
+0 keeps the clouds looking like fair weather no matter what the weather actually is. At 1, \
+rain builds the clouds taller, darker, and a little more spread out, the way a real sky \
+thickens before a storm."""
 
 u_CloudFormHold = """
-Freezes the low cloud form where you put it.
+Freezes the shape of the low clouds where you put it.
 
-Off, the sky decides its own form from the time of day and the weather. On, the two sliders below \
-drive it directly, which is for looking at one form on purpose rather than waiting for it."""
+Off, the sky picks its own shape from the time of day and the weather. On, the Held Moisture \
+and Held Stability sliders below control it directly, so you can look at one shape on purpose \
+instead of waiting for it to appear."""
 
 u_CloudMoisture = """
-How much of the low air is saturated.
+How much of the low air holds moisture, when Hold Cloud Form is on.
 
-A cloud form is the shape of a saturated region, not a fixed type. Raising this saturates more of \
-the low layer; whether that becomes a flat blanket or rising heaps is Low Cloud Stability's job. \
-At 0 only the scattered cells the field already carries exist."""
+A cloud's shape follows where the air is damp, not one fixed type. Raising this makes more of \
+the low sky damp; whether that damp air turns into a flat blanket or rising heaps depends on \
+Held Stability, below. At 0 only a few scattered patches remain."""
 
 u_CloudStability = """
-Whether saturated low air spreads out or rises.
+Whether damp low air spreads out flat or rises into heaps, when Hold Cloud Form is on.
 
-At 0 the air is unstable and moisture builds heaped cumulus with flat bases. At 1 it is capped and \
-the same moisture spreads into a featureless stratus blanket. Between the two it flattens into \
-stratocumulus rolls. Paired with Low Cloud Moisture: stable air with nothing in it stays clear."""
+At 0 the air is unstable, and moisture builds heaped cumulus clouds with flat bottoms. At 1 the \
+air is capped, and the same moisture spreads into a plain stratus blanket. In between, it \
+flattens into rolling stratocumulus. This works together with Held Moisture: stable air with no \
+moisture in it stays clear."""
 
 SHADOWS = """
 Whether the sun and moon cast real shadows.
@@ -2952,7 +3071,7 @@ Off is a large performance saving and a large visual loss: the world is lit, but
 the light. Every other setting on this page depends on it."""
 
 SHADOW_RESOLUTION = """
-How much detail the shadow map holds.
+How much detail shadows are drawn with.
 
-Higher gives crisper shadow edges and less of the stair-stepping you see on long shadows, at a \
-cost in memory and framerate. This is the shadows' main performance control."""
+Higher gives crisper shadow edges, with less of the jagged, stair-step look you can see on \
+long shadows, at a cost in memory and frame rate. This is the main speed control for shadows."""

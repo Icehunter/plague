@@ -29,7 +29,7 @@
 #moj_import <fornax_runtime:water_reflection.glsl>
 
 uniform sampler2D u_Input0; // ssrWaterRaw
-#define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "Voxel SSR Recovery" {0="Off" 1="On"}
+#define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "World Reflections" {0="Off" 1="On"}
 #if PLAGUE_VOXEL_REFLECTIONS != 0
 uniform sampler2D u_Input4; // half-resolution current SSR + voxel fallback
 #endif
@@ -43,9 +43,9 @@ layout(std140) uniform u_PassParams {
     float u_Param3;
 };
 
-#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
-#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
-#define PLAGUE_WATER_REFLECTION_DEBUG 0 //[0 1 2 3 4] compile "Water Reflection View" {0="Off" 1="Roughness" 2="Trace Confidence" 3="Fallback Sky" 4="Source Mix"}
+#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Best Look" 2="Fastest"}
+#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Plain" 1="Shaded" 2="Reflective"}
+#define PLAGUE_WATER_REFLECTION_DEBUG 0 //[0 1 2 3 4] compile "Test View: Water Reflections" {0="Off" 1="Roughness" 2="Reflection Confidence" 3="Backup Sky" 4="Source Blend"}
 
 const vec2 PLAGUE_WATER_FILTER_OFFSETS[9] = vec2[9](
     vec2( 0.0,  0.0),

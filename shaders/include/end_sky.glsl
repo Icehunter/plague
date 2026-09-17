@@ -83,7 +83,7 @@ const float PLAGUE_END_AMBIENT_FLOOR = 0.25;
 #define u_EndNebulaIntensity 0.85 //[0.00..2.00 step 0.05] runtime "End Nebula Strength"
 #define u_EndNebulaZoom 4.30 //[1.00..5.00 step 0.05] runtime "End Nebula Size"
 #define u_EndNebulaAmount 0.65 //[0.15..0.70 step 0.01] runtime "End Nebula Amount"
-#define u_EndNebulaCoreOnset 0.18 //[0.00..0.60 step 0.01] runtime "End Nebula Core Onset"
+#define u_EndNebulaCoreOnset 0.18 //[0.00..0.60 step 0.01] runtime "End Nebula Core Start"
 #define u_EndNebulaCoreWidth 0.50 //[0.05..0.90 step 0.01] runtime "End Nebula Core Blend"
 #define u_EndNebulaDrift 1.85 //[0.00..4.00 step 0.05] runtime "End Nebula Drift Speed"
 #define u_EndNebulaStarGlow 13.5 //[0.00..20.00 step 0.5] runtime "End Nebula Star Glow"
@@ -110,7 +110,7 @@ const vec3 PLAGUE_END_STORM_HIGH = vec3(0.90, 0.38, 0.62);   // H-alpha, the hot
 // Motes: specks of the same medium close enough to see one at a time, drifting past. They are what
 // makes the End feel like somewhere you are standing rather than a picture you are looking at,
 // because they are real points in the world and slide against the far field as you move.
-#define u_EndMoteAmount 2.25 //[0.00..3.00 step 0.05] runtime "Floating Motes"
+#define u_EndMoteAmount 2.25 //[0.00..3.00 step 0.05] runtime "Floating Specks"
 #define u_EndMoteDrift 0.35 //[0.00..2.00 step 0.05] runtime "Mote Drift Speed"
 
 // How much bigger to draw each speck. Only grows them: the size they start at is already the

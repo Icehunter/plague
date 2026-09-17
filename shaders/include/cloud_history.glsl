@@ -2,7 +2,7 @@
 #define PLAGUE_CLOUD_HISTORY
 
 // Every mode refreshes every pixel; Fast reduces march samples before the existing blend.
-#define PLAGUE_CLOUD_HISTORY_DEBUG 0 //[0 1 2] compile "Cloud History" {0="Off" 1="Candidates" 2="Error"}
+#define PLAGUE_CLOUD_HISTORY_DEBUG 0 //[0 1 2] compile "Test View: Cloud History" {0="Off" 1="Candidates" 2="Error"}
 // Not an option. The cloud's own history blend follows the engine's temporal consumer: on whenever
 // TAA, TAAU, or MetalFX upscaling runs (FX_TAA covers all three), off otherwise. A frame-rotating
 // dither with no consumer flashes, and a consumer with no rotating dither has nothing to average,

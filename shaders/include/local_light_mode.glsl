@@ -2,7 +2,7 @@
 #define PLAGUE_LOCAL_LIGHT_MODE
 
 #ifndef PLAGUE_LOCAL_LIGHTING
-#define PLAGUE_LOCAL_LIGHTING 0 //[0 1] compile "Local Coloured Light" {0="Off" 1="Experimental"}
+#define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="Experimental"}
 #endif
 
 // A lightmap combines all placed lamps. Replacement must mute its block axis everywhere,

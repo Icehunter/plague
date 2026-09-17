@@ -41,7 +41,7 @@
 
 // Read by name by the engine to cancel vanilla clouds (GraphRunner.packOwnsClouds) and by
 // graph.toml to gate every cloud target/pass: an engine contract, not just a pack option.
-#define CLOUDS_VOLUMETRIC 1 //[0 1] compile "Volumetric Clouds" {0="Off" 1="On"}
+#define CLOUDS_VOLUMETRIC 1 //[0 1] compile "3D Clouds" {0="Off" 1="On"}
 
 // March resolution, and only that: a quarter, a half, three quarters or all of the screen, one
 // target pair each, which is why graph.toml splits on `== 0` through `== 3`. Step count is per
@@ -62,7 +62,7 @@
 // the offline fixture, 12.1 ms of which is per-workgroup deck setup and the rest ray marching. Get
 // that time back on u_CloudTier* per deck instead of here: a low tier at Ultra looks better than a
 // high one at Fast.
-#define CLOUD_RESOLUTION 1 //[0 1 2 3] compile "Cloud Resolution" {0="Performance" 1="Fast" 2="Quality" 3="Ultra"}
+#define CLOUD_RESOLUTION 1 //[0 1 2 3] compile "Cloud Sharpness" {0="Fastest" 1="Fast" 2="Sharper" 3="Sharpest"}
 
 // Multiple of the derived wind speed below; 0 freezes the deck for screenshots/bisection. Top of
 // range moves a cumulus cell past the viewer in about a quarter in-game hour, a squall line on
@@ -394,7 +394,11 @@ float plagueCloudLightTransmittance(vec3 pos, vec3 lightDir, PlagueCloudDeck dec
 
     float h = clamp((pos.y - deck.base) / max(deck.depth, 1e-3), 0.0, 1.0);
     float sunY = clamp(abs(lightDir.y), 0.0, 1.0);
-    float pathToExit = deck.depth * (1.0 - h) / max(sunY, 0.15);
+    // Light from above leaves through the top; light from below leaves through the base. Just
+    // after sunset the sun is under the horizon and lights the deck from below. Counting the
+    // climb to the top there would shadow the base, the one face that light reaches.
+    float toExit = lightDir.y >= 0.0 ? 1.0 - h : h;
+    float pathToExit = deck.depth * toExit / max(sunY, 0.15);
     float remaining = max(pathToExit - travelled, 0.0);
     float fanMean = optical / max(travelled, 1e-3);
 
@@ -626,9 +630,7 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
 
     // --- Per-ray constants ----------------------------------------------------------------------
     vec2 drift = plagueCloudDrift(deck, syncedTime);
-    // The per-deck opacity setting scales the genus's optical depth; 1.0 leaves the authored row
-    // unchanged.
-    float sigmaScale = deck.tau * deck.opacity / max(deck.depth, 1e-3);
+    float sigmaScale = deck.tau / max(deck.depth, 1e-3);
 
     // Biome dryness read where the CLOUD is, not where the camera is. The precipitation clipmap is
     // a per-column field over a 512-block window, so the ray samples it at its own crossing of the

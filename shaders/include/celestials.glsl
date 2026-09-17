@@ -18,7 +18,7 @@
 // The sun's angular radius, radians. 0.00465 is the real sun, eight pixels across at 1080p and a
 // 70-degree vertical FOV; 0.2915 is vanilla's quad. Above about 0.12 the disc is wider than its own
 // aureole (u_SunGlowStrength's falloff) and covers it.
-#define u_SunDiscSize 0.070 //[0.010..0.300 step 0.005] runtime "Sun Size"
+#define u_SunDiscSize 0.100 //[0.010..0.300 step 0.005] runtime "Sun Size"
 
 // Multiples of each body's OWN radiance (not an absolute), so brightness stays meaningful as the
 // atmosphere's colour changes. The sun's default is >1 to survive the aureole drawn around it.
@@ -27,17 +27,17 @@
 
 // The moon's angular radius, radians. 0.1974 is vanilla's quad; the real moon is 0.00452, within a
 // few percent of the sun's, which is why eclipses work.
-#define u_MoonDiscSize 0.070 //[0.010..0.250 step 0.005] runtime "Moon Size"
+#define u_MoonDiscSize 0.100 //[0.010..0.250 step 0.005] runtime "Moon Size"
 
 // Multiplies the baked relief's tilt. moon_normal.png is baked at 3x true scale, a median surface
 // tilt of 6.8 degrees, so 1 is that and 4 reaches about 25. Only the tangential components scale,
 // and the result is renormalised, so no value leaves the unit sphere.
-#define u_MoonRelief 2.00 //[0.00..4.00 step 0.25] runtime "Moon Relief"
+#define u_MoonRelief 2.00 //[0.00..4.00 step 0.25] runtime "Moon Bumpiness"
 
 // Libration amplitude, degrees. The moon keeps one face turned toward the world, but not exactly:
 // its orbital tilt and varying speed rock that face by about 8 degrees in each axis, so each limb
 // swings into view and back over a cycle. 0 pins the face.
-#define u_MoonLibration 8.0 //[0.00..45.00 step 1.00] runtime "Moon Libration"
+#define u_MoonLibration 8.0 //[0.00..45.00 step 1.00] runtime "Moon Wobble"
 
 // Disc-local frame for a celestial direction. Any vector not parallel to dir works as a seed; world
 // up fails only when looking exactly at the zenith celestial, so the seed swaps near the pole

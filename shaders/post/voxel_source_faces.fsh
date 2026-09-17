@@ -1,6 +1,6 @@
 #version 330 core
 #moj_import <fornax_runtime:color.glsl>
-#define PLAGUE_SOURCE_DIAGNOSTIC 0 //[0 1 2 3] compile "Voxel Source Inventory" {0="Off" 1="Sources" 2="Freshness" 3="Face Colours"}
+#define PLAGUE_SOURCE_DIAGNOSTIC 0 //[0 1 2 3] compile "Test View: Light Sources" {0="Off" 1="Sources" 2="Freshness" 3="Face Colours"}
 uniform sampler2D u_Input0;
 in vec2 texCoord;
 out vec4 fragColor;

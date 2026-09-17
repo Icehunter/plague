@@ -33,7 +33,7 @@
 
 // Multiplies the whole molecular column (surface pressure). Up = longer Rayleigh path = deeper blue
 // overhead, warmer low sun — the lever for sunset warmth; there's no separate orange constant.
-#define u_AirDensity 1.0 //[0.25..4.00 step 0.05] runtime "Air Density"
+#define u_AirDensity 1.0 //[0.25..4.00 step 0.05] runtime "Air Thickness"
 
 // Aerosol load (dust/salt/smoke/humidity), grey/non-spectral so it hazes without tinting. 1.0 is a
 // clear continental day.
@@ -41,15 +41,15 @@
 
 // Ozone column, multiples of the 300 Dobson global mean. The twilight control: the only term that
 // absorbs mid-visible-band, keeping the post-sunset sky blue instead of grey.
-#define u_AirOzone 1.0 //[0.00..3.00 step 0.05] runtime "Ozone"
+#define u_AirOzone 1.0 //[0.00..3.00 step 0.05] runtime "Blue Sky Strength"
 
 // Overall gain on sunlight and moonlight. Not physics, see the calibration note below.
-#define u_SunIntensity 1.0 //[0.00..3.00 step 0.05] runtime "Sun Intensity"
-#define u_MoonIntensity 1.0 //[0.00..3.00 step 0.05] runtime "Moon Intensity"
+#define u_SunIntensity 1.0 //[0.00..3.00 step 0.05] runtime "Sun Brightness"
+#define u_MoonIntensity 1.0 //[0.00..3.00 step 0.05] runtime "Moon Brightness"
 
 // How far the eye has shifted to rod vision at night. 1.0 is the full Purkinje shift (cool
 // moonlight); 0.0 shows moonlight as a camera would record it (slightly warm).
-#define u_NightScotopic 1.0 //[0.00..1.00 step 0.05] runtime "Night Color Shift"
+#define u_NightScotopic 1.0 //[0.00..1.00 step 0.05] runtime "Night Blue Shift"
 
 // --- Derived constants (tools/derive_atmosphere.py) -----------------------------------------------
 

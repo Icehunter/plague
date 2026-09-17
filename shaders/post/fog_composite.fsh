@@ -16,7 +16,7 @@
 #moj_import <fornax_runtime:atmo_transport.glsl>
 #moj_import <fornax_runtime:fog_aerial.glsl>
 
-#define u_FogOpacityView 0 //[0 1] runtime "Fog Opacity View" {0="Off" 1="On"}
+#define u_FogOpacityView 0 //[0 1] runtime "Fog Thickness View" {0="Off" 1="On"}
 
 // Positional graph ABI: the scene and its depth are read together, before any later composition.
 uniform sampler2D u_Input0; // sceneHdrUnfogged

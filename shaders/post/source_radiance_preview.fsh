@@ -1,7 +1,7 @@
 #version 330 core
 
 // Owner-reviewed diagnostic states; byte-identical in terrain.fsh. This view emits no scene light.
-#define PLAGUE_SOURCE_RADIANCE 0 //[0 1 2] compile "Source Colour Preview" {0="Off" 1="Source Colour" 2="Compare Emission"}
+#define PLAGUE_SOURCE_RADIANCE 0 //[0 1 2] compile "Source Colour Preview" {0="Off" 1="Source Colour" 2="Compare Glow"}
 
 uniform sampler2DArray u_Input0; // consolidatedGbuf: existing RGB, canonical RGB, then surface class
 uniform sampler2D u_Input1;      // opaque depth; water/forward surfaces are outside this preview

@@ -6,7 +6,7 @@
 #moj_import <fornax_runtime:material_options.glsl>
 #moj_import <fornax_runtime:voxel_lightmap.glsl>
 
-#define PLAGUE_LOCAL_LIGHTING 0 //[0 1] compile "Local Coloured Light" {0="Off" 1="Experimental"}
+#define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="Experimental"}
 #if PLAGUE_LOCAL_LIGHTING != 0
 uniform usamplerBuffer u_Input17;
 uint plagueLocalSourceWord(int word) { return texelFetch(u_Input17,word).r; }

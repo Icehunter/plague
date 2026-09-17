@@ -27,7 +27,7 @@
 // Multiplier on the derived population below, so the derivation stays the anchor and this is a
 // deliberate departure from it rather than a free-floating number.
 #define u_StarDensity 1.0 //[0.25..3.00 step 0.05] runtime "Star Density"
-#define u_StarMagnitudeFalloff 3.0 //[1.00..6.00 step 0.10] runtime "Star Magnitude Falloff"
+#define u_StarMagnitudeFalloff 3.0 //[1.00..6.00 step 0.10] runtime "Star Fade Range"
 #define u_StarBrightness 1.0 //[0.00..3.00 step 0.05] runtime "Star Brightness"
 #define u_StarColorSpread 0.22 //[0.00..1.00 step 0.02] runtime "Star Colour Spread"
 

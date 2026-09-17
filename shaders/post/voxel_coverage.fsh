@@ -2,9 +2,9 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:water_reflection.glsl>
 
-#define PLAGUE_VOXEL_COVERAGE 0 //[0 1 2] compile "Voxel Reflection Coverage" {0="Off" 1="First Surface" 2="Behind Cutouts"}
+#define PLAGUE_VOXEL_COVERAGE 0 //[0 1 2] compile "Test View: Reflection Coverage" {0="Off" 1="First Surface" 2="Behind Cutouts"}
 // The engine may cap this at render distance or at its own detail limit.
-#define u_LightReach 4.0 //[1.0..16.0 step 1.0] runtime "Voxel Reach (Chunks)"
+#define u_LightReach 4.0 //[1.0..16.0 step 1.0] runtime "Light Reach (Chunks)"
 
 uniform sampler2D u_Input0; // current water surface
 uniform sampler2D u_Input1; // current water depth

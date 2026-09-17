@@ -30,7 +30,7 @@
 
 // How fast the sky falls from its zenith colour to its horizon colour. Low is a flat wash; high
 // keeps the zenith colour most of the way down and then turns quickly near the horizon.
-#define u_SkyGradient 3.6 //[0.50..8.00 step 0.10] runtime "Sky Gradient"
+#define u_SkyGradient 3.6 //[0.50..8.00 step 0.10] runtime "Sky Colour Fade"
 
 // How far around the sun the warm horizon band reaches. Low wraps the warmth most of the way around
 // the sky; high confines it to a narrow wedge on the sun's own side.
@@ -58,7 +58,7 @@
 // the sunset key — inert at noon and midnight. Temperature's range floor moved to 1000 K after the
 // default sat pinned on the old 1500 K floor.
 #define u_SunsetSkyWarmth 0.85 //[0.00..1.00 step 0.05] runtime "Sunset Sky Warmth"
-#define u_SunsetTemp 1500.0 //[1000.0..4500.0 step 50.0] runtime "Sunset Colour Temperature"
+#define u_SunsetTemp 1500.0 //[1000.0..4500.0 step 50.0] runtime "Sunset Colour Tone"
 
 // The same warmth applied to the LIGHT (sunlight and bounced ambient) instead of the sky —
 // separate slider because a sky can be as orange as you like while lighting the ground neutrally.
@@ -67,7 +67,7 @@
 // How much of the WHOLE DOME the ambient is taken from, vs. the zenith alone. 1 is physically
 // honest (a surface is lit by the entire hemisphere); matters most at sunset, when the dome's
 // brightest region and its bluest are as far apart as they get.
-#define u_AmbientSkyBleed 1.0 //[0.00..1.00 step 0.05] runtime "Sky Ambient Spread"
+#define u_AmbientSkyBleed 1.0 //[0.00..1.00 step 0.05] runtime "Sky Light Spread"
 
 // How much vanilla's biome sky colour nudges the dome's hue. Brightness is divided out first so it
 // can only move hue, which is also what lets it survive a thunderstorm (vanilla's value falls to

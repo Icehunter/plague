@@ -47,7 +47,7 @@ covers what the pack does, not the engine under it.
 
 ## Lighting
 
-- *Experiment, default Off:* Debug → Local Coloured Light replaces vanilla placed block light
+- *Experiment, on by default:* Debug → Local Coloured Light replaces vanilla placed block light
   on every surface with voxel direct lighting. There is no vanilla fallback for missing data or
   unsupported lamps. Sun/sky, held light and self-emission remain. Sources opt in through
   `lighting.voxel` in `blocks.toml`; their emission and textures determine colour and intensity.
@@ -64,7 +64,7 @@ covers what the pack does, not the engine under it.
   face casts light: Quarter block, Half block or Full face. Smaller gives sharper shadows from
   thin blocks such as a fence post or a hopper; Full face is the softest. The light's total energy
   is the same at every setting.
-- *Test feature, default Off:* Debug → Voxel Source Inventory shows which sections hold a light
+- *Test feature, default Off:* Test Views → Test View: Light Sources shows which sections hold a light
   source and whether each section's data is current. F10 records the counts. This is a first step
   toward coloured local lighting; it adds no light and still needs checking in game.
 - *Test feature, default Off:* Debug → Source Colour Preview shows terrain emission alone, or
@@ -119,7 +119,7 @@ covers what the pack does, not the engine under it.
 - Two real tiers: Fancy at full resolution and Fast at half resolution with a joint-bilateral
   upsample. Fast is a quarter of the rays, not a coarser ray. Controls for strength, distance and
   step budget.
-- Voxel SSR Recovery fills missing above-water reflections from nearby world geometry, on by
+- World Reflections fills missing above-water reflections from nearby world geometry, on by
   default. Needs reflective water and SSR on. Voxel Reach sets its window: 1 to 16 chunks in
   one-chunk steps, default 4. Both controls sit under Reflections; the coverage overlay is on
   Debug.

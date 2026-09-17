@@ -37,9 +37,9 @@ layout(std140) uniform u_PassParams {
     vec3  u_SunDirection;
 };
 
-#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
+#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Best Look" 2="Fastest"}
 #define u_SsrMaxDistance 32.0 //[16.0..256.0 step 4.0] runtime "Reflection Distance"
-#define u_SsrTraceQuality 64.0 //[16.0..96.0 step 4.0] runtime "Reflection Quality"
+#define u_SsrTraceQuality 64.0 //[16.0..96.0 step 4.0] runtime "Reflection Detail"
 
 in vec2 texCoord;
 out vec4 fragColor; // rgb = reflected colour, a = hit confidence [0,1]

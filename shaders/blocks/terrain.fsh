@@ -34,17 +34,17 @@ const float PLAGUE_ATLAS_GHOST_DIST = 32.0;
 
 // Read BY NAME by the engine (gates the water pre-pass on SSR_WATER_MODE/SSR_QUALITY) — a contract,
 // not a pack choice. Every declaring file must match byte-identically.
-#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Fancy" 2="Fast"}
+#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Best Look" 2="Fastest"}
 
-#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
+#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Plain" 1="Shaded" 2="Reflective"}
 
 // Wave complexity is fixed at compile time; only strength (u_WaveStrength, bridged below) is a runtime scalar.
-#define PLAGUE_WATER_INTERACTION 2 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Quality" 2="Performance"}
-#define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Mesh Displacement" {0="Off" 1="Standard"}
+#define PLAGUE_WATER_INTERACTION 1 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Best Look" 2="Fastest"}
+#define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Wave Motion" {0="Off" 1="Standard"}
 
 // Screen-space refraction on glass, ice and stained panes. A gate, not a magnitude: strength is
 // u_RefractStrength. Compile-time so Off drops the block and both its texture reads.
-#define PLAGUE_GLASS_REFRACTION 1 //[0 1] compile "Glass Refraction" {0="Off" 1="On"}
+#define PLAGUE_GLASS_REFRACTION 1 //[0 1] compile "Glass Bending" {0="Off" 1="On"}
 // KEPT COMPILE, deliberately: `#if PLAGUE_PUDDLE_RIPPLE_PCT > 0` elides the whole impact evaluation,
 // and a runtime version would keep that code resident in the hottest shader in the pack.
 #define PLAGUE_PUDDLE_RIPPLE_PCT 100 //[0 50 100 150 200 300] compile "Puddle Ripples" {0="Off" 50="Subtle" 100="Standard" 150="Strong" 200="Heavy" 300="Extreme"}
@@ -58,11 +58,11 @@ const float PLAGUE_ATLAS_GHOST_DIST = 32.0;
 // texel, red = the clipmap publishes no column here, blue = the column is water, orange = dry with
 // no water neighbour, yellow = dry beside water but the crest stays under the block top, green =
 // washing. Separates every way the chain can produce nothing, in one frame.
-#define PLAGUE_SHORE_DEBUG 0 //[0 1] compile "Shore Spill Debug" {0="Off" 1="Stage Codes"}
+#define PLAGUE_SHORE_DEBUG 0 //[0 1] compile "Test: Shore Spill Stages" {0="Off" 1="Stage Codes"}
 
 // Owner-reviewed diagnostic states: normal output, source colour, and an equal-half comparison.
 // Byte-identical in source_radiance_preview.fsh; only deferred terrain repurposes its G-buffer.
-#define PLAGUE_SOURCE_RADIANCE 0 //[0 1 2] compile "Source Colour Preview" {0="Off" 1="Source Colour" 2="Compare Emission"}
+#define PLAGUE_SOURCE_RADIANCE 0 //[0 1 2] compile "Source Colour Preview" {0="Off" 1="Source Colour" 2="Compare Glow"}
 
 // DEFAULT OFF: repaints a large fraction of every snowy biome, so the user opts in knowingly.
 // Do not write the bracket-annotation syntax out in this comment as prose — OptionAnnotation
@@ -70,7 +70,7 @@ const float PLAGUE_ATLAS_GHOST_DIST = 32.0;
 #define PLAGUE_SNOW_DUSTING 1 //[0 1] compile "Snow Dusting" {0="Off" 1="On"}
 // Amount is the runtime slider u_SnowAmount (below) — a coverage threshold, not compile-gated.
 // Split from ground dusting because they're different mechanisms (snow.glsl); foliage is the harder half.
-#define PLAGUE_SNOW_ON_FOLIAGE 1 //[0 1] compile "Snow on Foliage" {0="Off" 1="On"}
+#define PLAGUE_SNOW_ON_FOLIAGE 1 //[0 1] compile "Snow on Leaves" {0="Off" 1="On"}
 
 uniform sampler2D u_BlockTex;
 uniform sampler2D u_NormalTex;   // labPBR _n: tangent-space normal in rg, AO in b, height in a

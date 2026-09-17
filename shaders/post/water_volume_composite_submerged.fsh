@@ -25,7 +25,7 @@ uniform sampler2D u_Input7; // builtin.noise
 // Sparse recovery has no implicit derivatives. Noise owns a single mip in this pipeline.
 #define PLAGUE_WAVE_NOISE(tex, uv) textureLod(tex, uv, 0.0)
 #moj_import <fornax_runtime:water_waves.glsl>
-#define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Mesh Displacement" {0="Off" 1="Standard"}
+#define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Wave Motion" {0="Off" 1="Standard"}
 #define WATER_ABSORPTION_TINT 1 //[0 1] compile "Underwater Tint" {0="Off" 1="On"}
 uniform sampler2D u_Input8; // sunShadowMapRaw
 uniform sampler2D u_Input9; // rtTerrainShadowDepth

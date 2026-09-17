@@ -5,7 +5,7 @@
 #moj_import <fornax_runtime:color.glsl>
 #moj_import <fornax_runtime:emission.glsl>
 
-#define PLAGUE_SOURCE_DIAGNOSTIC 0 //[0 1 2 3] compile "Voxel Source Inventory" {0="Off" 1="Sources" 2="Freshness" 3="Face Colours"}
+#define PLAGUE_SOURCE_DIAGNOSTIC 0 //[0 1 2 3] compile "Test View: Light Sources" {0="Off" 1="Sources" 2="Freshness" 3="Face Colours"}
 #define u_AuthoredEmission 1.0 //[0.0..1.0 step 0.05] runtime "Glowing Texture Strength"
 
 // Four midpoint samples per axis show texture variation at a bounded 65536 samples per frame.

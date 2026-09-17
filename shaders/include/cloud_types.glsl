@@ -22,7 +22,7 @@
 // equals PLAGUE_CLOUD_CUMULUS_BASE, so the offset is zero on an unmodded install. Applied as a
 // shift (plagueCloudLowDeckShift) rather than an assignment, to keep the low etage's genera at
 // their relative altitudes once more than cumulus is resolved.
-#define u_CloudAltitude 192.0 //[96.0..384.0 step 4.0] runtime "Cloud Altitude"
+#define u_CloudAltitude 192.0 //[96.0..384.0 step 4.0] runtime "Cloud Height"
 
 // Candidate population. Stable owner ranks are compared with this response, so increasing Amount
 // reveals additional owner-local domes without moving or dilating an already-active cloud.
@@ -62,13 +62,13 @@
 // A tier sets slab steps, step cap and sun taps for THIS deck (plagueCloudTier* below). March
 // resolution stays global on CLOUD_RESOLUTION: all seven genera march into one target, sorted per
 // ray by first-hit distance, and per-deck targets lose that ordering.
-#define u_CloudTierCumulus 2 //[0 1 2 3] runtime "Cumulus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
-#define u_CloudTierStratus 2 //[0 1 2 3] runtime "Stratus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
-#define u_CloudTierStratocumulus 2 //[0 1 2 3] runtime "Stratocumulus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
-#define u_CloudTierNimbostratus 2 //[0 1 2 3] runtime "Nimbostratus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
-#define u_CloudTierAltocumulus 2 //[0 1 2 3] runtime "Altocumulus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
-#define u_CloudTierCirrus 2 //[0 1 2 3] runtime "Cirrus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
-#define u_CloudTierCirrocumulus 2 //[0 1 2 3] runtime "Cirrocumulus" {0="Off" 1="Fast" 2="Balanced" 3="Ultra"}
+#define u_CloudTierCumulus 2 //[0 1 2 3] runtime "Cumulus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
+#define u_CloudTierStratus 2 //[0 1 2 3] runtime "Stratus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
+#define u_CloudTierStratocumulus 2 //[0 1 2 3] runtime "Stratocumulus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
+#define u_CloudTierNimbostratus 2 //[0 1 2 3] runtime "Nimbostratus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
+#define u_CloudTierAltocumulus 2 //[0 1 2 3] runtime "Altocumulus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
+#define u_CloudTierCirrus 2 //[0 1 2 3] runtime "Cirrus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
+#define u_CloudTierCirrocumulus 2 //[0 1 2 3] runtime "Cirrocumulus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
 
 // Distance over which a deck's budget halves again, in chunks, on the ray's own horizontal reach.
 // A deck 30 blocks overhead still runs kilometres sideways, which a vertical metric cannot see.
@@ -195,7 +195,9 @@ struct PlagueCloudDeck {
     float depth;        // slab thickness, blocks
     float cell;        // horizontal size of one lump, blocks
     float shear;        // along-wind stretch, dimensionless; 1.0 is isotropic
-    float tau;         // optical depth straight down through the whole slab, dimensionless
+    float tau;         // how much light the whole slab blocks, top to bottom. The Opacity slider
+                       // is already in this number, so the cloud, its sun light and its shadow
+                       // all thin together
     float cover;        // fraction of the whole plane the deck occupies, 0..1
     float population;   // owner-rank activation threshold, 0..1
     float family;       // height-profile selector: 0 flat sheet, 1 deep tower, 2 spreading-top tower
@@ -207,7 +209,6 @@ struct PlagueCloudDeck {
     float stepScale;    // multiplies the march's step budget; below 1 for a thin deck
     float tier;        // this deck's own Off/Fast/Balanced/Ultra; sets slab steps, cap and sun taps
     float fadeChunks;  // chunks past the terrain render distance this deck takes to fade to nothing
-    float opacity;     // multiplier on optical depth (tau); 1.0 is authored, the player's opacity slider sets the rest
     float fallShear;   // downwind lean of the base against the top, in cells across the full depth
     float axisSwing;   // radians the shear axis may turn from the wind; 0 pins it to the wind
     float veer;        // radians this deck's stretch sits clockwise of the ground wind
@@ -237,7 +238,7 @@ const float PLAGUE_CLOUD_SHEET_FORM_ST = 0.90;
 // Fraction of the cloud anchor below which no low-etage deck may sit. The genus table compresses
 // real metres by 0.192 against a 0 m datum, putting stratus's 300 m base at y=57.6, under the y=63
 // surface. 0.70 of the anchor is 134 blocks, clear of terrain and well under the 192 cumulus base;
-// expressed against the anchor so it follows the Cloud Altitude slider.
+// expressed against the anchor so it follows the Cloud Height slider.
 const float PLAGUE_CLOUD_LOW_BASE_FLOOR = 0.70;
 
 // Moisture's lift on the cellular mask, the convective counterpart of the sheet floor. Gated on
@@ -394,7 +395,7 @@ const float PLAGUE_CLOUD_CONGESTUS_TAU   =   18.0000;
 // sqrt of height rather than a straight line: most of the turn is low down, then it flattens off,
 // which is the shape of the two effects above. Zero at the stratus base, the lowest deck drawn, and
 // full at the cirrus base, the highest. Takes the cloud type's own TABLE base, never deck.base, so
-// Cloud Altitude lifts the decks without turning the sky.
+// Cloud Height lifts the decks without turning the sky.
 //
 // Drift is left unveered on purpose. plagueCloudDrift multiplies by the whole number
 // PLAGUE_CLOUD_WIND, and only a whole number lets PLAGUE_CLOUD_DRIFT_WRAP land on a lattice edge at
@@ -497,7 +498,7 @@ float plagueCloudEngineBase() {
 }
 
 /**
- * What the mid and high etages multiply their table altitudes by, so Cloud Altitude moves the whole
+ * What the mid and high etages multiply their table altitudes by, so Cloud Height moves the whole
  * profile rather than only the low deck.
  *
  * A scale, not the low deck's shift: the same blocks added to every etage move cirrus at 1728 by an
@@ -633,7 +634,7 @@ PlagueCloudDeck plagueCloudLowStratiformDeck(float moisture, float stability, fl
     deck.veer = plagueCloudVeer(PLAGUE_CLOUD_STRATUS_BASE);
     deck.tier = u_CloudTierStratus;
     deck.fadeChunks = u_CloudFadeStratus;
-    deck.opacity = u_CloudOpacityStratus * 0.01;
+    deck.tau *= u_CloudOpacityStratus * 0.01;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
 
@@ -777,7 +778,7 @@ PlagueCloudDeck plagueCloudLowDeck(float rainFactor, float thunderFactor, float 
     deck.veer = plagueCloudVeer(PLAGUE_CLOUD_CUMULUS_BASE);
     deck.tier = u_CloudTierCumulus;
     deck.fadeChunks = u_CloudFadeCumulus;
-    deck.opacity = u_CloudOpacityCumulus * 0.01;
+    deck.tau *= u_CloudOpacityCumulus * 0.01;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
 
@@ -824,7 +825,7 @@ PlagueCloudDeck plagueCloudStratocumulusDeck(float amountMask, float snowWeight)
     deck.veer = plagueCloudVeer(PLAGUE_CLOUD_STRATOCUMULUS_BASE);
     deck.tier = u_CloudTierStratocumulus;
     deck.fadeChunks = u_CloudFadeStratocumulus;
-    deck.opacity = u_CloudOpacityStratocumulus * 0.01;
+    deck.tau *= u_CloudOpacityStratocumulus * 0.01;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
     deck.population = amount <= 0.0
@@ -854,7 +855,7 @@ PlagueCloudDeck plagueCloudUpperDeck(float base, float depth, float cell, float 
     float amount = max(u_CloudAmount, 0.0);
     float m = clamp(mask, 0.0, 1.0);
 
-    // Lifted by the low deck's own displacement, so Cloud Altitude moves the whole profile and
+    // Lifted by the low deck's own displacement, so Cloud Height moves the whole profile and
     // cumulus cannot rise past cirrus.
     deck.base = base * plagueCloudAltitudeScale();
     // Depth is the row's own, unscaled. Cloud Size grows a cumulus by raising its density
@@ -873,12 +874,11 @@ PlagueCloudDeck plagueCloudUpperDeck(float base, float depth, float cell, float 
     deck.stepScale = stepScale;
     deck.fallShear = fallShear;
     deck.axisSwing = axisSwing;
-    // The plain table row, not deck.base: Cloud Altitude lifts a deck, it does not turn it.
+    // The plain table row, not deck.base: Cloud Height lifts a deck, it does not turn it.
     deck.veer = plagueCloudVeer(base);
     deck.tier = tier;
-    // Set here so no path reads garbage before the caller fills in this deck's own fade and opacity.
+    // Set here so nothing reads an empty value before the caller sets this deck's own fade.
     deck.fadeChunks = 256.0;
-    deck.opacity = 1.0;
     // Patchy, and strongly so: these genera occupy part of the sky, not all of it. Picked off plan
     // views of the live candidate field at the altocumulus row: 0.30 is an even stipple with no open
     // sky, 0.55 opens banks with gaps between them, 0.80 leaves isolated shreds. Amplitude does
@@ -901,7 +901,7 @@ PlagueCloudDeck plagueCloudUpperDeck(float base, float depth, float cell, float 
 /**
  * The precipitating stratiform deck. Not a morph of the cumulus deck: rain does not fall from
  * fatter cumulus, it falls from nimbostratus, which is its own genus with its own altitude, cell
- * and shear. Resolved through the low etage's own altitude shift so Cloud Altitude still moves it,
+ * and shear. Resolved through the low etage's own altitude shift so Cloud Height still moves it,
  * offset by the two genera's published base separation rather than assigned the slider outright.
  *
  * Its cell is constant, like the low deck's: the world-origin prohibition forbids a cell that moves
@@ -961,7 +961,7 @@ PlagueCloudDeck plagueCloudNimbostratusDeck(float stratiformWeight, float thunde
     deck.veer = plagueCloudVeer(PLAGUE_CLOUD_NIMBOSTRATUS_BASE);
     deck.tier = u_CloudTierNimbostratus;
     deck.fadeChunks = u_CloudFadeNimbostratus;
-    deck.opacity = u_CloudOpacityNimbostratus * 0.01;
+    deck.tau *= u_CloudOpacityNimbostratus * 0.01;
     deck.patchiness = 0.0;
     deck.biomeResponse = PLAGUE_CLOUD_ARID_DRYING;
 
@@ -1104,11 +1104,11 @@ void plagueCloudUpperDecks(out PlagueCloudDeck cirrus, out PlagueCloudDeck cirro
                                         plagueCloudAxisSwing(PLAGUE_CLOUD_ALTOCUMULUS_SHEAR),
                                         u_CloudTierAltocumulus);
     cirrus.fadeChunks = u_CloudFadeCirrus;
-    cirrus.opacity = u_CloudOpacityCirrus * 0.01;
+    cirrus.tau *= u_CloudOpacityCirrus * 0.01;
     cirrocumulus.fadeChunks = u_CloudFadeCirrocumulus;
-    cirrocumulus.opacity = u_CloudOpacityCirrocumulus * 0.01;
+    cirrocumulus.tau *= u_CloudOpacityCirrocumulus * 0.01;
     altocumulus.fadeChunks = u_CloudFadeAltocumulus;
-    altocumulus.opacity = u_CloudOpacityAltocumulus * 0.01;
+    altocumulus.tau *= u_CloudOpacityAltocumulus * 0.01;
     // Lumpy high cloud types use their own height shape; cirrus keeps the flat sheet shape.
     cirrocumulus.family = PLAGUE_CLOUD_CIRROCUMULUS_CONVECTIVE;
     altocumulus.family = PLAGUE_CLOUD_ALTOCUMULUS_CONVECTIVE;

@@ -9,7 +9,7 @@
 #moj_import <fornax_runtime:main_lighting.glsl>
 #moj_import <fornax_runtime:water_waves.glsl>
 #moj_import <fornax_runtime:water_options.glsl>
-#define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Mesh Displacement" {0="Off" 1="Standard"}
+#define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Wave Motion" {0="Off" 1="Standard"}
 
 uniform sampler2D u_Input0;       // waterVolumeInterval
 uniform sampler2DShadow u_Input1; // sunShadowMap

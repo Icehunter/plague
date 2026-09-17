@@ -15,10 +15,10 @@ layout(std140) uniform u_PassParams {
     vec3  u_SunDirection;
 };
 
-#define SSAO_ENABLED //[] compile "Ambient Occlusion"
-#define SSAO_TAPS 8 //[4 8 16] compile "AO Samples" {4="Low" 8="Medium" 16="High"}
-#define u_SsaoRadius 0.9 //[0.1..2.5 step 0.05] runtime "AO Radius"
-#define u_SsaoStrength 1.0 //[0.0..2.0 step 0.05] runtime "AO Strength"
+#define SSAO_ENABLED //[] compile "Corner Shadows"
+#define SSAO_TAPS 8 //[4 8 16] compile "Corner Shadow Quality" {4="Low" 8="Medium" 16="High"}
+#define u_SsaoRadius 0.9 //[0.1..2.5 step 0.05] runtime "Corner Shadow Reach"
+#define u_SsaoStrength 1.0 //[0.0..2.0 step 0.05] runtime "Corner Shadow Strength"
 
 in vec2 texCoord;
 out float fragColor;

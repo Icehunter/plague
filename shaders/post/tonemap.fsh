@@ -51,7 +51,7 @@ out vec4 fragColor;
 
 // Declared here byte-identical to gbuffer_resolve.fsh (loader requirement); without it the #ifdef
 // below never fires and this pass discards the sky the resolve just painted.
-#define SKY_PROCEDURAL //[] compile "Procedural Sky"
+#define SKY_PROCEDURAL //[] compile "Dynamic Sky"
 
 #moj_import <fornax_runtime:water_options.glsl>
 #moj_import <fornax_runtime:water_motes.glsl>
@@ -75,12 +75,12 @@ const float PLAGUE_UW_VIEW_PHASE_Y = 1.57079632679;
 // Measurement lives in exposure_measure.fsh; this arm turns its smoothed scene luminance into a
 // multiplier. Default on: Plague has no fixed absolute-luminance reference to protect, and a fixed
 // exposure cannot make a dark underwater scene read correctly at any manual tuning.
-#define AUTO_EXPOSURE //[] compile "Auto Exposure"
+#define AUTO_EXPOSURE //[] compile "Auto Brightness"
 // Bounds on the derived MULTIPLIER, not the measured luminance (it's the reciprocal, so clamping
 // the measurement would reverse the sliders' sense). Min caps darkening of bright scenes; Max caps
 // brightening of dark ones.
-#define u_AutoExposureMin 0.25 //[0.1..1.0 step 0.05] runtime "Auto Exposure Min"
-#define u_AutoExposureMax 2.5 //[1.0..8.0 step 0.5] runtime "Auto Exposure Max"
+#define u_AutoExposureMin 0.25 //[0.1..1.0 step 0.05] runtime "Auto Brightness Min"
+#define u_AutoExposureMax 2.5 //[1.0..8.0 step 0.5] runtime "Auto Brightness Max"
 
 // Grey-world metering otherwise cancels a darker sky: halve the scene and the multiplier doubles
 // straight back. This holds part of that darkening back instead. 0 restores full compensation.

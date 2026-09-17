@@ -23,8 +23,8 @@
 
 // Both strengths swing through zero. Positive lifts the surface along the edge, negative darkens it
 // under the same law, with both following the surface's own light and colour.
-#define u_OutlineConvex 0.50 //[-2.00..2.00 step 0.05] runtime "Outline Convex Strength"
-#define u_OutlineConcave 0.00 //[-2.00..2.00 step 0.05] runtime "Outline Concave Strength"
+#define u_OutlineConvex 0.50 //[-2.00..2.00 step 0.05] runtime "Outline Outer Edges"
+#define u_OutlineConcave 0.00 //[-2.00..2.00 step 0.05] runtime "Outline Inner Edges"
 #define u_OutlineThickness 1 //[1..4 step 1] runtime "Outline Thickness"
 #define u_OutlineDistance 1 //[1..16 step 1] runtime "Outline Distance (Chunks)"
 

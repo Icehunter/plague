@@ -35,13 +35,13 @@
 // of truth to redeclare against.
 #define PLAGUE_UNDERWATER 1 //[0 1] compile "Underwater Effects" {0="Off" 1="On"}
 #define WATER_SCATTERING_QUALITY 1 //[0 1 2] compile "Underwater Light Shafts" {0="Off" 1="Balanced" 2="High"}
-#define WATER_CAUSTICS 1 //[0 1] compile "Underwater Caustics" {0="Off" 1="On"}
-#define WATER_VEIL 1 //[0 1] compile "Underwater Veil" {0="Off" 1="On"}
+#define WATER_CAUSTICS 1 //[0 1] compile "Underwater Light Ripples" {0="Off" 1="On"}
+#define WATER_VEIL 1 //[0 1] compile "Underwater Haze" {0="Off" 1="On"}
 #define WATER_ABSORPTION_TINT 1 //[0 1] compile "Underwater Tint" {0="Off" 1="On"}
 #define WATER_SUN_TINT 1 //[0 1] compile "Underwater Sun Recolour" {0="Off" 1="On"}
-#define WATER_AMBIENT_FLOOR 1 //[0 1] compile "Underwater Ambient Floor" {0="Off" 1="On"}
-#define WATER_HELD_LIGHT_FILTER 1 //[0 1] compile "Underwater Held Light Filter" {0="Off" 1="On"}
-#define WATER_BLUR 1 //[0 1] compile "Underwater Defocus Blur" {0="Off" 1="On"}
+#define WATER_AMBIENT_FLOOR 1 //[0 1] compile "Underwater Minimum Light" {0="Off" 1="On"}
+#define WATER_HELD_LIGHT_FILTER 1 //[0 1] compile "Underwater Held Light Colour" {0="Off" 1="On"}
+#define WATER_BLUR 1 //[0 1] compile "Underwater Blur" {0="Off" 1="On"}
 
 // The render-edge closure handoff and the suppression of aerial/border fog underwater are retired
 // as options (§1/§3.7 of the behavioral spec this file implements): neither is a legitimate "off"

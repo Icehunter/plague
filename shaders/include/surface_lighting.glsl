@@ -10,14 +10,14 @@
 #moj_import <fornax_runtime:end_sky.glsl>
 
 // Fill light needs one direction, so read the sky function, not a lookup table.
-#define SKY_AMBIENT //[] compile "Ambient From Sky"
+#define SKY_AMBIENT //[] compile "Sky Fill Light"
 // Pull toward sun-lit ground, for fill light and guessed-sky reflections. Same brightness either
 // way; zero at night.
 #define u_AmbientBounceWarmth 0.35 //[0.0..1.0 step 0.05] runtime "Ground Bounce Warmth"
 const vec3 PLAGUE_GROUND_BOUNCE_TINT = vec3(1.30, 1.00, 0.62);
 
 // Physical model only. Higher is cooler torchlight.
-#define u_BlockLightTemp 2200.0 //[1500.0..8000.0 step 100.0] runtime "Block Light Temperature"
+#define u_BlockLightTemp 2200.0 //[1500.0..8000.0 step 100.0] runtime "Block Light Warmth"
 
 struct PlagueSurfaceLighting {
     vec3 sunColour;

@@ -28,7 +28,7 @@
 
 // Gates the per-type override sliders and the fine-tuning group below. Off, those sliders keep
 // their stored value but have no effect; on, they apply.
-#define u_FogAdvanced 1.0 //[0.0..1.0 step 1.0] runtime "Advanced Overrides"
+#define u_FogAdvanced 1.0 //[0.0..1.0 step 1.0] runtime "Advanced Fog Settings"
 
 // -------------------------------------------------------------------------------------------------
 // Main settings
@@ -93,13 +93,13 @@
 // wall in the Nether's short, cramped caves.
 // -------------------------------------------------------------------------------------------------
 
-#define u_NetherFogDensity 1.20 //[0.25..3.00 step 0.05] runtime "Nether Fog Density"
+#define u_NetherFogDensity 1.20 //[0.25..3.00 step 0.05] runtime "Nether Fog Amount"
 
 #define u_NetherFogDistance 0.75 //[0.15..1.00 step 0.05] runtime "Nether Fog Closeness"
 
 // -------------------------------------------------------------------------------------------------
 // Advanced overrides. Each fog type gets its own Amount/Distance/Sharpness, starting at the main
-// settings' defaults and ignored entirely (values kept, no effect) while Advanced Overrides is off.
+// settings' defaults and ignored entirely (values kept, no effect) while Advanced Fog Settings is off.
 // -------------------------------------------------------------------------------------------------
 
 #define u_FogMorningDensity 1.0 //[0.00..2.00 step 0.05] runtime "Morning: Fog Amount"
@@ -123,7 +123,7 @@
 #define u_FogDrySharpness 1.0 //[0.50..2.00 step 0.05] runtime "Desert: Fog Sharpness"
 
 // -------------------------------------------------------------------------------------------------
-// Fine tuning. Also gated behind "Advanced Overrides"; off, the shipped defaults hold.
+// Fine tuning. Also gated behind "Advanced Fog Settings"; off, the shipped defaults hold.
 // -------------------------------------------------------------------------------------------------
 
 // fit: tools/derive_fog.py
@@ -131,13 +131,13 @@
 
 // Below Min sky light a nearby surface counts as underground and gets no fog; above Max it fogs
 // normally. Kept low so forests and doorways still fog.
-#define u_FogCaveGuardLo 0.05 //[0.00..1.00 step 0.01] runtime "Cave Fog Guard Min"
-#define u_FogCaveGuardHi 0.35 //[0.00..1.00 step 0.01] runtime "Cave Fog Guard Max"
+#define u_FogCaveGuardLo 0.05 //[0.00..1.00 step 0.01] runtime "Cave Fog Limit: Low"
+#define u_FogCaveGuardHi 0.35 //[0.00..1.00 step 0.01] runtime "Cave Fog Limit: High"
 
 // How far out (as a share of render distance) the edge fog stops caring whether a surface is
 // underground. Only changes what sealed caves see; never the horizon.
-#define u_FogBorderGateNear 0.55 //[0.00..1.00 step 0.05] runtime "Edge Fog Guard Near"
-#define u_FogBorderGateFar 0.80 //[0.00..1.00 step 0.05] runtime "Edge Fog Guard Far"
+#define u_FogBorderGateNear 0.55 //[0.00..1.00 step 0.05] runtime "Edge Fog Limit: Near"
+#define u_FogBorderGateFar 0.80 //[0.00..1.00 step 0.05] runtime "Edge Fog Limit: Far"
 
 // -------------------------------------------------------------------------------------------------
 // The drive, built from the options above plus the engine's own signals

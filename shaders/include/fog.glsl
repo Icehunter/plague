@@ -116,7 +116,7 @@ PlagueFogTerms plagueFogTermsPath(vec3 worldPos, vec3 borderPos, float skyLight,
     // Keyed on the fragment's own sky light, never the camera's: a camera-keyed gate breaks sunlit
     // terrain seen through a cave mouth. Handed to the aerial term rather than multiplied in here,
     // since how much light that term stops decides how far the gate can still be right (see the
-    // handover note on plagueAtmosphericFog). Guard sliders apply only under Advanced Overrides;
+    // handover note on plagueAtmosphericFog). Guard sliders apply only under Advanced Fog Settings;
     // each literal matches its option's declared default (harness-pinned).
     float access = smoothstep(mix(0.05, u_FogCaveGuardLo, drive.advanced),
                               mix(0.35, u_FogCaveGuardHi, drive.advanced),
