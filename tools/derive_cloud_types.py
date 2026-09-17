@@ -19,7 +19,9 @@ Run it and paste the printed block into the shader.
 """
 
 import math
+import re
 import sys
+from pathlib import Path
 
 # THE ONE AUTHORED NUMBER IN THIS FILE. 1 block = 1 metre would put cirrus at 9000 blocks, 23x the
 # build height. Anchored on vanilla's own cloud y=192 against a real cumulus base of ~1000m;
@@ -216,9 +218,14 @@ def main():
         print("  anchor: %-52s %s" % (label, "OK" if held else "FAIL"))
     print()
 
-    # A cell wider than the draw radius never repeats. PLAGUE_CLOUD_DISTANCE is 4000 blocks.
+    # A cell wider than the draw radius never repeats. Read the cap from the shader rather than
+    # restating it, so raising the traversal cap keeps this check testing the number the shader
+    # uses.
+    source = (Path(__file__).resolve().parent.parent
+              / "shaders" / "include" / "cloud_types.glsl").read_text()
+    draw_radius = float(re.search(r"PLAGUE_CLOUD_DISTANCE\s*=\s*([-\d.eE+]+)\s*;", source).group(1))
     widest = max(blocks(element_m[n]) for n in ORDER)
-    cell_ok = widest < 4000.0 * 0.5
+    cell_ok = widest < draw_radius * 0.5
     print("  anchor: widest cell under half the draw radius .......... %s (%.0f blocks)"
           % ("OK" if cell_ok else "FAIL", widest))
     print()

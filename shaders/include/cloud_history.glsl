@@ -3,7 +3,18 @@
 
 // Every mode refreshes every pixel; Fast reduces march samples before the existing blend.
 #define PLAGUE_CLOUD_HISTORY_DEBUG 0 //[0 1 2] compile "Cloud History" {0="Off" 1="Candidates" 2="Error"}
-#define PLAGUE_CLOUD_TEMPORAL 0 //[0 1 2] compile "Cloud Temporal" {0="Off" 1="Fancy" 2="Fast"}
+// Not an option. The cloud's own history blend follows the engine's temporal consumer: on whenever
+// TAA, TAAU, or MetalFX upscaling runs (FX_TAA covers all three), off otherwise. A frame-rotating
+// dither with no consumer flashes, and a consumer with no rotating dither has nothing to average,
+// so tying the two together leaves no way to set it wrong. Guarded so an offline harness can still
+// pin a value by define.
+#ifndef PLAGUE_CLOUD_TEMPORAL
+#if defined(FX_TAA) && FX_TAA != 0
+#define PLAGUE_CLOUD_TEMPORAL 1
+#else
+#define PLAGUE_CLOUD_TEMPORAL 0
+#endif
+#endif
 
 #if PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0
 // R32F carries 7 contributor bits and a 20-bit source stamp. The fixed exponent tag
@@ -29,8 +40,27 @@ bool plagueCloudHistoryPremultiplied(vec4 colour) {
         && colour.a <= 1.0 && (colour.a > 0.0 || all(equal(colour.rgb, vec3(0.0))));
 }
 
+// Slack on the depth containment test, as a fraction of the neighbourhood's own far distance.
+//
+// First-hit distance is rounded off by the march's step length, and that length is not fixed: a
+// long ray spends its whole budget at the step cap, which floors at
+// int(PLAGUE_CLOUD_MIN_SLAB_STEPS) * 2 = 8 segments (clouds.glsl), and the arithmetic growth across
+// the span puts the last segment at about twice the mean. One step is then about 2/8 of the ray,
+// which is where 0.25 comes from: the cap floor, not a tuned number, and it moves if that floor
+// does.
+//
+// An exact test rejects on this rounding rather than on any real mismatch, hardest on grazing rays,
+// which carry the fewest samples and need the accumulation most. The failure is silent: noise that
+// never settles.
+//
+// This is the second gate, not the only one: the colour clamp below keeps the blended result
+// inside the current frame's own 3x3 range no matter what this test allows, so loosening it cannot
+// let history drift past what this frame rendered.
+const float PLAGUE_CLOUD_HISTORY_DEPTH_SLACK = 0.25;
+
 float plagueCloudHistoryBlendWeight(vec4 fresh, vec4 previous, vec4 lower, vec4 upper,
                                     vec2 previousDepthRange, vec2 currentDepthRange) {
+    float slack = PLAGUE_CLOUD_HISTORY_DEPTH_SLACK * max(currentDepthRange.y, 0.0);
     if (!plagueCloudHistoryPremultiplied(fresh) || !plagueCloudHistoryPremultiplied(previous)
         || !plagueCloudHistoryFinite(lower) || !plagueCloudHistoryFinite(upper)
         || any(lessThan(lower, vec4(0.0))) || lower.a > 1.0 || upper.a > 1.0
@@ -39,7 +69,8 @@ float plagueCloudHistoryBlendWeight(vec4 fresh, vec4 previous, vec4 lower, vec4 
         || !plagueCloudHistoryFinite(vec4(previousDepthRange, currentDepthRange))
         || previousDepthRange.x <= 0.0 || currentDepthRange.x <= 0.0
         || previousDepthRange.x > previousDepthRange.y || currentDepthRange.x > currentDepthRange.y
-        || previousDepthRange.x < currentDepthRange.x || previousDepthRange.y > currentDepthRange.y) {
+        || previousDepthRange.x < currentDepthRange.x - slack
+        || previousDepthRange.y > currentDepthRange.y + slack) {
         return 0.0;
     }
     // Equal weighting of two fresh frames caps history at one half. A single scalar keeps

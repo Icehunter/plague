@@ -861,7 +861,7 @@ outputs = ["cloudsLayerColour0", "cloudsLayerFront0", "cloudsLayerColour1", "clo
 name = "clouds_merge_layers"
 type = "compute"
 shader = "shaders/compute/clouds_merge_layers.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && PLAGUE_CLOUD_HISTORY_DEBUG == 0 && PLAGUE_CLOUD_TEMPORAL == 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && PLAGUE_CLOUD_HISTORY_DEBUG == 0 && FX_TAA == 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
@@ -873,29 +873,29 @@ format = "rgba16f"
 scale = 0.5
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryData]
 format = "r32f"
 scale = 0.5
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryDistance]
 format = "r32f"
 scale = 0.5
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryState]
 format = "r32f"
-width = 51
+width = 55
 height = 4
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryProbe]
 # Display sampler default; the categorical overlay explicitly uses texelFetch.
@@ -909,7 +909,7 @@ enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && PLAGUE_CLOUD_HISTORY
 name = "clouds_merge_layers_history"
 type = "compute"
 shader = "shaders/compute/clouds_merge_layers.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
@@ -932,13 +932,13 @@ outputs = ["cloudHistoryProbe"]
 format = "rgba16f"
 scale = 0.5
 storage = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && PLAGUE_CLOUD_TEMPORAL != 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && FX_TAA != 0"
 
 [[pass]]
 name = "clouds_history_blend"
 type = "compute"
 shader = "shaders/compute/clouds_history_blend.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && PLAGUE_CLOUD_TEMPORAL != 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && FX_TAA != 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudHistory", "cloudHistoryData", "cloudHistoryState",
@@ -951,9 +951,18 @@ outputs = ["cloudHistoryBlend"]
 [[pass]]
 name = "clouds_history_publish"
 type = "copy"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && PLAGUE_CLOUD_TEMPORAL != 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1 && FX_TAA != 0"
 inputs = ["cloudHistoryBlend"]
 outputs = ["cloudsVolumeCompute"]
+
+[[pass]]
+name = "clouds_fade_blur"
+type = "fullscreen"
+shader = "shaders/post/clouds_fade_blur.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+# Distance is appended after colour; clouds_fade_blur.fsh reads them as u_Input0/u_Input1 in that order.
+inputs = ["cloudsVolumeCompute", "cloudsVolumeDistance"]
+outputs = ["cloudsFaded"]
 
 [[pass]]
 name = "clouds_composite"
@@ -963,7 +972,7 @@ enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
 blend = "translucent"
 # sceneHdr absent from inputs: blend-only write (see water_composite for the same convention).
 # builtin.waterDepth appended so the underwater veil sizes its in-water leg correctly.
-inputs = ["cloudsVolumeCompute", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistance"]
+inputs = ["cloudsFaded", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistance"]
 outputs = ["sceneHdr"]
 
 # 0.25: a quarter of Half's pixel count, ~0.18x its work. Cloud edges soften, which is the trade.
@@ -1082,7 +1091,7 @@ outputs = ["cloudsLayerColour0Quarter", "cloudsLayerFront0Quarter", "cloudsLayer
 name = "clouds_merge_layers_quarter"
 type = "compute"
 shader = "shaders/compute/clouds_merge_layers.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && PLAGUE_CLOUD_HISTORY_DEBUG == 0 && PLAGUE_CLOUD_TEMPORAL == 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && PLAGUE_CLOUD_HISTORY_DEBUG == 0 && FX_TAA == 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
@@ -1094,29 +1103,29 @@ format = "rgba16f"
 scale = 0.25
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryDataQuarter]
 format = "r32f"
 scale = 0.25
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryDistanceQuarter]
 format = "r32f"
 scale = 0.25
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryStateQuarter]
 format = "r32f"
-width = 51
+width = 55
 height = 4
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryProbeQuarter]
 # Display sampler default; the categorical overlay explicitly uses texelFetch.
@@ -1130,7 +1139,7 @@ enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && PLAGUE_CLOUD_HISTORY
 name = "clouds_merge_layers_quarter_history"
 type = "compute"
 shader = "shaders/compute/clouds_merge_layers.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
@@ -1153,13 +1162,13 @@ outputs = ["cloudHistoryProbeQuarter"]
 format = "rgba16f"
 scale = 0.25
 storage = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && PLAGUE_CLOUD_TEMPORAL != 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && FX_TAA != 0"
 
 [[pass]]
 name = "clouds_history_blend_quarter"
 type = "compute"
 shader = "shaders/compute/clouds_history_blend.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && PLAGUE_CLOUD_TEMPORAL != 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && FX_TAA != 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudHistoryQuarter", "cloudHistoryDataQuarter", "cloudHistoryStateQuarter",
@@ -1172,9 +1181,18 @@ outputs = ["cloudHistoryBlendQuarter"]
 [[pass]]
 name = "clouds_history_publish_quarter"
 type = "copy"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && PLAGUE_CLOUD_TEMPORAL != 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0 && FX_TAA != 0"
 inputs = ["cloudHistoryBlendQuarter"]
 outputs = ["cloudsVolumeComputeQuarter"]
+
+[[pass]]
+name = "clouds_fade_blur_quarter"
+type = "fullscreen"
+shader = "shaders/post/clouds_fade_blur.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+# Distance is appended after colour; clouds_fade_blur.fsh reads them as u_Input0/u_Input1 in that order.
+inputs = ["cloudsVolumeComputeQuarter", "cloudsVolumeDistanceQuarter"]
+outputs = ["cloudsFadedQuarter"]
 
 [[pass]]
 name = "clouds_composite_quarter"
@@ -1182,7 +1200,7 @@ type = "fullscreen"
 shader = "shaders/post/clouds_composite.fsh"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
 blend = "translucent"
-inputs = ["cloudsVolumeComputeQuarter", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistanceQuarter"]
+inputs = ["cloudsFadedQuarter", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistanceQuarter"]
 outputs = ["sceneHdr"]
 
 # 0.75, not 1.0. March resolution is this tier's largest cost term: 4x Balanced's pixels against
@@ -1412,7 +1430,7 @@ outputs = ["cloudsLayerColour0Ultra", "cloudsLayerFront0Ultra", "cloudsLayerColo
 name = "clouds_merge_layers_full"
 type = "compute"
 shader = "shaders/compute/clouds_merge_layers.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && PLAGUE_CLOUD_HISTORY_DEBUG == 0 && PLAGUE_CLOUD_TEMPORAL == 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && PLAGUE_CLOUD_HISTORY_DEBUG == 0 && FX_TAA == 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
@@ -1423,7 +1441,7 @@ outputs = ["cloudsVolumeComputeFull", "cloudsVolumeDistanceFull"]
 name = "clouds_merge_layers_ultra"
 type = "compute"
 shader = "shaders/compute/clouds_merge_layers.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_HISTORY_DEBUG == 0 && PLAGUE_CLOUD_TEMPORAL == 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_HISTORY_DEBUG == 0 && FX_TAA == 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
@@ -1435,58 +1453,58 @@ format = "rgba16f"
 scale = 0.75
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryUltra]
 format = "rgba16f"
 scale = 1.0
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryDataFull]
 format = "r32f"
 scale = 0.75
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryDataUltra]
 format = "r32f"
 scale = 1.0
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryDistanceFull]
 format = "r32f"
 scale = 0.75
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryDistanceUltra]
 format = "r32f"
 scale = 1.0
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryStateFull]
 format = "r32f"
-width = 51
+width = 55
 height = 4
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryStateUltra]
 format = "r32f"
-width = 51
+width = 55
 height = 4
 storage = true
 history = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 
 [targets.cloudHistoryProbeFull]
 # Display sampler default; the categorical overlay explicitly uses texelFetch.
@@ -1508,7 +1526,7 @@ enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_HISTORY
 name = "clouds_merge_layers_full_history"
 type = "compute"
 shader = "shaders/compute/clouds_merge_layers.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
@@ -1519,7 +1537,7 @@ outputs = ["cloudsVolumeComputeFull", "cloudsVolumeDistanceFull", "cloudHistoryF
 name = "clouds_merge_layers_ultra_history"
 type = "compute"
 shader = "shaders/compute/clouds_merge_layers.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || PLAGUE_CLOUD_TEMPORAL != 0)"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && (PLAGUE_CLOUD_HISTORY_DEBUG != 0 || FX_TAA != 0)"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudBaseShape", "cloudDetailShape", "precipCoarseClipmap", "atmoSkyView", "atmoTransmittance", "cloudCandidateMask",
@@ -1554,19 +1572,19 @@ outputs = ["cloudHistoryProbeUltra"]
 format = "rgba16f"
 scale = 0.75
 storage = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && PLAGUE_CLOUD_TEMPORAL != 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && FX_TAA != 0"
 
 [targets.cloudHistoryBlendUltra]
 format = "rgba16f"
 scale = 1.0
 storage = true
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_TEMPORAL != 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && FX_TAA != 0"
 
 [[pass]]
 name = "clouds_history_blend_full"
 type = "compute"
 shader = "shaders/compute/clouds_history_blend.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && PLAGUE_CLOUD_TEMPORAL != 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && FX_TAA != 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudHistoryFull", "cloudHistoryDataFull", "cloudHistoryStateFull",
@@ -1578,7 +1596,7 @@ outputs = ["cloudHistoryBlendFull"]
 name = "clouds_history_blend_ultra"
 type = "compute"
 shader = "shaders/compute/clouds_history_blend.comp"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_TEMPORAL != 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && FX_TAA != 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "cloudHistoryUltra", "cloudHistoryDataUltra", "cloudHistoryStateUltra",
@@ -1591,16 +1609,25 @@ outputs = ["cloudHistoryBlendUltra"]
 [[pass]]
 name = "clouds_history_publish_full"
 type = "copy"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && PLAGUE_CLOUD_TEMPORAL != 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2 && FX_TAA != 0"
 inputs = ["cloudHistoryBlendFull"]
 outputs = ["cloudsVolumeComputeFull"]
 
 [[pass]]
 name = "clouds_history_publish_ultra"
 type = "copy"
-enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && PLAGUE_CLOUD_TEMPORAL != 0"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3 && FX_TAA != 0"
 inputs = ["cloudHistoryBlendUltra"]
 outputs = ["cloudsVolumeComputeUltra"]
+
+[[pass]]
+name = "clouds_fade_blur_full"
+type = "fullscreen"
+shader = "shaders/post/clouds_fade_blur.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+# Distance is appended after colour; clouds_fade_blur.fsh reads them as u_Input0/u_Input1 in that order.
+inputs = ["cloudsVolumeComputeFull", "cloudsVolumeDistanceFull"]
+outputs = ["cloudsFadedFull"]
 
 [[pass]]
 name = "clouds_composite_full"
@@ -1610,8 +1637,17 @@ enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
 blend = "translucent"
 # builtin.waterDepth: same underwater-veil input as the half-res composite above.
 # cloudsVolumeComputeFull, not cloudsRawFull: this tier reads the compute march's targets too.
-inputs = ["cloudsVolumeComputeFull", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistanceFull"]
+inputs = ["cloudsFadedFull", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistanceFull"]
 outputs = ["sceneHdr"]
+
+[[pass]]
+name = "clouds_fade_blur_ultra"
+type = "fullscreen"
+shader = "shaders/post/clouds_fade_blur.fsh"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
+# Distance is appended after colour; clouds_fade_blur.fsh reads them as u_Input0/u_Input1 in that order.
+inputs = ["cloudsVolumeComputeUltra", "cloudsVolumeDistanceUltra"]
+outputs = ["cloudsFadedUltra"]
 
 [[pass]]
 name = "clouds_composite_ultra"
@@ -1619,8 +1655,41 @@ type = "fullscreen"
 shader = "shaders/post/clouds_composite.fsh"
 enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
 blend = "translucent"
-inputs = ["cloudsVolumeComputeUltra", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistanceUltra"]
+inputs = ["cloudsFadedUltra", "builtin.depth", "builtin.waterDepth", "cloudsVolumeDistanceUltra"]
 outputs = ["sceneHdr"]
+
+
+# Cloud colour after the fade-band blur. Same format, scale and filter as the march output it
+# replaces, so clouds_composite reads it at the same size.
+[targets.cloudsFaded]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 1"
+
+# Cloud colour after the fade-band blur. Same format, scale and filter as the march output it
+# replaces, so clouds_composite reads it at the same size.
+[targets.cloudsFadedQuarter]
+format = "rgba16f"
+scale = 0.25
+filter = "linear"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 0"
+
+# Cloud colour after the fade-band blur. Same format, scale and filter as the march output it
+# replaces, so clouds_composite reads it at the same size.
+[targets.cloudsFadedFull]
+format = "rgba16f"
+scale = 0.75
+filter = "linear"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 2"
+
+# Cloud colour after the fade-band blur. Same format, scale and filter as the march output it
+# replaces, so clouds_composite reads it at the same size.
+[targets.cloudsFadedUltra]
+format = "rgba16f"
+scale = 1.0
+filter = "linear"
+enabled_if = "CLOUDS_VOLUMETRIC && CLOUD_RESOLUTION == 3"
 
 # The live tier's cloud front distance, in ONE ungated target. water_composite reads it to reject
 # water that sits behind a cloud, which compositing order cannot tell it: clouds land in sceneHdr,

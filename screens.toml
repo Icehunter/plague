@@ -167,6 +167,21 @@ sliders = [
     "u_CloudShadowStrength",
     "u_CloudWeatherResponse",
     "u_CloudDetailFade",
+    "u_CloudFadeSoftness",
+    "u_CloudFadeCumulus",
+    "u_CloudOpacityCumulus",
+    "u_CloudFadeStratus",
+    "u_CloudOpacityStratus",
+    "u_CloudFadeStratocumulus",
+    "u_CloudOpacityStratocumulus",
+    "u_CloudFadeNimbostratus",
+    "u_CloudOpacityNimbostratus",
+    "u_CloudFadeAltocumulus",
+    "u_CloudOpacityAltocumulus",
+    "u_CloudFadeCirrocumulus",
+    "u_CloudOpacityCirrocumulus",
+    "u_CloudFadeCirrus",
+    "u_CloudOpacityCirrus",
     "u_CloudMoisture",
     "u_CloudStability",
     "u_NebulaIntensity",
@@ -348,13 +363,36 @@ elements = [
     "u_CloudWeatherResponse",
     "<group:Quality|requires:CLOUDS_VOLUMETRIC>",
     "CLOUD_RESOLUTION",
-    "PLAGUE_CLOUD_TEMPORAL",
-    "u_CloudTierCumulus",
-    "u_CloudTierStratus",
-    "u_CloudTierNimbostratus",
-    "u_CloudTierAltocumulus",
-    "u_CloudTierCirrus",
     "u_CloudDetailFade",
+    "u_CloudFadeSoftness",
+    "<group:Cumulus|requires:CLOUDS_VOLUMETRIC>",
+    "u_CloudTierCumulus",
+    "u_CloudFadeCumulus",
+    "u_CloudOpacityCumulus",
+    "<group:Stratus|requires:CLOUDS_VOLUMETRIC>",
+    "u_CloudTierStratus",
+    "u_CloudFadeStratus",
+    "u_CloudOpacityStratus",
+    "<group:Stratocumulus|requires:CLOUDS_VOLUMETRIC>",
+    "u_CloudTierStratocumulus",
+    "u_CloudFadeStratocumulus",
+    "u_CloudOpacityStratocumulus",
+    "<group:Nimbostratus|requires:CLOUDS_VOLUMETRIC>",
+    "u_CloudTierNimbostratus",
+    "u_CloudFadeNimbostratus",
+    "u_CloudOpacityNimbostratus",
+    "<group:Altocumulus|requires:CLOUDS_VOLUMETRIC>",
+    "u_CloudTierAltocumulus",
+    "u_CloudFadeAltocumulus",
+    "u_CloudOpacityAltocumulus",
+    "<group:Cirrocumulus|requires:CLOUDS_VOLUMETRIC>",
+    "u_CloudTierCirrocumulus",
+    "u_CloudFadeCirrocumulus",
+    "u_CloudOpacityCirrocumulus",
+    "<group:Cirrus|requires:CLOUDS_VOLUMETRIC>",
+    "u_CloudTierCirrus",
+    "u_CloudFadeCirrus",
+    "u_CloudOpacityCirrus",
     "<group:Shadows|requires:CLOUDS_VOLUMETRIC>",
     "CLOUD_SHADOWS",
     "u_CloudShadowStrength|requires:CLOUD_SHADOWS",
@@ -780,12 +818,6 @@ Rejected pixels keep their marker colours. Dark candidate pixels are closer to t
 Pan, move, change time/weather and resize to inspect correspondence. Temporarily adds history memory and work.
 The panel can appear in reflections or AA history while enabled. Off removes it.
 No cloud pixels are skipped in either mode."""
-
-PLAGUE_CLOUD_TEMPORAL = """
-Smooths clouds using the previous frame where it still matches the current view.
-Off uses full cloud detail without temporal smoothing. Fancy keeps full detail with smoothing.
-Fast uses fewer samples with smoothing to reduce rendering cost; fine detail may look softer or noisier.
-Fancy and Fast use additional history memory. The performance gain in Fast depends on the scene."""
 
 PLAGUE_VOXEL_REFLECTIONS = """
 Recovers missing water reflections from nearby world geometry, including terrain outside the screen.
@@ -1881,8 +1913,8 @@ moves together. Separate from Underwater Distortion, which is a fine world-ancho
 CLOUD_SHADOWS = """
 Clouds cast moving shadows on the ground.
 
-Without it, a cloud can darken the sky yet leave the ground beneath it in full sun; the shadows \
-match the actual clouds overhead. Needs Volumetric Clouds to be on."""
+Without it, a cloud can darken the sky yet leave the ground beneath it in full sun; the \
+shadows match the actual clouds overhead. Needs Volumetric Clouds to be on."""
 
 WATER_FOAM = """
 Foam along shorelines.
@@ -2696,79 +2728,190 @@ upward."""
 # --- Clouds and Shadows screens -----------------------------------------------------------------
 
 CLOUDS_VOLUMETRIC = """
-Whether clouds are marched through as real volumes or drawn as a flat layer.
+Whether clouds have real depth or stay a flat painted layer.
 
-On, clouds have thickness: the sun lights their near side, they shade what is under them, and \
-flying into one puts you inside it. It is the single most expensive setting in the pack."""
+On, the sun lights their near side, they cast shade below them, and flying into one puts \
+you inside it. It is the most expensive setting in the pack."""
 
 CLOUD_RESOLUTION = """
-How much of the screen the clouds are drawn at: Performance a quarter, Fast a half, Quality three \
-quarters, Ultra all of it.
+How much of the screen clouds are drawn at, from Performance up to Ultra.
 
-This is what decides whether clouds look clean. Below Ultra the clouds are drawn small and \
-stretched back up, so they look grainy. Smoothing hides the grain, but it blurs the clouds too.
-
-All clouds use this one setting, and the cost goes up with the size. To get speed back, turn the \
-cloud quality settings below down instead: low quality at Ultra looks better than high quality at \
-Fast."""
+Higher looks cleaner. Lower draws clouds smaller and stretches them back up, which looks \
+soft. This is the biggest cost in the pack, so raise it before turning down the cloud \
+settings below."""
 
 u_CloudAltitude = """
 How high the clouds sit, in blocks.
 
-The default is well above build height, so they read as sky. Bring it down and you can fly \
-through them."""
+The default sits well above build height, so clouds read as sky. Bring it down and you \
+can fly through them."""
 
 u_CloudAmount = """
 How much of the sky is covered.
 
-0 is a clear day whatever the weather. Rain still raises this a little on top of whatever you \
-set, see Weather Response."""
+0 gives a clear day no matter the weather. Rain raises this a little on top of what you \
+set; see Weather Response."""
 
 u_CloudScale = """
 How large individual clouds are.
 
-Small values give many small clouds; large values give a few broad banks."""
+Low values give many small clouds. High values give a few broad banks."""
 
 u_CloudShadowStrength = """
 How dark a cloud's shadow on the ground is.
 
-1 is the cloud's own optical depth, so thin cloud shades lightly and overcast shades hard."""
+1 matches how thick the cloud looks from below, so a thin cloud casts a light shadow and \
+an overcast sky casts a hard one."""
 
 u_CloudTierCumulus = """
-The puffy heaped clouds, and the storm towers they grow into.
+The puffy heaped clouds, and the storm towers they can grow into.
 
-Off removes them. Higher tiers resolve their interior and their own shadow more finely, which is
-where heaped cloud reads as solid rather than as fog."""
+Off removes them. Higher settings show more shape and shadow inside each cloud, which is \
+where they start looking solid instead of like fog."""
 
 u_CloudTierStratus = """
-Flat low cloud: the overcast lid and the rolling banks under it.
+Flat low cloud: the overcast lid.
 
-Off removes them. A smooth grey sheet is where extra detail shows least, so this is the first tier
-worth dropping."""
+Off removes it. A plain grey sheet shows extra detail the least, so this is the first \
+one worth turning down for speed."""
+
+u_CloudTierStratocumulus = """
+The rolling low banks that sit just above the overcast lid.
+
+Off removes them. They share the lid's height, so toggling one at a time shows which \
+layer is doing what."""
 
 u_CloudTierNimbostratus = """
 The deep grey deck that rain and thunder fall out of.
 
-Off removes it, and storms then fall from open sky. It is the thickest deck in the pack, so it is
-also the one that costs most in bad weather."""
+Off removes it, so storms fall from open sky instead. It is the thickest deck here, so \
+it costs the most during bad weather."""
 
 u_CloudTierAltocumulus = """
-Mid level cloud: the rippled sheets a few kilometres up."""
+Mid-level cloud: the rippled sheets partway up the sky.
+
+Off removes them. Higher settings show more ripple detail and cost more to draw."""
 
 u_CloudTierCirrus = """
-High cloud: thin fibrous streaks and fine ripples near the top of the sky."""
+High cloud: the thin streaks near the top of the sky.
+
+Off removes them. Higher settings show more fine detail in the streaks and cost more to \
+draw."""
+
+u_CloudTierCirrocumulus = """
+High cloud: the fine rippled patches that show up in unsettled air.
+
+Off removes them. Higher settings show more ripple detail and cost more to draw."""
 
 u_CloudDetailFade = """
 How far away cloud detail survives, in chunks.
 
-Detail halves again every time a view ray travels this far sideways through a layer. Lower is faster
-and blurs distant cloud. The highest setting turns the fade off entirely."""
+Detail fades by half again each time a view crosses this far sideways through a layer. \
+Lower is faster and blurs distant cloud; the highest setting turns the fade off."""
+
+u_CloudFadeCumulus = """
+How far past your view distance the heaped fair-weather deck keeps going before it fades \
+out, in chunks.
+
+It starts fading where the land stops drawing. Higher shows more of it near the horizon \
+and costs more frame rate."""
+
+u_CloudOpacityCumulus = """
+How thick the heaped fair-weather deck is, compared with how it was designed.
+
+100% is the deck as designed. Lower lets more sky and other cloud show through it; \
+higher makes it darker underneath."""
+
+u_CloudFadeStratus = """
+How far past your view distance the flat overcast deck keeps going before it fades out, \
+in chunks.
+
+It starts fading where the land stops drawing. Higher shows more of it near the horizon \
+and costs more frame rate."""
+
+u_CloudOpacityStratus = """
+How thick the flat overcast deck is, compared with how it was designed.
+
+100% is the deck as designed. Lower lets more sky and other cloud show through it; \
+higher makes it darker underneath."""
+
+u_CloudFadeStratocumulus = """
+How far past your view distance the rolling low deck keeps going before it fades out, in \
+chunks.
+
+It starts fading where the land stops drawing. Higher shows more of it near the horizon \
+and costs more frame rate."""
+
+u_CloudOpacityStratocumulus = """
+How thick the rolling low deck is, compared with how it was designed.
+
+100% is the deck as designed. Lower lets more sky and other cloud show through it; \
+higher makes it darker underneath."""
+
+u_CloudFadeNimbostratus = """
+How far past your view distance the deep rain deck keeps going before it fades out, in \
+chunks.
+
+It starts fading where the land stops drawing. Higher shows more of it near the horizon \
+and costs more frame rate."""
+
+u_CloudOpacityNimbostratus = """
+How thick the deep rain deck is, compared with how it was designed.
+
+100% is the deck as designed. Lower lets more sky and other cloud show through it; \
+higher makes it darker underneath."""
+
+u_CloudFadeAltocumulus = """
+How far past your view distance the rippled mid-level deck keeps going before it fades \
+out, in chunks.
+
+It starts fading where the land stops drawing. Higher shows more of it near the horizon \
+and costs more frame rate."""
+
+u_CloudOpacityAltocumulus = """
+How thick the rippled mid-level deck is, compared with how it was designed.
+
+100% is the deck as designed. Lower lets more sky and other cloud show through it; \
+higher makes it darker underneath."""
+
+u_CloudFadeCirrocumulus = """
+How far past your view distance the fine high-ripple deck keeps going before it fades \
+out, in chunks.
+
+It starts fading where the land stops drawing. Higher shows more of it near the horizon \
+and costs more frame rate."""
+
+u_CloudOpacityCirrocumulus = """
+How thick the fine high-ripple deck is, compared with how it was designed.
+
+100% is the deck as designed. Lower lets more sky and other cloud show through it; \
+higher makes it darker underneath."""
+
+u_CloudFadeCirrus = """
+How far past your view distance the thin high-streak deck keeps going before it fades \
+out, in chunks.
+
+It starts fading where the land stops drawing. Higher shows more of it near the horizon \
+and costs more frame rate."""
+
+u_CloudOpacityCirrus = """
+How thick the thin high-streak deck is, compared with how it was designed.
+
+100% is the deck as designed. Lower lets more sky and other cloud show through it; \
+higher makes it darker underneath."""
+
+u_CloudFadeSoftness = """
+How gently clouds fade out at the far edge of view.
+
+0% keeps them crisp until they vanish. 100% melts them into the sky as they go. Clouds \
+within your normal view distance are never softened."""
 
 u_CloudSilverLining = """
-How much brighter a cloud is when the sun is behind it.
+How much brighter a cloud glows when the sun sits behind it.
 
-Clouds scatter light forwards, so one lit from behind glows at its edges. 1 is a 7.8x swing, 0 the \
-same from every side. The cloud's size does not change, only how much edge is bright enough to see."""
+Clouds scatter light forward, so one lit from behind glows bright at its edge. 1 makes \
+that glow about eight times brighter than the rest of the cloud; 0 treats every side the \
+same. The cloud's size never changes, only how much of its edge glows."""
 
 u_CloudSpeed = """
 How fast clouds move across the sky.
@@ -2778,8 +2921,9 @@ How fast clouds move across the sky.
 u_CloudWeatherResponse = """
 How much rain changes the clouds.
 
-0 holds the sky at a fair-weather cumulus deck regardless of weather. At 1, rain builds the deck \
-taller, darker and slightly more covered, the way a real sky thickens before a storm."""
+0 keeps the sky a fair-weather deck no matter the weather. At 1, rain builds the clouds \
+taller, darker, and a little more widespread, the way a real sky thickens before a \
+storm."""
 
 u_CloudFormHold = """
 Freezes the low cloud form where you put it.

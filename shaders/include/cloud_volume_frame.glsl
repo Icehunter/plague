@@ -30,9 +30,6 @@ layout(r32f, set = 0, binding = 7) uniform readonly image2D u_CloudCandidateMask
 #define PLAGUE_PRECIP_CLIPMAP(slot) precipCoarseClipmap.words[slot]
 #define PLAGUE_ATMO_READS_SKYVIEW
 #define PLAGUE_ATMO_READS_TRANSMITTANCE
-#if PLAGUE_CLOUD_TEMPORAL == 2
-#define PLAGUE_CLOUD_REDUCED_MARCH
-#endif
 #moj_import <fornax_runtime:clouds.glsl>
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
@@ -113,7 +110,11 @@ void plaguePrepareCloudWorkgroup() {
     // u_Param2 is filled by the engine BY PASS NAME (see ComputePassRunner); this pass's name is
     // not one the engine recognizes, so u_Param2 reads 0 here and this falls back to fog render
     // distance.
-    renderDistance = max(u_RenderFog.y, 32.0);
+    // u_CameraSkyLight.z holds the chunk grid's render distance in blocks (globals.glsl), the same
+    // distance fog_composite anchors the terrain veil to. The fog attribute is only a fallback and
+    // can sit past the real cutoff. It reads zero when headless, which is what the offline harness
+    // feeds.
+    renderDistance = u_CameraSkyLight.z > 1.0 ? u_CameraSkyLight.z : max(u_RenderFog.y, 32.0);
 
     atmColorMult = vec3(1.0);
 #ifdef ATM_COLOR_MULTS

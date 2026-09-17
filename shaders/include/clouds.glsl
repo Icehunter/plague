@@ -62,7 +62,7 @@
 // the offline fixture, 12.1 ms of which is per-workgroup deck setup and the rest ray marching. Get
 // that time back on u_CloudTier* per deck instead of here: a low tier at Ultra looks better than a
 // high one at Fast.
-#define CLOUD_RESOLUTION 3 //[0 1 2 3] compile "Cloud Resolution" {0="Performance" 1="Fast" 2="Quality" 3="Ultra"}
+#define CLOUD_RESOLUTION 1 //[0 1 2 3] compile "Cloud Resolution" {0="Performance" 1="Fast" 2="Quality" 3="Ultra"}
 
 // Multiple of the derived wind speed below; 0 freezes the deck for screenshots/bisection. Top of
 // range moves a cumulus cell past the viewer in about a quarter in-game hour, a squall line on
@@ -76,6 +76,7 @@
 
 // Shadow depth, as a multiple of the deck's own tau. 0 leaves the ground unshadowed.
 #define u_CloudShadowStrength 1.0 //[0.00..2.00 step 0.05] runtime "Cloud Shadow Strength"
+
 
 // Ceiling on the sun ray's slant, 1/sin(elevation). Uncapped it belongs to a slab that never ends:
 // 29x optical depth at 2 degrees, which crushes everything under cloud to black. A cloud is finite
@@ -150,6 +151,13 @@ const float PLAGUE_CLOUD_DEPTH_STEP_CAP = 3.0;
 // Existing four-plane safety floor. Higher tier-dependent floors added 34% density queries in
 // the Sep 13 fixture; restoring distance reduction trades away some flat-layer sampling stability.
 const float PLAGUE_CLOUD_MIN_SLAB_STEPS = 4.0;
+// Highest allowed value for a deck's stepScale. The scale can shrink a budget below one, and a
+// sheet needs it to also grow it above one (cloud_types.glsl, PLAGUE_CLOUD_SHEET_STEP_SCALE).
+// Four keeps a doubled sheet inside the loop's step cap.
+const float PLAGUE_CLOUD_STEP_SCALE_MAX = 4.0;
+// Smallest share of the sample jitter a deck keeps: a flat sheet uses this much, a heaped deck
+// uses all of it. Picked from a render; see the march loop below for the numbers.
+const float PLAGUE_CLOUD_SHEET_JITTER = 0.5;
 
 // Distance over which a deck's step budget halves, blocks: one mip level per 16 chunks. A deck's
 // features subtend an angle that falls with distance, so the budget follows the same curve a mip
@@ -206,13 +214,18 @@ const float PLAGUE_CLOUD_WARP_STRENGTH = 1.0;
 // is an empty sky either way).
 const float PLAGUE_CLOUD_MIN_SPAN = 0.05;
 
-// Interpolated per-genus between a sheet value and a tower value on `family`. Solved against
-// the drawn silhouette (cross-section width by height) rather than chosen: 0.06/0.45 keeps the
-// tower base flat and wide with just enough rim curl to read as an edge, not a cut. The asymmetry
-// (flat base, rounded top) is what reads as a cumulus rather than a lens or smoke. Sheet's two
-// edges sit inside the tower's, just enough to keep the march from aliasing a hard face.
-const float PLAGUE_CLOUD_SHEET_BASE = 0.04;
-const float PLAGUE_CLOUD_SHEET_TOP  = 0.92;
+// Interpolated per genus between a sheet value and a tower value on `family`. The tower pair
+// matches the drawn shape (width against height): 0.06/0.45 keeps the tower's base flat and wide,
+// with just enough curl at the rim to read as an edge, not a cut. The base staying flat while the
+// top rounds is what makes it read as a cumulus, not a lens or smoke.
+//
+// The sheet pair puts the density peak partway down the deck's depth, with a ramp below it over
+// a fifth of the depth and the lid starting three fifths down. A real stratus base is ragged and
+// its top undulates, so this shape keeps a flat deck from showing as two hard slabs, a lid over
+// a base, and its edge reads as billows instead. Lower overall opacity is a side effect of this
+// shape; the per-deck Opacity slider restores it where wanted.
+const float PLAGUE_CLOUD_SHEET_BASE = 0.20;
+const float PLAGUE_CLOUD_SHEET_TOP  = 0.60;
 const float PLAGUE_CLOUD_TOWER_BASE = 0.06;
 const float PLAGUE_CLOUD_TOWER_TOP  = 0.45;
 
@@ -508,6 +521,13 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     if (terrainDistance > 0.0) {
         tFar = min(tFar, terrainDistance);
     }
+    // The fade band is measured across the map, not along the ray, matching the chunk grid and
+    // render distance: a cloud straight overhead is far away along the ray but at zero map
+    // distance. Past the band's end a sample adds nothing, so the ray stops there. Inside the
+    // band, density fades smoothly to zero; only the amount of cloud fades, not its light.
+    float fadeStart = renderDistance;
+    float fadeEnd = renderDistance + deck.fadeChunks * PLAGUE_CLOUD_BLOCKS_PER_CHUNK;
+    tFar = min(tFar, fadeEnd / horizontal);
     if (tFar <= tNear) {
         return vec4(0.0);
     }
@@ -524,7 +544,7 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // steps on a layer of optical depth 0.5 that has almost no interior to resolve.
     float slabSteps = plagueCloudTierSlabSteps(deck.tier)
                     * clamp(deck.depth / max(clearDepth, 1e-3), 1.0, PLAGUE_CLOUD_DEPTH_STEP_CAP)
-                    * clamp(deck.stepScale, 0.05, 1.0);
+                    * clamp(deck.stepScale, 0.05, PLAGUE_CLOUD_STEP_SCALE_MAX);
     // A mip level per 16 chunks: quality follows where the viewer is relative to THIS deck, not a
     // global setting. Standing under the low deck the high etage is several halvings away; fly up
     // into it and it earns its budget back as it approaches.
@@ -562,10 +582,6 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // Distance and stepScale reduce the tier budget; the fixed safety floor below must not
     // restore it. Tier-dependent floors added 34% density queries in the Sep 13 GPU fixture.
     slabSteps *= deckQuality;
-#ifdef PLAGUE_CLOUD_REDUCED_MARCH
-    // Half mode divides the per-frame budget by two; the existing spatial floors still apply.
-    slabSteps *= 0.5;
-#endif
     slabSteps = max(slabSteps, PLAGUE_CLOUD_MIN_SLAB_STEPS);
     float stepLen = deck.depth / slabSteps;
     // The cap, not the slab budget, is what a long ray actually spends: a shallow ray reaches it
@@ -579,11 +595,7 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // less resolution has to be told so here or it pays full price on every ray to the horizon. The
     // floor still keeps the lowest setting a coarser deck rather than a missing one.
     int stepCap = max(int(plagueCloudTierStepCap(deck.tier) * deckQuality
-                              * clamp(deck.stepScale, 0.05, 1.0)
-#ifdef PLAGUE_CLOUD_REDUCED_MARCH
-                              // Reduce the grazing-ray budget too, before rounding and the floor.
-                              * 0.5
-#endif
+                              * clamp(deck.stepScale, 0.05, PLAGUE_CLOUD_STEP_SCALE_MAX)
                               + dither),
                       int(PLAGUE_CLOUD_MIN_SLAB_STEPS) * 2);
     // Rounding can push the cap up by one step. Clamp it here, before the ray is split
@@ -602,10 +614,21 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
         float count = float(steps);
         stepIncrement = 2.0 * max(span - count * stepLen, 0.0) / (count * (count - 1.0));
     }
+    // How much of the sample jitter a ray uses. Each sample sits at a fixed distance from the eye,
+    // so wherever a ray is long enough to hit the step cap, each grown segment traces one such
+    // distance shell. Through a flat deck near the horizon those shells show up as stacked lines
+    // unless jitter is full. A ray under the cap keeps its native steps, where a sheet's reduced
+    // jitter shows no such lines and cuts grain instead. So: full jitter once segments grow, the
+    // family's own floor otherwise.
+    float jitterAmount = stepIncrement > 0.0
+            ? 1.0
+            : max(clamp(deck.family, 0.0, 1.0), PLAGUE_CLOUD_SHEET_JITTER);
 
     // --- Per-ray constants ----------------------------------------------------------------------
     vec2 drift = plagueCloudDrift(deck, syncedTime);
-    float sigmaScale = deck.tau / max(deck.depth, 1e-3);
+    // The per-deck opacity setting scales the genus's optical depth; 1.0 leaves the authored row
+    // unchanged.
+    float sigmaScale = deck.tau * deck.opacity / max(deck.depth, 1e-3);
 
     // Biome dryness read where the CLOUD is, not where the camera is. The precipitation clipmap is
     // a per-column field over a 512-block window, so the ray samples it at its own crossing of the
@@ -648,33 +671,43 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     // above, so it doesn't introduce a second discontinuity.
 #ifdef PLAGUE_ATMO_READS_TRANSMITTANCE
     // How much sunlight reaches a cloud depends on the air above the CLOUD, not the air above the
-    // player. lighting.light measures that air from the camera, so a high cloud comes out too dark
-    // and too red, as if it sat on the ground.
+    // player, so the deck's own column is what gets measured, not lighting.light.
     //
-    // This scales lighting.light rather than replacing it. That value also holds the rain colour,
-    // the hand-picked colour table and the night colours, and the table below holds none of them.
+    // Do not take the ratio of the two instead. A ratio against the camera's column divides by
+    // the eye's own light loss, which drops to zero at the horizon: cirrus at its usual height
+    // reads 2.0 times too strong at 8 degrees of sun height and 359 times too strong at 0
+    // degrees, and below the horizon it does not even move in one direction. No fixed limit
+    // fixes that, so the ratio is dropped; tools/derive_cloud_sun_altitude.py records the
+    // numbers.
+    //
     // Do not use plagueAtmoSunRadiance here either: it carries PLAGUE_ATMO_SKY_GAIN, which is only
     // there to set how bright the sky looks, and it makes direct sun 22 times too strong at noon.
     //
-    // Switched off below 8 degrees of sun height. Left on, it makes the light 10 times stronger at
-    // 2 degrees for a cloud 4 km up, because at that angle almost no light reaches the player while
-    // plenty still reaches the cloud. Both angles come from the offline model (plague_atmo_lut) and
-    // keep the change under 1.3 times at every sun height and cloud height.
-    const float PLAGUE_CLOUD_SUN_ALT_LO = 0.13917;   // sin(8 degrees)
-    const float PLAGUE_CLOUD_SUN_ALT_HI = 0.5;       // sin(30 degrees)
+    // The calibration comes from the palette itself: PLAGUE_LIGHT_NOON_DEFAULT divided by the
+    // eye's column with the sun overhead, per colour channel. This way a deck at the camera's
+    // height reproduces the authored noon colour and the day look stays put; every difference
+    // below noon then comes from the atmosphere read at the deck. The limit comes from the model,
+    // not a clamp: across all seven decks and the whole u_CloudAltitude range, the deck light
+    // stays within 3.4 times the palette. tools/derive_cloud_sun_altitude.py produces this vector
+    // and checks that limit again.
+    const vec3 PLAGUE_CLOUD_SUN_CALIBRATION = vec3(1.5893, 1.4016, 1.3111);
     float deckRadius = PLAGUE_PLANET_RADIUS
             + plagueAtmoAltitude(deck.base + deck.depth * 0.5, plagueAtmoSeaLevel());
-    vec3 deckColumn = plagueAtmoTransmittanceToLight(deckRadius, sunDirTrue.y);
-    vec3 eyeColumn = plagueAtmoTransmittanceToLight(plagueAtmoCameraRadius(), sunDirTrue.y);
-    vec3 altitudeCorrection = mix(vec3(1.0), deckColumn / max(eyeColumn, vec3(1e-4)),
-                                  smoothstep(PLAGUE_CLOUD_SUN_ALT_LO, PLAGUE_CLOUD_SUN_ALT_HI,
-                                             sunDirTrue.y));
-    // Clouds take the same sunset warmth as the ground and the water (surface_lighting,
-    // water_composite). Without it the clouds stay a flat colour while the land under them
-    // has gone orange. Colour shifts, brightness does not. Sun only: moonlit clouds and the
-    // End's sky-lit clouds keep their own colour.
+    vec3 deckLight = PLAGUE_CLOUD_SUN_CALIBRATION
+            * plagueAtmoTransmittanceToLight(deckRadius, sunDirTrue.y);
+
+    // The switch to the authored table uses sunVisibility2, the same value the palette uses for
+    // its own night arm, so the two always agree on when night starts. Below the horizon the deck
+    // column is zero and the palette carries the look: the rain colour, the hand-picked table and
+    // the night colours all reach a cloud through this mix and no other path.
+    //
+    // Sunset warmth is added on the palette side only. The table does not warm on its own, so
+    // this corrects it (surface_lighting and water_composite use the same fix). The deck column
+    // already reddens by itself; warming it again would look like a filter placed over the sky.
+    vec3 sunLight = mix(plagueWarmLowSun(lighting.light, sunDirTrue.y), deckLight,
+                        lighting.sunVisibility2);
     vec3 directRadiance = lightSign > 0.0
-            ? plagueWarmLowSun(lighting.light, sunDirTrue.y) * altitudeCorrection
+            ? sunLight
             : plagueMoonColor(plagueAirEyePos(cameraPosAbs.y), lightDir);
     if (u_WorldBounds.w == 3.0) {
         // Nothing shines on a cloud in the End. It is lit by the sky it hangs in, so it takes that
@@ -683,6 +716,11 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
         directRadiance = ambientDome;
     }
 #else
+    // There is no deck column in this arm: cloud_shadow_mask.fsh and water_environment.fsh
+    // compile it too, and neither binds atmoTransmittance. Moving the calibrated light above this
+    // #ifdef would hand both an unbound sampler, breaking the link in one and turning clouds
+    // black in the other. A shadow mask and a reflection stand-in should use the camera's light
+    // anyway.
     vec3 directRadiance = lightSign > 0.0
             ? plagueWarmLowSun(lighting.light, sunDirTrue.y)
             : plagueMoonColor(plagueAirEyePos(cameraPosAbs.y), lightDir);
@@ -757,9 +795,14 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
 
         float segmentLength = min(stepLen, tFar - segmentStart);
         if (segmentLength <= 0.0) break;
-        float t = segmentStart + segmentLength * dither;
+        // jitterAmount is set once per ray, above. Picked from a render: full jitter measured
+        // grain 0.115, no jitter 0.081 with visible bands, half jitter 0.100 with the bands
+        // gone. The cap's own dither is untouched here: that one hides integer rings without
+        // adding noise.
+        float t = segmentStart + segmentLength * mix(0.5, dither, jitterAmount);
         vec3 pos = cameraPosAbs + viewDir * t;
-        float density = plagueCloudDensityAt(pos, deck, drift);
+        float density = plagueCloudDensityAt(pos, deck, drift)
+                      * (1.0 - smoothstep(fadeStart, fadeEnd, t * horizontal));
 
         if (density > 0.0) {
             if (cloudFrontDistance <= 0.0) {

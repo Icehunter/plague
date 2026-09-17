@@ -3,6 +3,7 @@
 // working set. Float32 layer targets preserve march precision until the final merge.
 #define PLAGUE_CLOUD_CANDIDATE_CACHE_READ
 #moj_import <fornax_runtime:cloud_volume_frame.glsl>
+#moj_import <fornax_runtime:cloud_blue_noise.glsl>
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 // Seven interleaved colour/front pairs, in the original genus order.
@@ -58,6 +59,14 @@ void plagueStoreCloudLayer(int index, ivec2 pixel, vec4 colour, float front) {
     }
 }
 
+// The view ray through the middle of a texel, built at the reversed-Z far plane. Near the eye,
+// head bob swings the direction by tens of degrees each step; the far plane keeps it steady.
+vec3 plagueCloudRay(vec2 texCoord) {
+    vec4 clipPos = vec4(texCoord * 2.0 - 1.0, 0.0001, 1.0);
+    vec4 worldH = u_InvProjModelView * clipPos;
+    return normalize(worldH.xyz / worldH.w);
+}
+
 void main() {
 #if CLOUDS_VOLUMETRIC
     if (gl_LocalInvocationIndex == 0u && u_SkyState.z > 0.5) {
@@ -81,22 +90,24 @@ void main() {
         return;
     }
 
-    // Reconstruct at the reversed-Z far plane: the near plane puts the point centimeters from the
-    // eye, where view-bob swings the direction tens of degrees per footstep.
-    vec4 clipPos = vec4(texCoord * 2.0 - 1.0, 0.0001, 1.0);
-    vec4 worldH = u_InvProjModelView * clipPos;
-    vec3 viewDir = normalize(worldH.xyz / worldH.w);
+    vec3 viewDir = plagueCloudRay(texCoord);
 
     const float goldenRatio = 1.61803398875;
     float dither = 52.9829189
             * fract(0.06711056 * float(texelCoord.x) + 0.00583715 * float(texelCoord.y));
-    // Older engines omit FX_* from compute: preserve their existing sequence until updated.
-#if !defined(FX_TAA) || FX_TAA != 0 || PLAGUE_CLOUD_TEMPORAL != 0
+    // The per-frame rotation is only for the cloud's own history blend. The engine's TAA does not
+    // use it: TAA sees the cloud after the composite's cubic filtering and rejects history at thin
+    // edges, exactly where one sample's phase decides the alpha. With cloud temporal off and TAA
+    // on, that shows up as flashing edges. A fixed dither instead gives grain that crawls with
+    // camera movement, the known cost of no history, not a flicker.
+#if PLAGUE_CLOUD_TEMPORAL != 0
     dither = fract(dither + goldenRatio * mod(u_FrameState.x, 3600.0));
 #else
-    // With no temporal consumer, changing the sample each frame only makes it flicker.
-    // Keep spatial dither; this does not filter aliasing during camera or cloud movement.
-    dither = fract(dither);
+    // Held still, the interleaved gradient shows through a thin deck as a diagonal lattice, and a
+    // hash in its place is noise that clumps into speckle at full resolution. Blue noise has
+    // neither problem: it spreads error as evenly as the lattice does, with no pattern to show.
+    // tools/generate_blue_noise.py is the tile's origin.
+    dither = plagueCloudBlueNoise(texelCoord);
 #endif
 
     // The cutoff colour is directional, so each ray keeps its own sky lookup and grading.

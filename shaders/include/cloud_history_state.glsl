@@ -4,7 +4,7 @@
 const int PLAGUE_CLOUD_HISTORY_DECK_ROW = 6;
 const int PLAGUE_CLOUD_HISTORY_WIND_ROW = 13;
 const int PLAGUE_CLOUD_HISTORY_OPTION_ROW = 14;
-const int PLAGUE_CLOUD_HISTORY_STATE_ROWS = 51;
+const int PLAGUE_CLOUD_HISTORY_STATE_ROWS = 55;
 #ifdef PLAGUE_CLOUD_HISTORY_WRITE_STATE
 vec4 plagueCloudHistoryOptions(int row) {
     switch (row) {
@@ -17,34 +17,38 @@ vec4 plagueCloudHistoryOptions(int row) {
         case 6: return vec4(u_AtmPaletteRainNightB, u_AtmPaletteRainNightG, u_AtmPaletteRainNightR, u_AtmPaletteSunsetTintB);
         case 7: return vec4(u_AtmPaletteSunsetTintG, u_AtmPaletteSunsetTintR, u_AtmRainB, u_AtmRainG);
         case 8: return vec4(u_AtmRainI, u_AtmRainR, u_CloudAltitude, u_CloudAmount);
-        case 9: return vec4(u_CloudDetailFade, u_CloudFormHold, u_CloudMoisture, u_CloudScale);
-        case 10: return vec4(u_CloudShadowStrength, u_CloudSilverLining, u_CloudSpeed, u_CloudStability);
-        case 11: return vec4(u_CloudTierAltocumulus, u_CloudTierCirrus, u_CloudTierCumulus, u_CloudTierNimbostratus);
-        case 12: return vec4(u_CloudTierStratus, u_CloudWeatherResponse, u_FogAdvanced, u_FogBorderDensity);
-        case 13: return vec4(u_FogBorderGateFar, u_FogBorderGateNear, u_FogCaveGuardHi, u_FogCaveGuardLo);
-        case 14: return vec4(u_FogClimbRise, u_FogColdDensity, u_FogColdDistance, u_FogColdMist);
-        case 15: return vec4(u_FogColdSharpness, u_FogDayVariance, u_FogDensity, u_FogDistance);
-        case 16: return vec4(u_FogDryClear, u_FogDryDensity, u_FogDryDistance, u_FogDrySharpness);
-        case 17: return vec4(u_FogEnableCold, u_FogEnableDistance, u_FogEnableDry, u_FogEnableEdge);
-        case 18: return vec4(u_FogEnableMorning, u_FogEnableNight, u_FogEnableWet, u_FogHeight);
-        case 19: return vec4(u_FogHighAltitude, u_FogMistReach, u_FogMorningDensity, u_FogMorningDistance);
-        case 20: return vec4(u_FogMorningMist, u_FogMorningSharpness, u_FogNight, u_FogNightDensity);
-        case 21: return vec4(u_FogNightDistance, u_FogNightSharpness, u_FogRainDepth, u_FogRainResponse);
-        case 22: return vec4(u_FogSharpness, u_FogWetDensity, u_FogWetDistance, u_FogWetMist);
-        case 23: return vec4(u_FogWetSharpness, u_LightMorningB, u_LightMorningG, u_LightMorningI);
-        case 24: return vec4(u_LightMorningR, u_LightNightB, u_LightNightG, u_LightNightI);
-        case 25: return vec4(u_LightNightR, u_LightNoonB, u_LightNoonG, u_LightNoonI);
-        case 26: return vec4(u_LightNoonR, u_LightPaletteNightB, u_LightPaletteNightG, u_LightPaletteNightR);
-        case 27: return vec4(u_LightPaletteNoonB, u_LightPaletteNoonG, u_LightPaletteNoonR, u_LightPaletteRainDayB);
-        case 28: return vec4(u_LightPaletteRainDayG, u_LightPaletteRainDayR, u_LightPaletteRainMagnitude, u_LightPaletteRainNightB);
-        case 29: return vec4(u_LightPaletteRainNightG, u_LightPaletteRainNightR, u_LightPaletteSunsetB, u_LightPaletteSunsetG);
-        case 30: return vec4(u_LightPaletteSunsetR, u_LightPaletteSunsetWarmth, u_LightRainB, u_LightRainG);
-        case 31: return vec4(u_LightRainI, u_LightRainR, u_MoonGlowStrength, u_MoonGlowTightness);
-        case 32: return vec4(u_MoonIntensity, u_NetherFogDensity, u_NetherFogDistance, u_NightScotopic);
-        case 33: return vec4(u_ScreenBrightness, u_SkyBiomeTint, u_SkyBrightness, u_SkyGradient);
-        case 34: return vec4(u_SunGlowStrength, u_SunGlowTightness, u_SunIntensity, u_SunsetBandHeight);
-        case 35: return vec4(u_SunsetBandWidth, u_SunsetLightWarmth, u_SunsetSkyWarmth, u_SunsetTemp);
-        case 36: return vec4(u_TwilightSpan, 0.0, 0.0, 0.0);
+        case 9: return vec4(u_CloudDetailFade, u_CloudFadeAltocumulus, u_CloudFadeCirrocumulus, u_CloudFadeCirrus);
+        case 10: return vec4(u_CloudFadeCumulus, u_CloudFadeNimbostratus, u_CloudFadeStratocumulus, u_CloudFadeStratus);
+        case 11: return vec4(u_CloudFormHold, u_CloudMoisture, u_CloudOpacityAltocumulus, u_CloudOpacityCirrocumulus);
+        case 12: return vec4(u_CloudOpacityCirrus, u_CloudOpacityCumulus, u_CloudOpacityNimbostratus, u_CloudOpacityStratocumulus);
+        case 13: return vec4(u_CloudOpacityStratus, u_CloudScale, u_CloudShadowStrength, u_CloudSilverLining);
+        case 14: return vec4(u_CloudSpeed, u_CloudStability, u_CloudTierAltocumulus, u_CloudTierCirrocumulus);
+        case 15: return vec4(u_CloudTierCirrus, u_CloudTierCumulus, u_CloudTierNimbostratus, u_CloudTierStratocumulus);
+        case 16: return vec4(u_CloudTierStratus, u_CloudWeatherResponse, u_FogAdvanced, u_FogBorderDensity);
+        case 17: return vec4(u_FogBorderGateFar, u_FogBorderGateNear, u_FogCaveGuardHi, u_FogCaveGuardLo);
+        case 18: return vec4(u_FogClimbRise, u_FogColdDensity, u_FogColdDistance, u_FogColdMist);
+        case 19: return vec4(u_FogColdSharpness, u_FogDayVariance, u_FogDensity, u_FogDistance);
+        case 20: return vec4(u_FogDryClear, u_FogDryDensity, u_FogDryDistance, u_FogDrySharpness);
+        case 21: return vec4(u_FogEnableCold, u_FogEnableDistance, u_FogEnableDry, u_FogEnableEdge);
+        case 22: return vec4(u_FogEnableMorning, u_FogEnableNight, u_FogEnableWet, u_FogHeight);
+        case 23: return vec4(u_FogHighAltitude, u_FogMistReach, u_FogMorningDensity, u_FogMorningDistance);
+        case 24: return vec4(u_FogMorningMist, u_FogMorningSharpness, u_FogNight, u_FogNightDensity);
+        case 25: return vec4(u_FogNightDistance, u_FogNightSharpness, u_FogRainDepth, u_FogRainResponse);
+        case 26: return vec4(u_FogSharpness, u_FogWetDensity, u_FogWetDistance, u_FogWetMist);
+        case 27: return vec4(u_FogWetSharpness, u_LightMorningB, u_LightMorningG, u_LightMorningI);
+        case 28: return vec4(u_LightMorningR, u_LightNightB, u_LightNightG, u_LightNightI);
+        case 29: return vec4(u_LightNightR, u_LightNoonB, u_LightNoonG, u_LightNoonI);
+        case 30: return vec4(u_LightNoonR, u_LightPaletteNightB, u_LightPaletteNightG, u_LightPaletteNightR);
+        case 31: return vec4(u_LightPaletteNoonB, u_LightPaletteNoonG, u_LightPaletteNoonR, u_LightPaletteRainDayB);
+        case 32: return vec4(u_LightPaletteRainDayG, u_LightPaletteRainDayR, u_LightPaletteRainMagnitude, u_LightPaletteRainNightB);
+        case 33: return vec4(u_LightPaletteRainNightG, u_LightPaletteRainNightR, u_LightPaletteSunsetB, u_LightPaletteSunsetG);
+        case 34: return vec4(u_LightPaletteSunsetR, u_LightPaletteSunsetWarmth, u_LightRainB, u_LightRainG);
+        case 35: return vec4(u_LightRainI, u_LightRainR, u_MoonGlowStrength, u_MoonGlowTightness);
+        case 36: return vec4(u_MoonIntensity, u_NetherFogDensity, u_NetherFogDistance, u_NightScotopic);
+        case 37: return vec4(u_ScreenBrightness, u_SkyBiomeTint, u_SkyBrightness, u_SkyGradient);
+        case 38: return vec4(u_SunGlowStrength, u_SunGlowTightness, u_SunIntensity, u_SunsetBandHeight);
+        case 39: return vec4(u_SunsetBandWidth, u_SunsetLightWarmth, u_SunsetSkyWarmth, u_SunsetTemp);
+        case 40: return vec4(u_TwilightSpan, 0.0, 0.0, 0.0);
     }
     return vec4(0.0);
 }
