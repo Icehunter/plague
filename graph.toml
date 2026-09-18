@@ -191,7 +191,7 @@ enabled_if = "PLAGUE_GI_DEBUG != 0"
 
 [targets.giRayHits]
 kind = "buffer"
-stride_bytes = 32
+stride_bytes = 36
 count = 65536
 enabled_if = "PLAGUE_GI_DEBUG != 0"
 
@@ -203,7 +203,7 @@ enabled_if = "PLAGUE_GI_DEBUG != 0"
 
 [targets.giShadowHits]
 kind = "buffer"
-stride_bytes = 32
+stride_bytes = 36
 count = 65536
 enabled_if = "PLAGUE_GI_DEBUG != 0"
 
@@ -2465,7 +2465,7 @@ type = "fullscreen"
 shader = "shaders/post/gi_debug_view.fsh"
 enabled_if = "PLAGUE_GI_DEBUG != 0"
 blend = "translucent"
-inputs = ["giBounceRaw"]
+inputs = ["giBounceRaw", "builtin.gAlbedo"]
 outputs = ["builtin.output"]
 
 [[pass]]
