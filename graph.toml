@@ -177,6 +177,47 @@ storage = true
 history = true
 filter = "linear"
 
+# --- Bounce-light test view ------------------------------------------------------------------
+# A 256x256 grid of one bounce ray per cell. The grid is fixed, not a fraction of the screen: the
+# ray count is declared once on the trace pass below and a scaled target would not match it.
+
+
+# Eight floats a ray, 65536 rays: the layout the engine's ray_query pass reads and writes.
+[targets.giRayRequests]
+kind = "buffer"
+stride_bytes = 32
+count = 65536
+enabled_if = "PLAGUE_GI_DEBUG != 0"
+
+[targets.giRayHits]
+kind = "buffer"
+stride_bytes = 32
+count = 65536
+enabled_if = "PLAGUE_GI_DEBUG != 0"
+
+[targets.giShadowRequests]
+kind = "buffer"
+stride_bytes = 32
+count = 65536
+enabled_if = "PLAGUE_GI_DEBUG != 0"
+
+[targets.giShadowHits]
+kind = "buffer"
+stride_bytes = 32
+count = 65536
+enabled_if = "PLAGUE_GI_DEBUG != 0"
+
+[targets.giBounceRaw]
+format = "rgba16f"
+width = 256
+height = 256
+storage = true
+# history = true IS the ping-pong: the resolve reads its own previous frame to average the noise
+# one ray per cell leaves behind.
+history = true
+filter = "linear"
+enabled_if = "PLAGUE_GI_DEBUG != 0"
+
 [targets.waterWaveState]
 kind = "buffer"
 stride_bytes = 16
@@ -606,6 +647,66 @@ outputs = ["sceneHdrUnfogged"]
 # resolve_hdr is the name Fornax expects for the pass that reads render distance, debug view and
 # active light. It runs right after material resolve and reads the same depth. It just copies its
 # input through when fog is off, on sky, or for other debug views.
+[[pass]]
+# Bounce-light test view. Seeded here because the G-buffer is complete and the bounce needs its
+# depth and normal; the trace and the resolve follow before anything reads the colour.
+name = "gi_seed_rays"
+type = "compute"
+shader = "shaders/compute/gi_seed_rays.comp"
+enabled_if = "PLAGUE_GI_DEBUG != 0"
+# No local_size: a buffer-only output has no extent to derive a dispatch from, so the count is
+# literal and the group size comes from the shader's own layout.
+dispatch = [256, 1, 1]
+inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal"]
+outputs = ["giRayRequests"]
+
+[[pass]]
+# No shader and no hardware named: the engine routes the batch to the best traversal the machine
+# has, so the same declaration is answered by mesh tracing on one machine and a voxel march on
+# another. min_tier is left off, so any tier may answer.
+name = "gi_trace"
+type = "ray_query"
+enabled_if = "PLAGUE_GI_DEBUG != 0"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+
+[pass.ray_query]
+kind = "closest_hit"
+rays = 65536
+
+[[pass]]
+name = "gi_shadow_seed"
+type = "compute"
+shader = "shaders/compute/gi_shadow_seed.comp"
+enabled_if = "PLAGUE_GI_DEBUG != 0"
+dispatch = [256, 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits"]
+outputs = ["giShadowRequests"]
+
+[[pass]]
+# Visibility, not closest hit: this asks whether anything stands between the hit and the sun, so a
+# traversal may stop at the first thing it meets instead of looking for the nearest.
+name = "gi_shadow_trace"
+type = "ray_query"
+enabled_if = "PLAGUE_GI_DEBUG != 0"
+inputs = ["giShadowRequests"]
+outputs = ["giShadowHits"]
+
+[pass.ray_query]
+kind = "visibility"
+rays = 65536
+
+[[pass]]
+name = "gi_resolve"
+type = "compute"
+shader = "shaders/compute/gi_resolve.comp"
+enabled_if = "PLAGUE_GI_DEBUG != 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "giRayHits", "giShadowHits", "builtin.blockAtlas",
+          "giBounceRaw.history", "builtin.gMotion", "builtin.depth", "atmoSkyView", "giRayRequests"]
+outputs = ["giBounceRaw"]
+
 [[pass]]
 name = "resolve_hdr"
 type = "fullscreen"
@@ -2357,6 +2458,15 @@ local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "voxelSectionState", "voxelSourceSummary"]
 outputs = ["voxelSourceStatus"]
+
+[[pass]]
+name = "gi_debug_view"
+type = "fullscreen"
+shader = "shaders/post/gi_debug_view.fsh"
+enabled_if = "PLAGUE_GI_DEBUG != 0"
+blend = "translucent"
+inputs = ["giBounceRaw"]
+outputs = ["builtin.output"]
 
 [[pass]]
 name = "voxel_source_diagnostic"

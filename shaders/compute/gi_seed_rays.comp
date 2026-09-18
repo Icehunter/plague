@@ -1,0 +1,78 @@
+#version 450
+
+// One bounce ray per cell of a 256x256 grid laid over the screen, written straight into the
+// engine's request layout: 8 floats a ray, origin xyz + tMin, then direction xyz + tMax.
+//
+// Origins are CAMERA-RELATIVE, the frame u_InvProjModelView hands back. The engine rebases them
+// into whichever tier answers. A world-space origin traces a scene displaced by that tier's grid
+// step, so every hit lands on real geometry in the wrong place with no error anywhere.
+
+#define PLAGUE_GI_DEBUG 0 //[0 1] compile "Test View: Bounce Light" {0="Off" 1="On"}
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Bindings: 0 globals, 1 packOptions (engine-injected), 2 depth, 3 gNormal, 4 the requests.
+// Builtins are sampled, not storage images: a compute pass binds a texture target the same way a
+// fullscreen one does.
+layout(set = 0, binding = 2) uniform sampler2D u_Depth;
+layout(set = 0, binding = 3) uniform sampler2D u_GNormal;
+layout(std430, set = 0, binding = 4) buffer GiRayRequests {
+    vec4 words[];
+} requests;
+
+const uint PLAGUE_GI_SIDE = 256u;
+// A bounce reaching past this adds almost nothing at one sample per cell, and every extra block is
+// traversal the whole grid pays for.
+const float PLAGUE_GI_REACH_BLOCKS = 48.0;
+
+float plagueGiHash(uint n) {
+    n = (n << 13u) ^ n;
+    n = n * (n * n * 15731u + 789221u) + 1376312589u;
+    return float(n & 0x7FFFFFFFu) / float(0x7FFFFFFF);
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= PLAGUE_GI_SIDE * PLAGUE_GI_SIDE) return;
+
+    vec2 cell = vec2(float(index % PLAGUE_GI_SIDE), float(index / PLAGUE_GI_SIDE));
+    vec2 uv = (cell + 0.5) / float(PLAGUE_GI_SIDE);
+
+    float depth = texture(u_Depth, uv).r;
+    vec3 n = texture(u_GNormal, uv).xyz;
+
+    // Sky, or a pixel whose normal never got written. The direction still has to be well formed:
+    // a zero-length one is a caller bug to the engine's kernel rather than a miss. A tMax of zero
+    // is what says this ray wants no trace.
+    if (depth <= 0.0 || dot(n, n) <= 1e-6) {
+        requests.words[index * 2u] = vec4(0.0);
+        requests.words[index * 2u + 1u] = vec4(0.0, 1.0, 0.0, 0.0);
+        return;
+    }
+
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 world = u_InvProjModelView * clip;
+    vec3 origin = world.xyz / world.w;
+    vec3 normal = normalize(n);
+
+    // Cosine-weighted hemisphere about the normal, by Malley's method: a uniform disc lifted onto
+    // the hemisphere. That is the density a diffuse bounce wants, so the resolve needs no weight.
+    vec3 up = abs(normal.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent = normalize(cross(up, normal));
+    vec3 bitangent = cross(normal, tangent);
+    // Moves every frame, so the noise averages out over time instead of standing still.
+    uint seed = index * 747796405u + uint(u_FrameState.x) * 2891336453u;
+    float radius = sqrt(plagueGiHash(seed));
+    float angle = plagueGiHash(seed ^ 0x9E3779B9u) * 6.2831853;
+    vec3 direction = tangent * (radius * cos(angle))
+                   + bitangent * (radius * sin(angle))
+                   + normal * sqrt(max(1.0 - radius * radius, 0.0));
+
+    // Lifted along the normal, not along the ray: a grazing bounce leaves tMin alone and would
+    // re-hit the face it started on.
+    requests.words[index * 2u] = vec4(origin + normal * 0.03, 0.001);
+    requests.words[index * 2u + 1u] = vec4(direction, PLAGUE_GI_REACH_BLOCKS);
+}

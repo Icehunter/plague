@@ -1,0 +1,141 @@
+#version 450
+
+// One bounce of light: the block texture at each hit, kept only where the sun reaches that hit.
+//
+// Two rays per cell. The first says what the bounce landed on, the second whether the sun reaches
+// it. What is left is the colour that surface sends back.
+
+#define PLAGUE_GI_DEBUG 0 //[0 1] compile "Test View: Bounce Light" {0="Off" 1="On"}
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax:ray_answer.glsl>
+#moj_import <fornax_runtime:light_options.glsl>
+#define PLAGUE_ATMO_READS_SKYVIEW
+#moj_import <fornax_runtime:atmo_lut.glsl>
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Bindings follow the pass's declaration order, inputs then outputs: 0 globals, 1 packOptions
+// (both engine-injected), 2 the bounce hits, 3 the sun hits, 4 the atlas, 5 last frame's result,
+// 6 motion, 7 depth, 8 the sky table, 9 the bounce rays, 10 the output. Inputs are APPENDED, never
+// inserted: an inserted one re-points every binding after it with no error anywhere.
+layout(std430, set = 0, binding = 2) readonly buffer GiRayHits {
+    uint words[];
+} hits;
+layout(std430, set = 0, binding = 3) readonly buffer GiShadowHits {
+    uint words[];
+} sun;
+layout(set = 0, binding = 4) uniform sampler2D u_BlockAtlas;
+// A storage target binds as a storage image, not a sampler, so the history is read by texel. There
+// is no filtering here: the reprojected cell is rounded to one.
+layout(rgba16f, set = 0, binding = 5) uniform readonly image2D u_History;
+layout(set = 0, binding = 6) uniform sampler2D u_Motion;
+layout(set = 0, binding = 7) uniform sampler2D u_Depth;
+layout(rgba16f, set = 0, binding = 8) uniform readonly image2D u_SkyView;
+layout(std430, set = 0, binding = 9) readonly buffer GiRayRequests {
+    vec4 words[];
+} bounce;
+layout(rgba16f, set = 0, binding = 10) uniform writeonly image2D u_OutBounce;
+
+const uint PLAGUE_GI_SIDE = 256u;
+// Word offsets inside one 8-word hit record. Appending to the record is safe; inserting moves
+// every later field with nothing to report it.
+const uint PLAGUE_GI_HIT_WORDS = 8u;
+const uint PLAGUE_GI_WORD_DISTANCE = 0u;
+const uint PLAGUE_GI_WORD_FLAGS = 1u;
+const uint PLAGUE_GI_WORD_ATLAS_UV = 3u;
+const uint PLAGUE_GI_WORD_NORMAL = 4u;
+const uint PLAGUE_GI_WORD_TIER = 7u;
+const float PLAGUE_GI_PI = 3.14159265358979;
+const uint PLAGUE_GI_FLAG_UV_KNOWN = 1u << 12;
+
+vec4 plagueAtmoFetchSkyView(vec2 uv) {
+    ivec2 i0, i1;
+    vec2 f;
+    plagueAtmoBilinearSetup(uv, PLAGUE_ATMO_SKYVIEW_SIZE, i0, i1, f);
+    return plagueAtmoBilinearMix(imageLoad(u_SkyView, i0), imageLoad(u_SkyView, ivec2(i1.x, i0.y)),
+                                 imageLoad(u_SkyView, ivec2(i0.x, i1.y)), imageLoad(u_SkyView, i1), f);
+}
+// How much of each frame's new sample survives the blend. One ray per cell is far too noisy to
+// look at on its own, and this many frames of averaging is what makes a shape out of it; higher
+// and the noise stays, lower and light drags behind a moving camera.
+const float PLAGUE_GI_BLEND = 0.15;
+// Two surfaces this far apart in depth are not the same surface, so the older one is not history
+// for the newer: past this the sample starts again rather than smearing one onto the other.
+const float PLAGUE_GI_DEPTH_REJECT = 0.02;
+
+// This frame's sample, blended with wherever this cell's surface was last frame.
+vec3 plagueGiAccumulate(vec3 current, vec2 uv, float depth) {
+    vec2 previousUv = uv - texture(u_Motion, uv).rg;
+    if (!(previousUv.x >= 0.0 && previousUv.x <= 1.0
+            && previousUv.y >= 0.0 && previousUv.y <= 1.0)) {
+        return current;
+    }
+    if (abs(depth - texture(u_Depth, previousUv).r) > PLAGUE_GI_DEPTH_REJECT) {
+        return current;
+    }
+    ivec2 previousCell = ivec2(clamp(previousUv * float(PLAGUE_GI_SIDE), vec2(0.0),
+            vec2(float(PLAGUE_GI_SIDE) - 1.0)));
+    return mix(imageLoad(u_History, previousCell).rgb, current, PLAGUE_GI_BLEND);
+}
+
+void main() {
+    uvec2 coord = gl_GlobalInvocationID.xy;
+    if (coord.x >= PLAGUE_GI_SIDE || coord.y >= PLAGUE_GI_SIDE) return;
+    vec2 uv = (vec2(coord) + 0.5) / float(PLAGUE_GI_SIDE);
+    float depth = texture(u_Depth, uv).r;
+    // Row-major, matching the order the seed pass writes its rays in.
+    uint index = coord.y * PLAGUE_GI_SIDE + coord.x;
+    ivec2 cell = ivec2(coord);
+    uint base = index * PLAGUE_GI_HIT_WORDS;
+
+    // The tier first. A buffer nothing traced reads back all zeros, zero is a legal distance and a
+    // negative distance is a legal answer, so no other word can tell an answer from untouched
+    // memory. Red marks the records nothing answered, which is what an unrun trace looks like.
+    uint tier = hits.words[base + PLAGUE_GI_WORD_TIER];
+    if (int(tier) == FORNAX_RAY_TIER_NONE) {
+        imageStore(u_OutBounce, cell, vec4(1.0, 0.0, 0.0, 1.0));
+        return;
+    }
+
+    vec3 sunDir = dot(u_SkyCelestial.xyz, u_SkyCelestial.xyz) > 1e-6
+            ? normalize(u_SkyCelestial.xyz) : vec3(0.0, 1.0, 0.0);
+
+    float distance = uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_DISTANCE]);
+    uint flags = hits.words[base + PLAGUE_GI_WORD_FLAGS];
+    // A bounce that met nothing escaped to the sky, and carries the sky's own colour in the
+    // direction it left. Outdoors that is most of the fill light, so it is not a black miss.
+    if (distance < 0.0 || (flags & PLAGUE_GI_FLAG_UV_KNOWN) == 0u) {
+        vec4 request = bounce.words[index * 2u + 1u];
+        vec3 sky = plagueAtmoSkyView(normalize(request.xyz), sunDir, plagueAtmoCameraRadius()).rgb;
+        imageStore(u_OutBounce, cell, vec4(plagueGiAccumulate(sky, uv, depth), 1.0));
+        return;
+    }
+
+    vec2 atlasUv = unpackHalf2x16(hits.words[base + PLAGUE_GI_WORD_ATLAS_UV]);
+    // Level zero: a bounce has no screen-space footprint to pick a mip from, and a filtered atlas
+    // fetch across sprite borders reads a neighbouring block's texture.
+    vec3 albedo = textureLod(u_BlockAtlas, atlasUv, 0.0).rgb;
+
+    // The sun ray. Its own tier word is read first for the same reason as the bounce's. Unanswered
+    // counts as shadowed: a surface no ray reached must not be painted lit.
+    uint sunTier = sun.words[base + PLAGUE_GI_WORD_TIER];
+    float sunDistance = uintBitsToFloat(sun.words[base + PLAGUE_GI_WORD_DISTANCE]);
+    // A miss on a sun ray is the good case: nothing stood between the hit and the sun.
+    float lit = (int(sunTier) != FORNAX_RAY_TIER_NONE && sunDistance < 0.0) ? 1.0 : 0.0;
+    // What a matte surface sends back: albedo over pi, times the light landing on it. The light
+    // landing is the sun's radiance times the cosine at that surface, so a face the sun rakes
+    // across returns far less than one facing it. Both terms were missing, which is why a snow
+    // field came back at full sun brightness.
+    vec3 hitNormal = vec3(
+            uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_NORMAL]),
+            uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_NORMAL + 1u]),
+            uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_NORMAL + 2u]));
+    // The zero vector means the hit names no face. Normalising it gives NaN, so a faceless hit
+    // takes the cosine of a surface square to the sun rather than poisoning the average.
+    float cosine = dot(hitNormal, hitNormal) > 1e-6
+            ? max(dot(normalize(hitNormal), sunDir), 0.0) : 1.0;
+    vec3 carried = albedo * (lit * cosine / PLAGUE_GI_PI) * plagueAtmoSunRadiance(sunDir);
+    imageStore(u_OutBounce, cell, vec4(plagueGiAccumulate(carried, uv, depth), 1.0));
+}

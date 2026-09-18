@@ -788,6 +788,9 @@ elements = [
     "PLAGUE_VOXEL_PROFILE",
     "PLAGUE_SHORE_DEBUG",
 
+    "<group:Bounce Light>",
+    "PLAGUE_GI_DEBUG",
+
     "<group:Local Lighting>",
     "PLAGUE_LOCAL_LIGHTING",
     "PLAGUE_LOCAL_EMITTER_SIZE|requires:PLAGUE_LOCAL_LIGHTING",
@@ -903,6 +906,15 @@ Both sides use the same fixed brightness, without Auto Exposure, Bloom or Tonema
 applied.
 
 This view overrides other test views. Turn it Off to see normal lighting again."""
+PLAGUE_GI_DEBUG = """
+A test view for the bounce light: one ray per cell of a coarse grid, painting the block texture \
+each ray reached.
+
+Every ray leaves the surface you can see and stops at the first thing it meets, so this is what \
+the bounce finds, not the light it carries back. Blocky because one ray per cell is what a first \
+bounce costs, and the blocks are the sample count made visible. Red means no part of the machine \
+answered that ray. Black means the ray met nothing."""
+
 PLAGUE_VOXEL_COVERAGE = """
 A test view painted onto water, showing what the World Reflections grid can see. It is not a \
 reflection.

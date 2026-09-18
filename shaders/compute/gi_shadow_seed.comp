@@ -1,0 +1,71 @@
+#version 450
+
+// A sun ray from every point the bounce landed on, so the resolve knows which hits are lit.
+//
+// The bounce itself says what a surface is made of. What it sends back also depends on whether the
+// sun reaches it, and that is a second ray: from the hit, toward the sun, asking only whether
+// anything is in the way.
+
+#define PLAGUE_GI_DEBUG 0 //[0 1] compile "Test View: Bounce Light" {0="Off" 1="On"}
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax:ray_answer.glsl>
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Bindings: 0 globals, 1 packOptions (engine-injected), 2 the bounce rays, 3 their hits,
+// 4 the sun rays.
+layout(std430, set = 0, binding = 2) readonly buffer GiRayRequests {
+    vec4 words[];
+} bounce;
+layout(std430, set = 0, binding = 3) readonly buffer GiRayHits {
+    uint words[];
+} hits;
+layout(std430, set = 0, binding = 4) buffer GiShadowRequests {
+    vec4 words[];
+} shadow;
+
+const uint PLAGUE_GI_SIDE = 256u;
+const uint PLAGUE_GI_HIT_WORDS = 8u;
+const uint PLAGUE_GI_WORD_DISTANCE = 0u;
+const uint PLAGUE_GI_WORD_NORMAL = 4u;
+const uint PLAGUE_GI_WORD_TIER = 7u;
+// Far enough to leave any blocker in the window behind, short enough that a sun ray costs less
+// than the bounce that spawned it.
+const float PLAGUE_GI_SUN_REACH_BLOCKS = 96.0;
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= PLAGUE_GI_SIDE * PLAGUE_GI_SIDE) return;
+    uint base = index * PLAGUE_GI_HIT_WORDS;
+
+    // A ray with no length asks for no trace, which is what an unanswered or missed bounce wants:
+    // there is no surface to light.
+    uint tier = hits.words[base + PLAGUE_GI_WORD_TIER];
+    float distance = uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_DISTANCE]);
+    if (int(tier) == FORNAX_RAY_TIER_NONE || distance < 0.0) {
+        shadow.words[index * 2u] = vec4(0.0);
+        shadow.words[index * 2u + 1u] = vec4(0.0, 1.0, 0.0, 0.0);
+        return;
+    }
+
+    vec4 originAndMin = bounce.words[index * 2u];
+    vec4 directionAndMax = bounce.words[index * 2u + 1u];
+    // Distances come back along the NORMALISED direction, and the seeded one is not normalised.
+    vec3 hitPoint = originAndMin.xyz + normalize(directionAndMax.xyz) * distance;
+
+    vec3 normal = vec3(
+            uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_NORMAL]),
+            uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_NORMAL + 1u]),
+            uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_NORMAL + 2u]));
+    // The zero vector means the hit names no face. Normalising it gives NaN, and a NaN ray is
+    // unspecified, so the lift falls back to the direction the sun comes from.
+    vec3 lift = dot(normal, normal) > 1e-6 ? normalize(normal) : vec3(0.0, 1.0, 0.0);
+
+    vec3 sunDir = dot(u_SkyCelestial.xyz, u_SkyCelestial.xyz) > 1e-6
+            ? normalize(u_SkyCelestial.xyz) : vec3(0.0, 1.0, 0.0);
+
+    shadow.words[index * 2u] = vec4(hitPoint + lift * 0.03, 0.001);
+    shadow.words[index * 2u + 1u] = vec4(sunDir, PLAGUE_GI_SUN_REACH_BLOCKS);
+}
