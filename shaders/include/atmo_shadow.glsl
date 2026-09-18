@@ -44,7 +44,7 @@ vec2 plagueAtmoShadowAt(vec3 posBlocks, vec3 lightDir) {
     // really captured, long side toward the sun and all.
     float edge = max(abs(ndc.x), abs(ndc.y));
     float open = smoothstep(0.75, 1.0, edge);
-    return vec2(mix(plagueShadowLookup(posBlocks, uv, ndc.z), 1.0, open), 1.0);
+    return vec2(mix(plagueShadowLookupPoint(posBlocks, uv, ndc.z), 1.0, open), 1.0);
 }
 
 #endif

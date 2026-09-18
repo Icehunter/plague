@@ -42,6 +42,32 @@ float plagueShadowTexel(ivec2 texel, float reference, float rtWeight, out float 
     return step(reference, texelFetch(SHADOW_RAW_MAP, texel, 0).r);
 }
 
+// One tap, for a volumetric march. plagueShadowLookup below rebuilds the hardware comparison
+// sampler by hand because a surface needs the depth union before the compare, which costs four RT
+// reads and four entity reads in place of one tap. A march does not: its checks are spread over
+// eight slots by the dither and land in haze. Outside RT coverage this is the hardware lookup.
+float plagueShadowLookupPoint(vec3 receiver, vec2 uv, float reference) {
+#if RT_SHADOWS
+    float weight = plagueShadowReceiverWeight(receiver);
+    if (weight > 0.0) {
+        ivec2 size = textureSize(SHADOW_RAW_MAP, 0);
+        ivec2 texel = clamp(ivec2(uv * vec2(size)), ivec2(0), size - 1);
+        float selected;
+        float visibility = plagueShadowTexel(texel, reference, weight, selected);
+        PLAGUE_SHADOW_RECORD_COVERAGE(selected);
+        return visibility;
+    }
+#endif
+    PLAGUE_SHADOW_RECORD_COVERAGE(0.0);
+#ifdef SHADOW_COMPARISON_MAP
+    return textureLod(SHADOW_COMPARISON_MAP, vec3(uv, reference), 0.0);
+#else
+    ivec2 size = textureSize(SHADOW_RAW_MAP, 0);
+    ivec2 texel = clamp(ivec2(uv * vec2(size)), ivec2(0), size - 1);
+    return step(reference, texelFetch(SHADOW_RAW_MAP, texel, 0).r);
+#endif
+}
+
 float plagueShadowLookup(vec3 receiver, vec2 uv, float reference) {
     float weight = plagueShadowReceiverWeight(receiver);
 #ifdef SHADOW_COMPARISON_MAP
