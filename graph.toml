@@ -187,25 +187,25 @@ filter = "linear"
 kind = "buffer"
 stride_bytes = 32
 count = 65536
-enabled_if = "PLAGUE_GI_DEBUG != 0"
+enabled_if = "PLAGUE_GI != 0"
 
 [targets.giRayHits]
 kind = "buffer"
 stride_bytes = 36
 count = 65536
-enabled_if = "PLAGUE_GI_DEBUG != 0"
+enabled_if = "PLAGUE_GI != 0"
 
 [targets.giShadowRequests]
 kind = "buffer"
 stride_bytes = 32
 count = 65536
-enabled_if = "PLAGUE_GI_DEBUG != 0"
+enabled_if = "PLAGUE_GI != 0"
 
 [targets.giShadowHits]
 kind = "buffer"
 stride_bytes = 36
 count = 65536
-enabled_if = "PLAGUE_GI_DEBUG != 0"
+enabled_if = "PLAGUE_GI != 0"
 
 [targets.giBounceRaw]
 format = "rgba16f"
@@ -216,7 +216,16 @@ storage = true
 # one ray per cell leaves behind.
 history = true
 filter = "linear"
-enabled_if = "PLAGUE_GI_DEBUG != 0"
+
+# What the world resolve reads, after gi_blur has spread each cell across its neighbours.
+# Ungated on purpose: the resolve names it unconditionally, and a gated target read by an ungated
+# pass is refused at load. Off, the pass that fills it never runs and it reads as black.
+[targets.giBounce]
+format = "rgba16f"
+width = 256
+height = 256
+storage = true
+filter = "linear"
 
 [targets.waterWaveState]
 kind = "buffer"
@@ -641,7 +650,7 @@ shader = "shaders/post/gbuffer_resolve.fsh"
 # rtShadowComposite (u_Input18) holds direct and wide ambient shadow from one combined pass;
 # both use the world-position RT/raster handoff through the shared shadow filter.
 # u_Input19 stays reserved (bound to builtin.depth), so no input numbers shift.
-inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "builtin.depth", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial", "rtShadowComposite", "builtin.depth"]
+inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "builtin.depth", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial", "rtShadowComposite", "builtin.depth", "giBounce"]
 outputs = ["sceneHdrUnfogged"]
 
 # resolve_hdr is the name Fornax expects for the pass that reads render distance, debug view and
@@ -653,7 +662,7 @@ outputs = ["sceneHdrUnfogged"]
 name = "gi_seed_rays"
 type = "compute"
 shader = "shaders/compute/gi_seed_rays.comp"
-enabled_if = "PLAGUE_GI_DEBUG != 0"
+enabled_if = "PLAGUE_GI != 0"
 # No local_size: a buffer-only output has no extent to derive a dispatch from, so the count is
 # literal and the group size comes from the shader's own layout.
 dispatch = [256, 1, 1]
@@ -666,7 +675,7 @@ outputs = ["giRayRequests"]
 # another. min_tier is left off, so any tier may answer.
 name = "gi_trace"
 type = "ray_query"
-enabled_if = "PLAGUE_GI_DEBUG != 0"
+enabled_if = "PLAGUE_GI != 0"
 inputs = ["giRayRequests"]
 outputs = ["giRayHits"]
 
@@ -678,7 +687,7 @@ rays = 65536
 name = "gi_shadow_seed"
 type = "compute"
 shader = "shaders/compute/gi_shadow_seed.comp"
-enabled_if = "PLAGUE_GI_DEBUG != 0"
+enabled_if = "PLAGUE_GI != 0"
 dispatch = [256, 1, 1]
 inputs = ["globals", "packOptions", "giRayRequests", "giRayHits"]
 outputs = ["giShadowRequests"]
@@ -688,7 +697,7 @@ outputs = ["giShadowRequests"]
 # traversal may stop at the first thing it meets instead of looking for the nearest.
 name = "gi_shadow_trace"
 type = "ray_query"
-enabled_if = "PLAGUE_GI_DEBUG != 0"
+enabled_if = "PLAGUE_GI != 0"
 inputs = ["giShadowRequests"]
 outputs = ["giShadowHits"]
 
@@ -700,7 +709,7 @@ rays = 65536
 name = "gi_resolve"
 type = "compute"
 shader = "shaders/compute/gi_resolve.comp"
-enabled_if = "PLAGUE_GI_DEBUG != 0"
+enabled_if = "PLAGUE_GI != 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "giRayHits", "giShadowHits", "builtin.blockAtlas",
@@ -2460,12 +2469,22 @@ inputs = ["globals", "voxelSectionState", "voxelSourceSummary"]
 outputs = ["voxelSourceStatus"]
 
 [[pass]]
+name = "gi_blur"
+type = "compute"
+shader = "shaders/compute/gi_blur.comp"
+enabled_if = "PLAGUE_GI != 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "giBounceRaw", "builtin.depth"]
+outputs = ["giBounce"]
+
+[[pass]]
 name = "gi_debug_view"
 type = "fullscreen"
 shader = "shaders/post/gi_debug_view.fsh"
-enabled_if = "PLAGUE_GI_DEBUG != 0"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GI_VIEW != 0"
 blend = "translucent"
-inputs = ["giBounceRaw", "builtin.gAlbedo", "builtin.depth"]
+inputs = ["giBounce", "builtin.gAlbedo", "builtin.depth"]
 outputs = ["builtin.output"]
 
 [[pass]]

@@ -789,7 +789,8 @@ elements = [
     "PLAGUE_SHORE_DEBUG",
 
     "<group:Bounce Light>",
-    "PLAGUE_GI_DEBUG",
+    "PLAGUE_GI",
+    "PLAGUE_GI_VIEW|requires:PLAGUE_GI",
 
     "<group:Local Lighting>",
     "PLAGUE_LOCAL_LIGHTING",
@@ -906,14 +907,21 @@ Both sides use the same fixed brightness, without Auto Exposure, Bloom or Tonema
 applied.
 
 This view overrides other test views. Turn it Off to see normal lighting again."""
-PLAGUE_GI_DEBUG = """
-A test view for the bounce light: one ray per cell of a coarse grid, painting the block texture \
-each ray reached.
+PLAGUE_GI = """
+Light that bounces: one ray per cell of a coarse grid, leaving each surface you can see and \
+carrying back what it finds.
 
-Every ray leaves the surface you can see and stops at the first thing it meets, so this is what \
-the bounce finds, not the light it carries back. Blocky because one ray per cell is what a first \
-bounce costs, and the blocks are the sample count made visible. Red means no part of the machine \
-answered that ray. Black means the ray met nothing."""
+A second ray asks whether the sun reaches where the first one landed, so a surface in shade sends \
+back nothing. Glowing blocks send light whatever the sun does, which is what lights a room.
+
+This takes over from the game's own block light rather than adding to it. That light is a flood \
+fill: it fills a room evenly whatever stands in the way. This light has to get past the walls."""
+
+PLAGUE_GI_VIEW = """
+Paints the bounce light over the screen on its own, without the rest of the frame.
+
+Useful for seeing what the rays actually found. Grainy, because one ray per cell is what a first \
+bounce costs."""
 
 PLAGUE_VOXEL_COVERAGE = """
 A test view painted onto water, showing what the World Reflections grid can see. It is not a \

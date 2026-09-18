@@ -4,6 +4,7 @@
 #moj_import <fornax_runtime:color.glsl>
 #moj_import <fornax_runtime:light_and_ambient_colors.glsl>
 #moj_import <fornax_runtime:light_options.glsl>
+#define PLAGUE_GI 0 //[0 1] compile "Bounce Light" {0="Off" 1="On"}
 #moj_import <fornax_runtime:shadow_options.glsl>
 #moj_import <fornax_runtime:shadow_debug.glsl>
 #moj_import <fornax_runtime:atmo_debug_options.glsl>
@@ -74,6 +75,9 @@ uniform sampler2D u_Input14; // moonNormal, tangent-space relief for the same pr
 // Sharing this binding keeps the debug arms inside Metal's sixteen-sampler limit.
 uniform sampler2D u_Input15;
 #define CLOUD_SHADOW_MASK u_Input15
+// Appended after every existing input; these are positional and an inserted one re-points every
+// later sampler with no error anywhere.
+#define GI_BOUNCE u_Input20
 uniform sampler2D u_Input16; // atmoSkyView, the marched dome (atmo_lut.glsl)
 #define ATMO_SKY_VIEW u_Input16
 
@@ -90,6 +94,7 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 // Earlier pass output: r/g = direct/wide ambient visibility; b = the seabed caustic query.
 // All use the world-position receiver handoff before their shared filtering.
 uniform sampler2D u_Input18; // rtShadowComposite
+uniform sampler2D u_Input20; // giBounce
 #define RT_SHADOW_COMPOSITE u_Input18
 // u_Input19 stays reserved (bound to builtin.depth) so no input numbers shift.
 // Must follow NOISE_TEX: PLAGUE_CLOUD_NOISE expands inline where clouds.glsl calls it, so an
@@ -908,6 +913,16 @@ int debugView = int(u_Param3 + 0.5);
 
     vec3 localRadiance = vec3(0.0);
     float localBlockLight = blockLight;
+#if PLAGUE_GI != 0
+    // Traced light replaces vanilla's block light rather than adding to it. That lightmap is a
+    // flood fill: it fills a room evenly whatever stands in the way, so a surface behind a wall
+    // reads as lit. The bounce measures the same light against the geometry, and the two together
+    // would light everything twice.
+    localBlockLight = 0.0;
+    // The grid holds light ARRIVING at the surface. A matte surface sends back its own colour
+    // times that, so the albedo belongs here rather than in the grid.
+    localRadiance += albedo * texture(GI_BOUNCE, texCoord).rgb;
+#endif
 #if PLAGUE_LOCAL_LIGHTING != 0
     localRadiance=texture(CLOUD_SHADOW_MASK,texCoord).rgb;
 #endif

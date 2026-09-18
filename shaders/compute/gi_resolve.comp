@@ -5,7 +5,7 @@
 // Two rays per cell. The first says what the bounce landed on, the second whether the sun reaches
 // it. What is left is the colour that surface sends back.
 
-#define PLAGUE_GI_DEBUG 0 //[0 1] compile "Test View: Bounce Light" {0="Off" 1="On"}
+#define PLAGUE_GI 0 //[0 1] compile "Bounce Light" {0="Off" 1="On"}
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
