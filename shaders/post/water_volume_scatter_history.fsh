@@ -17,7 +17,7 @@ layout(std140) uniform u_PassParams {
 };
 
 #define PLAGUE_UNDERWATER 1 //[0 1] compile "Underwater Effects" {0="Off" 1="On"}
-#define WATER_SCATTERING_QUALITY 1 //[0 1 2] compile "Underwater Light Shafts" {0="Off" 1="Balanced" 2="High"}
+#define WATER_SCATTERING_QUALITY 1 //[0 1 2] compile "Underwater Light Shafts" {0="Off" 1="High" 2="Epic"}
 #moj_import <fornax_runtime:water_options.glsl>
 
 // Spatial tolerances are deliberately wider than temporal tolerances: neighboring half-resolution

@@ -80,13 +80,13 @@ layout(std140) uniform u_PassParams {
     vec4  u_MoonSpriteRect;
 };
 
-#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Best Look" 2="Fastest"}
+#define SSR_QUALITY 2 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
 
-#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Plain" 1="Shaded" 2="Reflective"}
+#define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 #define PLAGUE_WATER_REFLECTION_DEBUG 0 //[0 1 2 3 4] compile "Test View: Water Reflections" {0="Off" 1="Roughness" 2="Reflection Confidence" 3="Backup Sky" 4="Source Blend"}
 // Byte-identical to clouds.glsl's declaration: the option scanner merges same-name declarations
 // and rejects any mismatch. Read here only to know whether cloudFront has a writer this build.
-#define CLOUDS_VOLUMETRIC 1 //[0 1] compile "3D Clouds" {0="Off" 1="On"}
+#define CLOUDS_VOLUMETRIC 1 //[0 1] compile "Volumetric Clouds" {0="Off" 1="On"}
 #define WATER_FOAM //[] compile "Shoreline Foam"
 // Must match terrain.vsh/terrain.fsh byte-identically: the settled-surface classification below
 // undoes the wave lift before classifying, and needs to know whether the vertex stage applied one.

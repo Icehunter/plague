@@ -5,7 +5,7 @@ const float PLAGUE_INTERACTION_FIELD_SIZE = 64.0;
 
 vec4 plagueInteractionSample(sampler2D interactionTexture, vec3 worldPos,
                              vec2 previousCentre, int interactionMode) {
-    float interactionTextureScale = interactionMode == 2 ? 0.5 : 1.0;
+    float interactionTextureScale = interactionMode == 1 ? 0.5 : 1.0;
     vec2 uv = 0.5 + (worldPos.xz - previousCentre) / PLAGUE_INTERACTION_FIELD_SIZE;
     vec2 edgeDistance = min(uv, vec2(1.0) - uv);
     float inside = step(0.0, min(edgeDistance.x, edgeDistance.y));

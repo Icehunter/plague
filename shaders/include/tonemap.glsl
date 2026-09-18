@@ -23,7 +23,7 @@
 //
 // Operator 1 is the default: the pack's own filmic curve (Lottes 2016 parametric family plus three
 // readability aids), constants fitted by tools/fit_tonemap_parity.py against the committed fixture.
-#define TONEMAP_OPERATOR 1 //[0 1 2 3] compile "Colour Style" {0="Raw" 1="Smooth" 2="Natural" 3="Simple"}
+#define TONEMAP_OPERATOR 1 //[0 1 2 3] compile "Tonemap" {0="None (clip)" 1="Filmic" 2="ACES" 3="Reinhard"}
 
 // GLOBAL brightness compensation. Whenever a pipeline change makes the whole frame genuinely
 // brighter or darker, the correction lands HERE rather than being smeared back through every colour
@@ -45,10 +45,10 @@
 // Past mistake, do not repeat: retargeting this to vanilla's mean luminance shipped once and made
 // orange terracotta read as olive/khaki in game. tools/verify_color_decode.py's hue/saturation
 // check exists specifically to catch that regression again.
-#define u_Exposure 0.90 //[0.10..3.00 step 0.05] runtime "Brightness"
-#define u_TmContrast 1.05 //[0.50..2.00 step 0.05] runtime "Colour Style Contrast"
+#define u_Exposure 0.90 //[0.10..3.00 step 0.05] runtime "Exposure"
+#define u_TmContrast 1.05 //[0.50..2.00 step 0.05] runtime "Tonemap Contrast"
 #define u_TmWhitePath 1.00 //[0.10..1.90 step 0.05] runtime "Highlight Fade"
-#define u_TmDarkDesaturation 0.25 //[0.00..1.00 step 0.05] runtime "Shadow Colour Fade"
+#define u_TmDarkDesaturation 0.25 //[0.00..1.00 step 0.05] runtime "Dark Desaturation"
 
 // How much of that draining the End is spared. The rule above is right for a night in the
 // Overworld: the eye loses colour as the light goes, since rods carry none, so a dark scene really

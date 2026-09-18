@@ -41,7 +41,7 @@
 
 // Read by name by the engine to cancel vanilla clouds (GraphRunner.packOwnsClouds) and by
 // graph.toml to gate every cloud target/pass: an engine contract, not just a pack option.
-#define CLOUDS_VOLUMETRIC 1 //[0 1] compile "3D Clouds" {0="Off" 1="On"}
+#define CLOUDS_VOLUMETRIC 1 //[0 1] compile "Volumetric Clouds" {0="Off" 1="On"}
 
 // March resolution, and only that: a quarter, a half, three quarters or all of the screen, one
 // target pair each, which is why graph.toml splits on `== 0` through `== 3`. Step count is per
@@ -62,7 +62,7 @@
 // the offline fixture, 12.1 ms of which is per-workgroup deck setup and the rest ray marching. Get
 // that time back on u_CloudTier* per deck instead of here: a low tier at Ultra looks better than a
 // high one at Fast.
-#define CLOUD_RESOLUTION 1 //[0 1 2 3] compile "Cloud Sharpness" {0="Fastest" 1="Fast" 2="Sharper" 3="Sharpest"}
+#define CLOUD_RESOLUTION 1 //[0 1 2 3] compile "Cloud Resolution" {0="Low" 1="Medium" 2="High" 3="Epic"}
 
 // Multiple of the derived wind speed below; 0 freezes the deck for screenshots/bisection. Top of
 // range moves a cumulus cell past the viewer in about a quarter in-game hour, a squall line on

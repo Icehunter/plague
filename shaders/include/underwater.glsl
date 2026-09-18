@@ -34,8 +34,8 @@
 // their owning call site — this file only owns their names so the option scanner has one source
 // of truth to redeclare against.
 #define PLAGUE_UNDERWATER 1 //[0 1] compile "Underwater Effects" {0="Off" 1="On"}
-#define WATER_SCATTERING_QUALITY 1 //[0 1 2] compile "Underwater Light Shafts" {0="Off" 1="Balanced" 2="High"}
-#define WATER_CAUSTICS 1 //[0 1] compile "Underwater Light Ripples" {0="Off" 1="On"}
+#define WATER_SCATTERING_QUALITY 1 //[0 1 2] compile "Underwater Light Shafts" {0="Off" 1="High" 2="Epic"}
+#define WATER_CAUSTICS 1 //[0 1] compile "Underwater Caustics" {0="Off" 1="On"}
 #define WATER_VEIL 1 //[0 1] compile "Underwater Haze" {0="Off" 1="On"}
 #define WATER_ABSORPTION_TINT 1 //[0 1] compile "Underwater Tint" {0="Off" 1="On"}
 #define WATER_SUN_TINT 1 //[0 1] compile "Underwater Sun Recolour" {0="Off" 1="On"}

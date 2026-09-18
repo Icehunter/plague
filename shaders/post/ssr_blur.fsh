@@ -33,7 +33,7 @@ layout(std140) uniform u_PassParams {
     vec3  u_SunDirection;
 };
 
-#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="Best Look" 2="Fastest"}
+#define SSR_QUALITY 2 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
 
 // High because a single mirror ray is a sparse lobe estimate; the disocclusion test below is what
 // keeps this from ghosting.

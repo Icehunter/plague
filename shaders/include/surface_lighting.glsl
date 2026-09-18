@@ -10,7 +10,7 @@
 #moj_import <fornax_runtime:end_sky.glsl>
 
 // Fill light needs one direction, so read the sky function, not a lookup table.
-#define SKY_AMBIENT //[] compile "Sky Fill Light"
+#define SKY_AMBIENT //[] compile "Ambient From Sky"
 // Pull toward sun-lit ground, for fill light and guessed-sky reflections. Same brightness either
 // way; zero at night.
 #define u_AmbientBounceWarmth 0.35 //[0.0..1.0 step 0.05] runtime "Ground Bounce Warmth"

@@ -15,7 +15,7 @@
 
 #define PLAGUE_NEBULA_ENABLED //[] compile "Night Nebula"
 
-#define u_NebulaIntensity 1.0 //[0.00..2.00 step 0.05] runtime "Nebula Brightness"
+#define u_NebulaIntensity 1.0 //[0.00..2.00 step 0.05] runtime "Nebula Intensity"
 #define u_NebulaZoom 3.5 //[1.00..5.00 step 0.05] runtime "Nebula Zoom"
 #define u_NebulaAmount 0.5 //[0.15..0.70 step 0.01] runtime "Nebula Amount"
 // Where the hydrogen envelope gives way to the ionised (teal) core, and over how much density.

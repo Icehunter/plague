@@ -399,22 +399,22 @@ float plagueCausticsBounceReceiver(vec3 worldNormal) {
 
 // Neutral at 1.0: a straight multiplier on the caustic term, with room to fade toward subtle or
 // push past physical for taste.
-#define u_CausticStrength 1.0 //[0.7..2.0 step 0.1] runtime "Seafloor Light Strength"
+#define u_CausticStrength 1.0 //[0.7..2.0 step 0.1] runtime "Caustic Strength"
 
 // Shimmer: how much the caustics glint and bloom rather than sitting as a steady web. Paired with
 // its own depth since the effect is a surface phenomenon — deep water sees sharpness averaged out.
-#define u_CausticGlow 1.0 //[0.0..3.0 step 0.1] runtime "Seafloor Light Glow"
-#define u_CausticBounce 1.0 //[0.0..2.0 step 0.1] runtime "Seafloor Light Bounce"
-#define u_CausticGlowDepth 2 //[0..12 step 1] runtime "Seafloor Light Glow Depth"
+#define u_CausticGlow 1.0 //[0.0..3.0 step 0.1] runtime "Caustic Glow"
+#define u_CausticBounce 1.0 //[0.0..2.0 step 0.1] runtime "Caustic Bounce"
+#define u_CausticGlowDepth 2 //[0..12 step 1] runtime "Caustic Glow Depth"
 
 // Size and rate of the caustic web itself. Both are PERCENTAGES of the values the pattern was
 // tuned at, so they read as plain integers on a slider and 100 is the tuned look.
-#define u_CausticScale 100 //[25..200 step 1] runtime "Seafloor Light Size"
-#define u_CausticSpeed 100 //[0..200 step 1] runtime "Seafloor Light Speed"
+#define u_CausticScale 100 //[25..200 step 1] runtime "Caustic Scale"
+#define u_CausticSpeed 100 //[0..200 step 1] runtime "Caustic Speed"
 
 // Caustics are FORMED by the wave surface, so slowing waves should slow the web. On, rate is taken
 // relative to Wave Speed rather than real time; off, the web keeps its own rate. Rate stays live
 // either way.
-#define u_CausticSyncWaves 1 //[0 1] runtime "Seafloor Light Follows Waves" {0="Off" 1="On"}
+#define u_CausticSyncWaves 1 //[0 1] runtime "Caustic Speed Follows Waves" {0="Off" 1="On"}
 
 #endif // PLAGUE_OCEAN_CAUSTICS

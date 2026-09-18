@@ -13,9 +13,9 @@
 // 0.000175 = a ~tenth-noise-texel filament width at the march's 11x plane scale, against
 // builtin.noise's 512x512 resolution (1 texel = 1/512 UV). Must move with that resolution.
 #define PLAGUE_AURORA_NOISE_UV (0.000175 * u_AuroraDetail)
-#define PLAGUE_AURORA_SAMPLES 25 //[10 15 20 25 30 40] compile "Aurora Quality" {10="Fastest" 15="Fast" 20="Balanced" 25="High" 30="Very High" 40="Ultra"}
+#define PLAGUE_AURORA_SAMPLES 25 //[10 15 20 25 30 40] compile "Aurora Quality" {10="Very Low" 15="Low" 20="Medium" 25="High" 30="Epic" 40="Cinematic"}
 #define u_AuroraSize 1.0 //[0.50..2.00 step 0.05] runtime "Aurora Size"
-#define u_AuroraIntensity 1.0 //[0.00..2.00 step 0.05] runtime "Aurora Brightness"
+#define u_AuroraIntensity 1.0 //[0.00..2.00 step 0.05] runtime "Aurora Intensity"
 // Where along the curtain each emission line takes over. See the palette block for the physics.
 #define u_AuroraRedOnset 0.62 //[0.20..1.00 step 0.01] runtime "Aurora Red Height"
 #define u_AuroraRedWidth 0.30 //[0.05..0.80 step 0.01] runtime "Aurora Red Blend"

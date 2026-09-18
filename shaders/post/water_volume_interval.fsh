@@ -11,7 +11,7 @@ uniform sampler2D u_Input2; // builtin.waterNormal: xyz normal, a signed water f
 
 // This root does not import underwater.glsl, so it declares the compile options it evaluates.
 #define PLAGUE_UNDERWATER 1 //[0 1] compile "Underwater Effects" {0="Off" 1="On"}
-#define WATER_SCATTERING_QUALITY 1 //[0 1 2] compile "Underwater Light Shafts" {0="Off" 1="Balanced" 2="High"}
+#define WATER_SCATTERING_QUALITY 1 //[0 1 2] compile "Underwater Light Shafts" {0="Off" 1="High" 2="Epic"}
 #moj_import <fornax_runtime:water_options.glsl>
 
 in vec2 texCoord;

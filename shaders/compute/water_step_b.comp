@@ -1,6 +1,6 @@
 #version 450
-#define PLAGUE_WATER_INTERACTION 1 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Best Look" 2="Fastest"}
-#define SURFACE_FLUID_DETAIL 1 //[0 1 2] compile "Water Edge Detail" {0="Off" 1="Standard" 2="Best Look"}
+#define PLAGUE_WATER_INTERACTION 2 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="High" 2="Epic"}
+#define SURFACE_FLUID_DETAIL 1 //[0 1 2] compile "Water Simulation Boundaries" {0="Off" 1="High" 2="Epic"}
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
@@ -32,7 +32,7 @@ float surfaceFluidPressure(ivec2 sampleCoord, ivec2 fluidCoord, ivec2 size,
 
 void main() {
     ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size = ivec2(PLAGUE_WATER_INTERACTION == 2 ? 256 : 512);
+    ivec2 size = ivec2(PLAGUE_WATER_INTERACTION == 1 ? 256 : 512);
     if (any(greaterThanEqual(coord, size))) return;
     vec2 centreDelta = vec2(coord) - 0.5 * vec2(size);
     float radialDistance = length(centreDelta);

@@ -1,5 +1,5 @@
 #version 450
-#define PLAGUE_WATER_INTERACTION 1 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Best Look" 2="Fastest"}
+#define PLAGUE_WATER_INTERACTION 2 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="High" 2="Epic"}
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
@@ -16,9 +16,9 @@ layout(std430, set = 0, binding = 1) buffer WaterWaveState {
 } waveState;
 
 void main() {
-    const float cellsPerBlock = (PLAGUE_WATER_INTERACTION == 2 ? 256.0 : 512.0) / 64.0;
+    const float cellsPerBlock = (PLAGUE_WATER_INTERACTION == 1 ? 256.0 : 512.0) / 64.0;
     bool reset = u_LocalActorFluid.w > 0.5 || length(u_LocalActorMotion.xz) > 16.0;
-    bool updateSimulation = PLAGUE_WATER_INTERACTION != 2
+    bool updateSimulation = PLAGUE_WATER_INTERACTION != 1
             || mod(floor(u_FrameState.x), 2.0) < 0.5 || reset;
     vec2 motionCells = u_LocalActorMotion.xz * cellsPerBlock;
     vec2 accumulated = reset ? vec2(0.0) : waveState.committed.xy - motionCells;

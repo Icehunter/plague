@@ -15,7 +15,7 @@ uniform sampler2DShadow u_Input6; // sunShadowMap
 uniform sampler2D u_Input7; // builtin.noise
 
 #define PLAGUE_UNDERWATER 1 //[0 1] compile "Underwater Effects" {0="Off" 1="On"}
-#define WATER_SCATTERING_QUALITY 1 //[0 1 2] compile "Underwater Light Shafts" {0="Off" 1="Balanced" 2="High"}
+#define WATER_SCATTERING_QUALITY 1 //[0 1 2] compile "Underwater Light Shafts" {0="Off" 1="High" 2="Epic"}
 #moj_import <fornax_runtime:water_options.glsl>
 #moj_import <fornax_runtime:light_and_ambient_colors.glsl>
 #moj_import <fornax_runtime:light_options.glsl>

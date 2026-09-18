@@ -255,7 +255,7 @@ sliders = [
 # Air and sunset controls shape the scattering sky. Sky fill and forward-fog glow retain the
 # shared palette estimates used by ambient lighting, water and translucent geometry.
 [screens.atmosphere]
-title = "Air and Haze"
+title = "Atmosphere"
 elements = [
     "<group:Air>",
     "u_AirDensity",
@@ -517,7 +517,7 @@ elements = [
 ]
 
 [screens.occlusion]
-title = "Corner Shadows"
+title = "Ambient Occlusion"
 elements = [
     "SSAO_ENABLED",
     "SSAO_TAPS|requires:SSAO_ENABLED",
@@ -684,7 +684,7 @@ elements = [
 ]
 
 [screens.materials]
-title = "Surfaces"
+title = "Materials"
 elements = [
     "u_BumpStrength",
     "u_AOStrength",
@@ -717,7 +717,7 @@ elements = [
 ]
 
 [screens.parallax]
-title = "Bumpy Surfaces"
+title = "Parallax"
 elements = [
     "u_PomQuality",
     "u_PomDepth",
@@ -737,7 +737,7 @@ elements = [
 ]
 
 [screens.tonemap]
-title = "Colour and Brightness"
+title = "Tonemapping"
 elements = [
     "TONEMAP_OPERATOR",
     "u_Exposure",
@@ -769,7 +769,7 @@ elements = [
 # their features, each of these read as a normal setting until its tooltip was opened; collected
 # here, the page itself says "these change what you SEE only to help you diagnose".
 [screens.debug]
-title = "Test Views"
+title = "Debug"
 elements = [
     "<group:Aurora>",
     "PLAGUE_DEBUG_AURORA_ONLY",
@@ -830,7 +830,7 @@ cloud pixels."""
 PLAGUE_VOXEL_REFLECTIONS = """
 Lets the game find water reflections from nearby world shapes, including things off screen.
 
-Needs Water Surface set to Reflective and Reflections set to Best Look or Fastest. Light Reach \
+Needs Water Surface set to Reflective and Reflections set to High or Epic. Light Reach \
 (Chunks) and how much of the world is loaded around you limit how much it can find, and small \
 shapes or lighting can look a little different from the real scene. Works above water, on both \
 still water and waves."""
@@ -844,7 +844,7 @@ save the log, then turn it Off. The full pass minus the no-fog pass is roughly w
 the no-fog pass minus the direct-light pass is roughly what extra bounced reflections cost. \
 These are rough differences, not exact costs during normal play.
 
-Needs World Reflections on, and reflective water with Reflections set to Best Look or Fastest."""
+Needs World Reflections on, and reflective water with Reflections set to High or Epic."""
 PLAGUE_LOCAL_LIGHTING = """
 Experimental block-by-block lighting, separate from Minecraft's normal light.
 
@@ -899,7 +899,7 @@ right.
 
 Black means no glow, sky, or a surface this preview doesn't cover. Terrain behind water still \
 counts as terrain, but water, glass and the item in your hand can still draw over the preview. \
-Both sides use the same fixed brightness, without Auto Brightness, Bloom or Colour Style \
+Both sides use the same fixed brightness, without Auto Exposure, Bloom or Tonemap \
 applied.
 
 This view overrides other test views. Turn it Off to see normal lighting again."""
@@ -947,7 +947,7 @@ of brightening them, so this one slider gives you ink lines or chalk ones."""
 u_OutlineConcave = """
 Strength of inside corners: a floor meeting a wall, the back of an alcove.
 
-Below 0 it darkens them instead, which is closer to how light behaves there. Corner Shadows \
+Below 0 it darkens them instead, which is closer to how light behaves there. Ambient Occlusion \
 already shades these corners, so a value above 0 works against it. It starts at 0."""
 
 u_OutlineThickness = """
@@ -1153,13 +1153,13 @@ Boundaries on: without them nothing knows where the water ends."""
 PLAGUE_WATER_INTERACTION = """
 Waves and wakes made by you and by boats.
 
-They spread out from you and linger on the water as you move. Best Look looks sharper and \
-smoother; Fastest is cheaper on your frame rate and a little coarser. No extra mods needed."""
+They spread out from you and linger on the water as you move. Epic looks sharper and \
+smoother; High is cheaper on your frame rate and a little coarser. No extra mods needed."""
 
 SURFACE_FLUID_DETAIL = """
 Stops your waves from crossing onto land or leaking into separate pools of water.
 
-Standard is the default. Best Look follows the water's edges more carefully, at a higher cost \
+High is the default. Epic follows the water's edges more carefully, at a higher cost \
 to your frame rate; Off lets waves pass straight through shorelines."""
 
 PLAGUE_WATER_MESH_DISPLACEMENT = """
@@ -1507,7 +1507,7 @@ SKY_AMBIENT = """
 Lights shaded and shadowed spots with the actual colour of the sky above you.
 
 As the sky turns red at sunset, the light filling in your shadows turns red too, so the two \
-always match. Needs Dynamic Sky to be turned on."""
+always match. Needs Procedural Sky to be turned on."""
 
 u_AmbientBounceWarmth = """
 How much sunlight bounced off the ground around you warms up open-air shadows.
@@ -1727,7 +1727,7 @@ everything bright. The default is a natural, restrained spread."""
 u_Exposure = """
 Overall brightness of the picture.
 
-It works together with Auto Brightness instead of replacing it. The two combine, so this \
+It works together with Auto Exposure instead of replacing it. The two combine, so this \
 setting still matters even while the scene adjusts on its own."""
 
 AUTO_EXPOSURE = """
@@ -1737,21 +1737,21 @@ Caves get brighter and open daylight settles down by itself, smoothly rather tha
 With this off, the fixed Brightness slider is all you get."""
 
 u_AutoExposureMin = """
-The darkest Auto Brightness is allowed to make the picture.
+The darkest Auto Exposure is allowed to make the picture.
 
 Stops a very bright scene, like open sky or lava up close, from being pushed down toward \
 black."""
 
 u_AutoExposureMax = """
-The brightest Auto Brightness is allowed to make the picture.
+The brightest Auto Exposure is allowed to make the picture.
 
 Stops a cave or deep water from being brightened all the way up to daylight, so dark places \
 stay recognisably dark."""
 
 u_ExposureStormDarkening = """
-How much of a storm's darker sky survives Auto Brightness.
+How much of a storm's darker sky survives Auto Exposure.
 
-Auto Brightness normally brightens the picture back up to make up for a darker sky, which can \
+Auto Exposure normally brightens the picture back up to make up for a darker sky, which can \
 make rain and thunder look almost the same as a clear day. Raising this holds some of that \
 darkening back, like your eyes only partly adjusting. 0 turns it off."""
 
@@ -1849,13 +1849,13 @@ covers less ground. Shadows fade out gently near the limit, rather than stopping
 line."""
 
 u_ShadowSoftness = """
-How soft the edges of shadows are, with plain shadows or with Realistic Shadows turned on.
+How soft the edges of shadows are, with plain shadows or with Ray Traced Shadows turned on.
 
-Low gives a crisp edge, high gives a wide, soft edge. Changing Shadow Sharpness does not change \
+Low gives a crisp edge, high gives a wide, soft edge. Changing Shadow Resolution does not change \
 this look."""
 
 u_ShadowStrength = """
-How dark shadows are, with plain shadows or with Realistic Shadows turned on.
+How dark shadows are, with plain shadows or with Ray Traced Shadows turned on.
 
 At 1.0 shadowed ground gets no direct sunlight at all, only light from the sky. Lower lets some \
 sun bleed through, which reads like soft bounced light. Above 1.0 the sky light inside shadows \
@@ -1870,7 +1870,7 @@ where this isn't available, fall back to plain shadows. Shadow Softness, Shadow 
 Shadow Strength apply to both."""
 
 u_RtShadowDistance = """
-Horizontal distance from you to surfaces that get Realistic Shadows, in chunks (16 blocks \
+Horizontal distance from you to surfaces that get Ray Traced Shadows, in chunks (16 blocks \
 each).
 
 The default is 2 chunks (32 blocks). The actual reach is whichever is smaller: this setting, or \
@@ -2044,7 +2044,7 @@ flat like a sticker. Zero turns it off and skips its cost entirely."""
 SSR_WATER_MODE = """
 What the water surface is.
 
-Plain draws it the way the game does by default: a flat textured plane, no waves. Shaded switches \
+Vanilla draws it the way the game does by default: a flat textured plane, no waves. Shaded switches \
 to this pack's surface, with animated waves, foam, light ripples, a sun track and the sky \
 reflected in it. Reflective adds a reflection of everything else on screen on top, so the shore \
 and anything else visible appears in the water as well as the sky.
@@ -2297,7 +2297,7 @@ u_AOStrength = """
 Strength of the fine shading painted into your resource pack's textures: mortar between bricks, \
 the weave of wool, dents in metal.
 
-This pairs with Corner Shadows above: this option gives surfaces their fine texture, while that \
+This pairs with Ambient Occlusion above: this option gives surfaces their fine texture, while that \
 one grounds objects into the scene around them. Does nothing on resource packs without normal-map \
 textures."""
 
@@ -2369,7 +2369,7 @@ afternoon, without changing the actual time of day."""
 u_LightNoonI = """
 How bright midday sunlight is, without changing its colour.
 
-The single strongest control over how bright the world looks. Auto Brightness will claw back part \
+The single strongest control over how bright the world looks. Auto Exposure will claw back part \
 of a large change, so move this one in small steps."""
 
 u_LightNightR = """
@@ -2498,14 +2498,14 @@ How bright the sky and haze are while it is raining, without changing their colo
 PLAGUE_UNDERWATER = """
 The master switch for everything that happens once your view goes under water.
 
-Off leaves plain vanilla water: no fog underwater, no Underwater Light Ripples on the sea floor, \
+Off leaves plain vanilla water: no fog underwater, no Underwater Caustics on the sea floor, \
 no blur, no distortion of your view. Every other option on this page stops doing anything."""
 
 WATER_SCATTERING_QUALITY = """
 Whether sunlight casts visible shafts of light down through the water, and how carefully they are \
 drawn.
 
-Off skips this entirely and costs nothing. Balanced draws it more cheaply; High takes more steps, so \
+Off skips this entirely and costs nothing. High draws it more cheaply; Epic takes more steps, so \
 the shafts keep their shape at a distance instead of breaking into bands."""
 
 u_WaterTintSaturation = """
@@ -2645,14 +2645,14 @@ u_CausticSpeed = """
 How fast the light pattern on the sea floor moves, as a percentage of its tuned speed.
 
 0 freezes it in place. Whether this is measured against real time or against the waves depends \
-on the Seafloor Light Follows Waves switch below."""
+on the Caustic Speed Follows Waves switch below."""
 
 u_CausticSyncWaves = """
 Whether the sea floor light pattern moves with the waves or keeps its own clock.
 
 This light is shaped by the waves at the surface, so while this is on, the default, slowing the \
 waves down also slows the pattern they focus. Turning it off lets the pattern keep its own pace \
-whatever the water is doing. The Seafloor Light Speed slider above still works either way."""
+whatever the water is doing. The Caustic Speed slider above still works either way."""
 
 # --- Sky screen ---------------------------------------------------------------------------------
 
@@ -2850,7 +2850,7 @@ On, the side facing the sun lights up, they cast shade on the ground below them,
 into one puts you inside it. It costs more frame rate than any other setting in the pack."""
 
 CLOUD_RESOLUTION = """
-How sharp clouds look on screen, from Fastest up to Sharpest.
+How sharp clouds look on screen, from Low up to Epic.
 
 Higher looks cleaner. Lower draws clouds smaller and stretches them back up, which looks \
 soft. This costs more than anything else in the pack, so raise it before turning down the \

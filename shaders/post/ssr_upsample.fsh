@@ -1,6 +1,6 @@
 #version 330
 
-// Half-res reflections back to full res. Fast tier only (SSR_QUALITY == 2); Fancy never runs this.
+// Half-res reflections back to full res. High tier only (SSR_QUALITY == 1); Epic never runs this.
 //
 // Joint bilateral upsample: the four half-res texels covering this pixel are weighted by bilinear
 // footprint AND gated on agreeing with this pixel's depth, so a wall's reflection can't bleed onto

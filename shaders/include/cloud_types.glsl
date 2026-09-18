@@ -22,7 +22,7 @@
 // equals PLAGUE_CLOUD_CUMULUS_BASE, so the offset is zero on an unmodded install. Applied as a
 // shift (plagueCloudLowDeckShift) rather than an assignment, to keep the low etage's genera at
 // their relative altitudes once more than cumulus is resolved.
-#define u_CloudAltitude 192.0 //[96.0..384.0 step 4.0] runtime "Cloud Height"
+#define u_CloudAltitude 192.0 //[96.0..384.0 step 4.0] runtime "Cloud Altitude"
 
 // Candidate population. Stable owner ranks are compared with this response, so increasing Amount
 // reveals additional owner-local domes without moving or dilating an already-active cloud.
@@ -62,13 +62,13 @@
 // A tier sets slab steps, step cap and sun taps for THIS deck (plagueCloudTier* below). March
 // resolution stays global on CLOUD_RESOLUTION: all seven genera march into one target, sorted per
 // ray by first-hit distance, and per-deck targets lose that ordering.
-#define u_CloudTierCumulus 2 //[0 1 2 3] runtime "Cumulus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
-#define u_CloudTierStratus 2 //[0 1 2 3] runtime "Stratus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
-#define u_CloudTierStratocumulus 2 //[0 1 2 3] runtime "Stratocumulus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
-#define u_CloudTierNimbostratus 2 //[0 1 2 3] runtime "Nimbostratus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
-#define u_CloudTierAltocumulus 2 //[0 1 2 3] runtime "Altocumulus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
-#define u_CloudTierCirrus 2 //[0 1 2 3] runtime "Cirrus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
-#define u_CloudTierCirrocumulus 2 //[0 1 2 3] runtime "Cirrocumulus Quality" {0="Off" 1="Fastest" 2="Balanced" 3="Best Look"}
+#define u_CloudTierCumulus 2 //[0 1 2 3] runtime "Cumulus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
+#define u_CloudTierStratus 2 //[0 1 2 3] runtime "Stratus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
+#define u_CloudTierStratocumulus 2 //[0 1 2 3] runtime "Stratocumulus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
+#define u_CloudTierNimbostratus 2 //[0 1 2 3] runtime "Nimbostratus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
+#define u_CloudTierAltocumulus 2 //[0 1 2 3] runtime "Altocumulus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
+#define u_CloudTierCirrus 2 //[0 1 2 3] runtime "Cirrus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
+#define u_CloudTierCirrocumulus 2 //[0 1 2 3] runtime "Cirrocumulus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
 
 // Distance over which a deck's budget halves again, in chunks, on the ray's own horizontal reach.
 // A deck 30 blocks overhead still runs kilometres sideways, which a vertical metric cannot see.

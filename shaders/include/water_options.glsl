@@ -30,7 +30,7 @@
 #define u_FoamTextureScale 0.25 //[0.02..0.30 step 0.01] runtime "Foam Pattern Size"
 // World blocks, converted to foam-UV units at the call site so the slider stays intuitive regardless
 // of texture scale.
-#define u_FoamPomDepth 0.15 //[0.0..0.5 step 0.02] runtime "Foam Bump Depth"
+#define u_FoamPomDepth 0.15 //[0.0..0.5 step 0.02] runtime "Foam Parallax Depth"
 
 // --- Light shafts through the water column -----------------------------------------------------------
 #define u_WaterShaftDistance 3 //[1..6 step 1] runtime "Light Shaft Distance (Chunks)"

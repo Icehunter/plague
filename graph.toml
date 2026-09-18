@@ -323,7 +323,7 @@ enabled_if = "SSR_QUALITY != 0"
 [targets.ssrRaw]
 format = "rgba16f"
 scale = 1.0
-enabled_if = "SSR_QUALITY == 1"
+enabled_if = "SSR_QUALITY == 2"
 
 # `filter = "linear"` is mandatory, not decorative: PlaguePackLoadsTest fails any scale<1 target left
 # at NEAREST, since downsampled targets exist to be read back magnified.
@@ -331,7 +331,7 @@ enabled_if = "SSR_QUALITY == 1"
 format = "rgba16f"
 scale = 0.5
 filter = "linear"
-enabled_if = "SSR_QUALITY == 2"
+enabled_if = "SSR_QUALITY == 1"
 
 # Fast's temporal accumulation buffer. The history lives at HALF res, not full: accumulating at full
 # res would mean running the blur at full res, which is the 1.84 ms this tier exists to avoid.
@@ -340,7 +340,7 @@ format = "rgba16f"
 scale = 0.5
 filter = "linear"
 history = true
-enabled_if = "SSR_QUALITY == 2"
+enabled_if = "SSR_QUALITY == 1"
 
 # UNGATED like `ssao`/`bloomFinal`: both SSR tiers write this positional resolve input, and `scale`
 # can't be switched by `enabled_if`, so Fast stays full-res here and ends in an upsample pass instead.
@@ -375,7 +375,7 @@ outputs = []
 name = "ssr_trace_fancy"
 type = "fullscreen"
 shader = "shaders/post/ssr_trace.fsh"
-enabled_if = "SSR_QUALITY == 1"
+enabled_if = "SSR_QUALITY == 2"
 inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHistory.history", "hiz"]
 outputs = ["ssrRaw"]
 
@@ -385,7 +385,7 @@ outputs = ["ssrRaw"]
 name = "ssr_trace_fast"
 type = "fullscreen"
 shader = "shaders/post/ssr_trace.fsh"
-enabled_if = "SSR_QUALITY == 2"
+enabled_if = "SSR_QUALITY == 1"
 inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHistory.history", "hiz"]
 outputs = ["ssrRawHalf"]
 
@@ -395,7 +395,7 @@ outputs = ["ssrRawHalf"]
 name = "ssr_blur"
 type = "fullscreen"
 shader = "shaders/post/ssr_blur.fsh"
-enabled_if = "SSR_QUALITY == 1"
+enabled_if = "SSR_QUALITY == 2"
 inputs = ["ssrRaw", "ssr.history", "builtin.gMotion", "builtin.depth", "builtin.gMaterial", "builtin.gNormal"]
 outputs = ["ssr"]
 
@@ -405,7 +405,7 @@ outputs = ["ssr"]
 name = "ssr_blur_fast"
 type = "fullscreen"
 shader = "shaders/post/ssr_blur.fsh"
-enabled_if = "SSR_QUALITY == 2"
+enabled_if = "SSR_QUALITY == 1"
 inputs = ["ssrRawHalf", "ssrHalf.history", "builtin.gMotion", "builtin.depth", "builtin.gMaterial", "builtin.gNormal"]
 outputs = ["ssrHalf"]
 
@@ -413,7 +413,7 @@ outputs = ["ssrHalf"]
 name = "ssr_upsample"
 type = "fullscreen"
 shader = "shaders/post/ssr_upsample.fsh"
-enabled_if = "SSR_QUALITY == 2"
+enabled_if = "SSR_QUALITY == 1"
 inputs = ["ssrHalf", "builtin.depth", "builtin.gMaterial"]
 outputs = ["ssr"]
 
@@ -2107,7 +2107,7 @@ dispatch = [1, 1, 1]
 name = "water_step_a_quality"
 type = "compute"
 shader = "shaders/compute/water_step_a.comp"
-enabled_if = "PLAGUE_WATER_INTERACTION == 1"
+enabled_if = "PLAGUE_WATER_INTERACTION == 2"
 inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "waterWaveB.history", "waterActors"]
 outputs = ["waterWaveA"]
 dispatch = [16, 16, 1]
@@ -2116,7 +2116,7 @@ dispatch = [16, 16, 1]
 name = "water_step_b_quality"
 type = "compute"
 shader = "shaders/compute/water_step_b.comp"
-enabled_if = "PLAGUE_WATER_INTERACTION == 1"
+enabled_if = "PLAGUE_WATER_INTERACTION == 2"
 inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "waterWaveA", "waterActors"]
 outputs = ["waterWaveB"]
 dispatch = [16, 16, 1]
@@ -2125,7 +2125,7 @@ dispatch = [16, 16, 1]
 name = "water_step_a_performance"
 type = "compute"
 shader = "shaders/compute/water_step_a.comp"
-enabled_if = "PLAGUE_WATER_INTERACTION == 2"
+enabled_if = "PLAGUE_WATER_INTERACTION == 1"
 inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "waterWaveB.history", "waterActors"]
 outputs = ["waterWaveA"]
 dispatch = [8, 8, 1]
@@ -2134,7 +2134,7 @@ dispatch = [8, 8, 1]
 name = "water_step_b_performance"
 type = "compute"
 shader = "shaders/compute/water_step_b.comp"
-enabled_if = "PLAGUE_WATER_INTERACTION == 2"
+enabled_if = "PLAGUE_WATER_INTERACTION == 1"
 inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "waterWaveA", "waterActors"]
 outputs = ["waterWaveB"]
 dispatch = [8, 8, 1]
@@ -2146,7 +2146,7 @@ dispatch = [8, 8, 1]
 name = "water_shore_quality"
 type = "compute"
 shader = "shaders/compute/water_shore.comp"
-enabled_if = "PLAGUE_SHORE_SPILL != 0 && PLAGUE_WATER_INTERACTION == 1"
+enabled_if = "PLAGUE_SHORE_SPILL != 0 && PLAGUE_WATER_INTERACTION == 2"
 inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "packOptions", "waterWaveB",
           "shoreWetness.history", "builtin.noise"]
 outputs = ["shoreWetness"]
@@ -2156,7 +2156,7 @@ dispatch = [32, 32, 1]
 name = "water_shore_performance"
 type = "compute"
 shader = "shaders/compute/water_shore.comp"
-enabled_if = "PLAGUE_SHORE_SPILL != 0 && PLAGUE_WATER_INTERACTION == 2"
+enabled_if = "PLAGUE_SHORE_SPILL != 0 && PLAGUE_WATER_INTERACTION == 1"
 inputs = ["globals", "waterWaveState", "surfaceFluidClipmap", "packOptions", "waterWaveB",
           "shoreWetness.history", "builtin.noise"]
 outputs = ["shoreWetness"]

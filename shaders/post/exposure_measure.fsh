@@ -26,8 +26,8 @@ layout(std140) uniform u_PassParams {
 // Frame-rate dependent (a per-frame blend adapts faster at higher fps); accepted rather than hidden
 // behind a dt correction nothing else here needs. Higher slider = faster, so main() inverts this to
 // a retention factor.
-#define u_ExposureAdaptSpeedDarken 0.04 //[0.0..1.0 step 0.01] runtime "Auto Brightness Speed: Darker"
-#define u_ExposureAdaptSpeedBrighten 0.15 //[0.0..1.0 step 0.01] runtime "Auto Brightness Speed: Brighter"
+#define u_ExposureAdaptSpeedDarken 0.04 //[0.0..1.0 step 0.01] runtime "Exposure Adapt Speed (Darkening)"
+#define u_ExposureAdaptSpeedBrighten 0.15 //[0.0..1.0 step 0.01] runtime "Exposure Adapt Speed (Brightening)"
 
 in vec2 texCoord;
 out vec4 fragColor;

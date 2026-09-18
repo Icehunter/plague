@@ -1,7 +1,7 @@
 #version 450
 #define PLAGUE_SHORE_SPILL 1 //[0 1] compile "Shoreline Spill" {0="Off" 1="On"}
-#define PLAGUE_WATER_INTERACTION 1 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="Best Look" 2="Fastest"}
-#define SURFACE_FLUID_DETAIL 1 //[0 1 2] compile "Water Edge Detail" {0="Off" 1="Standard" 2="Best Look"}
+#define PLAGUE_WATER_INTERACTION 2 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="High" 2="Epic"}
+#define SURFACE_FLUID_DETAIL 1 //[0 1 2] compile "Water Simulation Boundaries" {0="Off" 1="High" 2="Epic"}
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 
@@ -95,7 +95,7 @@ bool plagueShoreWaterHead(ivec2 worldColumn, vec2 worldXZ, out float stillY, out
 
 void main() {
     ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size = ivec2(PLAGUE_WATER_INTERACTION == 2 ? 256 : 512);
+    ivec2 size = ivec2(PLAGUE_WATER_INTERACTION == 1 ? 256 : 512);
     if (any(greaterThanEqual(coord, size))) return;
 
 #if PLAGUE_SHORE_SPILL == 0 || SURFACE_FLUID_DETAIL == 0
