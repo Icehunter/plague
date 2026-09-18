@@ -69,20 +69,33 @@ vec4 plagueAtmoFetchSkyView(vec2 uv) {
 const float PLAGUE_GI_BLEND = 0.15;
 // Two surfaces this far apart in depth are not the same surface, so the older one is not history
 // for the newer: past this the sample starts again rather than smearing one onto the other.
+// As a FRACTION of the depth. Depth is reversed-Z and nonlinear, so a fixed gap means different
+// things near and far, and a threshold loose enough to work at range accepts two different
+// surfaces up close.
 const float PLAGUE_GI_DEPTH_REJECT = 0.02;
+// How far a cell's surface may travel across the grid before its history stops being worth
+// keeping. Reprojection already follows the surface, so this only catches motion fast enough that
+// the reprojected cell is a poor guess.
+const float PLAGUE_GI_MOTION_CELLS = 12.0;
 
 // This frame's sample, blended with wherever this cell's surface was last frame.
 vec3 plagueGiAccumulate(vec3 current, vec2 uv, float depth) {
-    vec2 previousUv = uv - texture(u_Motion, uv).rg;
+    vec2 motion = texture(u_Motion, uv).rg;
+    vec2 previousUv = uv - motion;
     if (!(previousUv.x >= 0.0 && previousUv.x <= 1.0
             && previousUv.y >= 0.0 && previousUv.y <= 1.0)) {
         return current;
     }
-    if (abs(depth - texture(u_Depth, previousUv).r) > PLAGUE_GI_DEPTH_REJECT) {
+    if (abs(depth - texture(u_Depth, previousUv).r) > PLAGUE_GI_DEPTH_REJECT * max(depth, 1e-4)) {
         return current;
     }
     ivec2 previousCell = ivec2(clamp(previousUv * float(PLAGUE_GI_SIDE), vec2(0.0),
             vec2(float(PLAGUE_GI_SIDE) - 1.0)));
+    // Kept or dropped, never faded. A blend that rides camera speed makes the amount of noise a
+    // function of how fast the view is moving, which reads as the picture breathing.
+    if (length(motion) * float(PLAGUE_GI_SIDE) > PLAGUE_GI_MOTION_CELLS) {
+        return current;
+    }
     return mix(imageLoad(u_History, previousCell).rgb, current, PLAGUE_GI_BLEND);
 }
 

@@ -2465,7 +2465,7 @@ type = "fullscreen"
 shader = "shaders/post/gi_debug_view.fsh"
 enabled_if = "PLAGUE_GI_DEBUG != 0"
 blend = "translucent"
-inputs = ["giBounceRaw", "builtin.gAlbedo"]
+inputs = ["giBounceRaw", "builtin.gAlbedo", "builtin.depth"]
 outputs = ["builtin.output"]
 
 [[pass]]
