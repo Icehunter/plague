@@ -13,13 +13,6 @@
 // Thirty-two because one glowstone offers twenty-four probes, six faces of four, and spends
 // every ray it asks for.
 const int PLAGUE_LOCAL_RAY_BUDGET = 32;
-// How much of the sky a face has to cover before it is worth cutting into four.
-//
-// Four probes buy a softer shadow edge only while the face still has an edge worth shaping. Past
-// that they are four rays for one answer. A sixteenth of a steradian is a whole block face seen
-// head on from four blocks, which is about where a block's own penumbra stops being wider than a
-// pixel.
-const float PLAGUE_LOCAL_SPLIT_SOLID_ANGLE = 0.0625;
 const int PLAGUE_LOCAL_RAY_CEILING = 48;
 #moj_import <fornax_runtime:voxel_local_layout.glsl>
 #moj_import <fornax_runtime:voxel_visibility.glsl>
@@ -226,14 +219,8 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
                     : vec3(0.0,faceSpan.x,faceSpan.y));
             float extent=dot(abs(geometricNormal),halfSpan);
             if(transmission==0.0 && dot(geometricNormal,centre-point)+extent<=0.0) continue;
-            // How much of the sky the rectangle covers: its area times how squarely it faces this
-            // pixel, over the distance squared. The shading is exact whatever this says; what it
-            // decides is how many shadow probes the rectangle earns.
             vec3 toCentre=centre-point;
             float centre2=max(dot(toCentre,toCentre),1e-8);
-            float faceSolidAngle=faceArea*max(dot(sourceNormal,-toCentre*inversesqrt(centre2)),0.0)
-                    /centre2;
-            bool split=faceSolidAngle>PLAGUE_LOCAL_SPLIT_SOLID_ANGLE;
             // Where the rectangle's four corners are, in the frame everything here works in.
             vec3 uVec=vec3(0.0); uVec[axisU]=1.0;
             vec3 vVec=vec3(0.0); vVec[axisV]=1.0;
@@ -253,6 +240,7 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
 
             // The whole rectangle in one colour, the four quarters averaged. A run is one block
             // kind, so its quarters are the same texture repeated and their average is its light.
+            // The shading reads it whole, so no part of it is sampled.
             int colourBase=base+8+PLAGUE_LOCAL_RECORD_FACE_COLOUR;
             vec3 le=uintBitsToFloat(uvec3(plagueLocalSourceWord(colourBase),
                     plagueLocalSourceWord(colourBase+4),plagueLocalSourceWord(colourBase+8)));
@@ -283,9 +271,14 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
             // Everything above is exact and the same every frame. Only whether something stands
             // in the way is sampled, so only that is cut into pieces: each probe speaks for its
             // own quarter of the rectangle, and blocking one loses that quarter.
-            int probes=split ? 4 : 1;
-            float shareEach=dot(offer,vec3(0.2126,0.7152,0.0722))/float(probes);
-            for(int piece=0;piece<probes;piece++) {
+            //
+            // Always four. One probe leaves a pixel's visibility at nothing or everything, and
+            // the jitter is locked to world position, so the same point takes the same probe every
+            // frame and no amount of waiting smooths it. Varying the count by distance puts a hard
+            // edge in the grain wherever the count changes. The ray budget bounds the cost.
+            const int PLAGUE_LOCAL_PROBES=4;
+            float shareEach=dot(offer,vec3(0.2126,0.7152,0.0722))/float(PLAGUE_LOCAL_PROBES);
+            for(int piece=0;piece<PLAGUE_LOCAL_PROBES;piece++) {
                 worth+=shareEach;
                 // The march is the expensive part, so it only runs while the budget holds.
                 if(rays>=PLAGUE_LOCAL_RAY_CEILING
@@ -297,7 +290,7 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
                 // filtered. R2 again, walked per piece so the probes spread rather than agree:
                 // each step lands in the largest gap the earlier ones left. Roberts, "The
                 // Unreasonable Effectiveness of Quasirandom Sequences", 2018.
-                vec2 pieceSize=faceSpan/float(probes==4 ? 2 : 1);
+                vec2 pieceSize=faceSpan*0.5;
                 vec2 pieceLo=rectLo+vec2(piece&1,piece>>1)*pieceSize;
                 vec2 probeST=pieceLo+pieceSize*fract(jitterUV
                         +float(face*4+piece)*vec2(0.7548776662466927,0.5698402909980532));
