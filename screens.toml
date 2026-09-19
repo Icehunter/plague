@@ -688,6 +688,7 @@ elements = [
     "u_BumpStrength",
     "u_AOStrength",
     "u_AuthoredEmission",
+    "PLAGUE_EMITTER_FALLOFF",
     "PLAGUE_GLASS_REFRACTION",
     "u_RefractStrength|requires:PLAGUE_GLASS_REFRACTION",
     "PLAGUE_WETNESS_PCT",
@@ -795,7 +796,6 @@ elements = [
 
     "<group:Local Lighting>",
     "PLAGUE_LOCAL_LIGHTING",
-    "PLAGUE_LOCAL_EMITTER_SIZE|requires:PLAGUE_LOCAL_LIGHTING",
     "PLAGUE_SOURCE_DIAGNOSTIC",
     "PLAGUE_SOURCE_RADIANCE",
 
@@ -864,12 +864,6 @@ places with many light sources close together, and distant terrain can stay dark
 It only remembers lighting in a small area around you, and checks shadows at a coarse, \
 half-block scale; both are known rough edges. This is direct light only: it does not bounce off \
 surfaces to light up other surfaces."""
-PLAGUE_LOCAL_EMITTER_SIZE = """
-The size of the glowing area each light source appears to shine from.
-
-Quarter block is the smallest, and gives the sharpest shadows from thin blocks such as a fence \
-post or a hopper. Full face spreads the light across the whole face for the softest result. All \
-three give off the same total amount of light; only how spread out it looks changes."""
 PLAGUE_SOURCE_DIAGNOSTIC = """
 A test view for checking which blocks the pack can read as light sources. It is not coloured \
 light or a reflection preview. It reads terrain depth, including terrain hidden behind water.
@@ -2328,6 +2322,16 @@ the weave of wool, dents in metal.
 This pairs with Ambient Occlusion above: this option gives surfaces their fine texture, while that \
 one grounds objects into the scene around them. Does nothing on resource packs without normal-map \
 textures."""
+
+PLAGUE_EMITTER_FALLOFF = """
+How fast the glow falls away on torches, lanterns, campfires and other mounted shapes.
+
+Solid glowing cubes are left alone. A glowstone or a sea lantern really does glow over its whole \
+face. A torch is a flame on a stick, and a campfire is a fire on logs, but a texture pack that \
+ships no glow map gives the shader no way to tell them apart, so the stick and the logs glow too.
+
+Tighter settings dim the parts that were never meant to glow and leave the flame alone. Even keeps \
+the original look."""
 
 u_AuthoredEmission = """
 How strongly the glow painted into textures shines, mostly the glint on ores.

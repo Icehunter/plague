@@ -59,8 +59,11 @@ bool plagueVoxelSurfaceAt(vec3 point, vec3 faceNormal, uint colour, int entry, v
     surface.material = plagueDecodeMaterial(material.r,material.g,material.b);
     // Palette word15 holds the block's own glow. Block light falling on a surface is not glow.
     float intrinsic = float(texelFetch(u_Input5,entry*16+15).r & 255u)/255.0;
+    // Word 0's low four bits are the shape's box count. Zero is a full cube, which really does
+    // glow over its whole face; anything else is a mounted shape with a part that does not.
+    bool cutout = (texelFetch(u_Input5,entry*16).r & 15u) != 0u;
     surface.emission = plagueSourceLuminance(surface.albedo, intrinsic, material.a,
-            u_AuthoredEmission);
+            u_AuthoredEmission, cutout);
     return true;
 }
 

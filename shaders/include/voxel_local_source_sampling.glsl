@@ -84,7 +84,7 @@ vec3 plagueLocalSourceSample(PlagueLocalSourceFace mapping, vec2 st) {
     }
     vec3 linearAlbedo = plagueSrgbToLinear(albedo.rgb)*mapping.linearTint;
     float luminance = plagueSourceLuminance(linearAlbedo, mapping.intrinsic,
-            materialAlpha, u_AuthoredEmission);
+            materialAlpha, u_AuthoredEmission, mapping.cutout);
     return plagueEmittedRadiance(linearAlbedo, luminance);
 }
 
