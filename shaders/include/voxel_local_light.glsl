@@ -152,16 +152,38 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
             vec3 separation=max(max(sourceOrigin-point,point-sourceOrigin-1.0),vec3(0.0));
             if(dot(separation,separation)>=PLAGUE_LOCAL_REACH*PLAGUE_LOCAL_REACH) continue;
             uint faces=plagueLocalSourceWord(base+7)&63u;
+            // How much of its cell this block fills. A glowstone fills it; a torch is a small box
+            // inside it. Everything below works in cell coordinates, so the box only narrows the
+            // range each face covers.
+            vec3 boxLo,boxHi;
+            plagueLocalUnpackBox(plagueLocalSourceWord(base+PLAGUE_LOCAL_RECORD_BOX),boxLo,boxHi);
             for(int face=0;face<6;face++) {
                 if((faces&(1u<<face))==0u) continue;
                 vec3 sourceNormal=plagueLocalNormal(face);
+                int faceAxis=face<2 ? 1 : face<4 ? 2 : 0;
+                float facePlane=(face&1)==0 ? boxLo[faceAxis] : boxHi[faceAxis];
+                vec2 tangentLo=face<2 ? vec2(boxLo.x,boxLo.z)
+                        : face<4 ? vec2(boxLo.x,boxLo.y) : vec2(boxLo.y,boxLo.z);
+                vec2 tangentHi=face<2 ? vec2(boxHi.x,boxHi.z)
+                        : face<4 ? vec2(boxHi.x,boxHi.y) : vec2(boxHi.y,boxHi.z);
+                vec2 faceSpan=tangentHi-tangentLo;
+                // How big this face really is, in square blocks. A face with no area gives no
+                // light, and dividing the clipped area by it has no answer.
+                float faceArea=faceSpan.x*faceSpan.y;
+                if(!(faceArea>0.0)) continue;
                 // A planar emitter's facing sign is identical for every point on that plane.
                 // Reject it once, before fetching its four radiance/visibility samples.
-                vec3 centre=sourceOrigin+vec3(0.5)+sourceNormal*0.5;
+                vec2 faceMiddle=tangentLo+faceSpan*0.5;
+                vec3 centre=sourceOrigin+(face<2 ? vec3(faceMiddle.x,facePlane,faceMiddle.y)
+                        : face<4 ? vec3(faceMiddle,facePlane) : vec3(facePlane,faceMiddle));
                 if(dot(sourceNormal,point-centre)<=0.0) continue;
-                // Support bound of the unit square projected on the receiver normal. This only
-                // removes a face whose entire area lies behind an opaque receiver hemisphere.
-                float extent=0.5*dot(abs(geometricNormal),vec3(1.0)-abs(sourceNormal));
+                // Support bound of the face projected on the receiver normal. This only removes a
+                // face whose entire area lies behind an opaque receiver hemisphere.
+                // Half the face's own width on each axis, zero on the axis it faces along.
+                vec3 halfSpan=0.5*(face<2 ? vec3(faceSpan.x,0.0,faceSpan.y)
+                        : face<4 ? vec3(faceSpan.x,faceSpan.y,0.0)
+                        : vec3(0.0,faceSpan.x,faceSpan.y));
+                float extent=dot(abs(geometricNormal),halfSpan);
                 if(transmission==0.0 && dot(geometricNormal,centre-point)+extent<=0.0) continue;
                 // A certified side wall clips source area continuously instead of switching whole quarter
                 // samples. Thin transmission keeps both receiver hemispheres on the ordinary path.
@@ -180,8 +202,10 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
                     if(any(lessThanEqual(areaHi,areaLo))) continue;
                     // The square's area is SPAN*SPAN, so dividing by it keeps the total light the
                     // same at every SPAN: four unclipped quarters always sum to 1.0.
+                    // As a fraction of the face, so four unclipped quarters always sum to one at
+                    // any span and any box. The face's real area multiplies back in below.
                     float clippedArea=(areaHi.x-areaLo.x)*(areaHi.y-areaLo.y)
-                            /(PLAGUE_LOCAL_EMITTER_SPAN*PLAGUE_LOCAL_EMITTER_SPAN);
+                            /(faceArea*PLAGUE_LOCAL_EMITTER_SPAN*PLAGUE_LOCAL_EMITTER_SPAN);
                     // TWO points on the same clipped quarter, and which one is used where is the
                     // whole reason the split works.
                     //
@@ -193,7 +217,7 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
                     // The jittered point is where the ray is sent, and nowhere else. Neighbouring
                     // pixels asking about different parts of the quarter is what a soft edge is
                     // made of, and it lands in the visibility fraction alone, which is filtered.
-                    float areaPlane=float(face&1);
+                    float areaPlane=facePlane;
                     vec2 centreST=mix(areaLo,areaHi,vec2(0.5));
                     // Each face and quarter looks at a DIFFERENT part of its own square. One
                     // offset shared by all of them moves every sample together, so the twenty-four
@@ -237,7 +261,10 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
                     if(!any(greaterThan(response,vec3(0.0)))) continue;
                     // Quarter radiance stays piecewise constant over its surviving area. Source cosine /
                     // distance squared converts that area; BRDF terms already include receiver cosine.
-                    vec3 offer=response*le*(clippedArea*sourceCosine*plagueLocalFalloff(r)/r2);
+                    // Times the face's real area: a torch's face is a fraction of a block and
+                    // sends a fraction of the light a glowstone's does, at the same brightness.
+                    vec3 offer=response*le
+                            *(clippedArea*faceArea*sourceCosine*plagueLocalFalloff(r)/r2);
                     // What this sample is worth, so the visibility fraction averages by contribution.
                     // Counting samples instead would let a dim far emitter outvote a bright near one.
                     float share=dot(offer,vec3(0.2126,0.7152,0.0722));

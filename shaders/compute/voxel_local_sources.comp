@@ -16,7 +16,14 @@ layout(set = 0, binding = 5) uniform sampler2D u_BlockAtlas;
 layout(set = 0, binding = 6) uniform sampler2D u_MaterialAtlas;
 layout(set = 0, binding = 7) uniform sampler2DArray u_BlockAtlasPages;
 layout(set = 0, binding = 8) uniform sampler2DArray u_MaterialAtlasPages;
-layout(std430, set = 0, binding = 9) writeonly buffer LocalRadiance { uint localRadianceWords[]; };
+// Sixteen words an entry, the same block the voxel march reads its boxes from. Word 0 holds how
+// many boxes the shape has in its low four bits, and words 7 upward hold the boxes themselves.
+//
+// Inputs fill the bindings before the outputs, so appending this one pushes LocalRadiance along.
+// Leaving the output where it was points every write at this buffer instead, and the radiance the
+// receivers read is never written at all.
+layout(std430, set = 0, binding = 9) readonly buffer VoxelPalette { uint paletteWords[]; };
+layout(std430, set = 0, binding = 10) writeonly buffer LocalRadiance { uint localRadianceWords[]; };
 
 #moj_import <fornax_runtime:voxel_local_source_sampling.glsl>
 
@@ -58,6 +65,7 @@ void main() {
     int base=PLAGUE_LOCAL_RECORDS+index*PLAGUE_LOCAL_RECORD_WORDS;
     for(int word=0;word<8;word++) localRadianceWords[base+word]=sourceWindowWords[raw+word];
     localRadianceWords[base+6]=0u; localRadianceWords[base+7]=0u;
+    localRadianceWords[base+PLAGUE_LOCAL_RECORD_BOX]=0u;
     int entry; uint facts;
     if(!plagueLocalSourceCellCurrent(raw,entry,facts) || (facts&64u)!=0u) return;
     for(int face=0;face<6;face++) if((facts&(1u<<face))!=0u) {
@@ -81,6 +89,27 @@ void main() {
             localRadianceWords[sampleBase+3]=floatBitsToUint(1.0);
         }
     }
+    // How much of its cell this block fills, as one box around every box it has. A full shape has
+    // no box list and fills the cell. Several boxes merge into the one that holds them all, since a
+    // record is one light and a light has one size.
+    int d=u_VoxelWindow.w;
+    vec3 boxLo=vec3(0.0), boxHi=vec3(1.0);
+    if(paletteWords.length()==d*d*d*1536) {
+        int entryBase=entry*16;
+        int boxCount=int(paletteWords[entryBase]&15u);
+        if(boxCount>0 && boxCount<=6) {
+            boxLo=vec3(2.0); boxHi=vec3(-1.0);
+            for(int box=0;box<boxCount;box++) {
+                uint packed=paletteWords[entryBase+7+box];
+                vec3 lo,hi; plagueLocalUnpackBox(packed,lo,hi);
+                boxLo=min(boxLo,lo); boxHi=max(boxHi,hi);
+            }
+            // A box list that decoded to nothing leaves the cell, which is the safe answer: a light
+            // too big is dimmer per unit area, a light of no size gives nothing at all.
+            if(any(greaterThanEqual(boxLo,boxHi))) { boxLo=vec3(0.0); boxHi=vec3(1.0); }
+        }
+    }
+    localRadianceWords[base+PLAGUE_LOCAL_RECORD_BOX]=plagueLocalPackBox(boxLo,boxHi);
     localRadianceWords[base+7]=facts&63u;
     localRadianceWords[base+6]=1u; // Bad material data skips only its own lamp, never neighbouring lamps.
 }

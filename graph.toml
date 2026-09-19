@@ -639,7 +639,7 @@ enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
 [targets.voxelLocalRadiance]
 kind = "buffer"
 stride_bytes = 4
-count = 497874 # ABI2 header/ranges 71890 + 4096 cells * 104 words
+count = 501970 # ABI2 header/ranges 71890 + 4096 cells * 105 words
 
 [targets.voxelLocalDirect]
 format = "rgba16f"
@@ -672,7 +672,8 @@ shader = "shaders/compute/voxel_local_sources.comp"
 enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_GI != 0"
 dispatch = [64, 1, 1]
 inputs = ["globals", "packOptions", "voxelSourceWindow", "voxelSectionState", "voxelFaceTexture",
-          "builtin.blockAtlas", "builtin.materialAtlas", "builtin.blockAtlasPages", "builtin.materialAtlasPages"]
+          "builtin.blockAtlas", "builtin.materialAtlas", "builtin.blockAtlasPages",
+          "builtin.materialAtlasPages", "voxelPalette"]
 outputs = ["voxelLocalRadiance"]
 
 [[pass]]
@@ -2567,7 +2568,7 @@ enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLA
 
 [targets.voxelPalette]
 kind = "buffer"
-enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_GI != 0"
 
 # Optional baked face UV and tint buffer for water reflection recovery.
 

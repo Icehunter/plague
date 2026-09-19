@@ -6,7 +6,25 @@ const int PLAGUE_LOCAL_CAPACITY = 4096;
 const int PLAGUE_LOCAL_MAX_SLOTS = 33 * 33 * 33;
 const int PLAGUE_LOCAL_RECORDS = 16 + PLAGUE_LOCAL_MAX_SLOTS * 2;
 const int PLAGUE_LOCAL_RAW_WORDS = PLAGUE_LOCAL_RECORDS + PLAGUE_LOCAL_CAPACITY * 8;
-const int PLAGUE_LOCAL_RECORD_WORDS = 104;
+const int PLAGUE_LOCAL_RECORD_WORDS = 105;
+// Word 104 of a record: the box the emitting block actually fills, in the same five-bits-per-axis
+// packing the brick grid uses for its own boxes. A full block is the whole cell; a torch or a
+// lantern is a small box inside it, and how wide a source is decides how sharp its shadows are.
+const int PLAGUE_LOCAL_RECORD_BOX = 104;
+
+/** The unit cell, which is what a full-shaped block fills. */
+uint plagueLocalPackBox(vec3 lo, vec3 hi) {
+    uvec3 l = uvec3(clamp(round(lo * 16.0), 0.0, 31.0));
+    uvec3 h = uvec3(clamp(round(hi * 16.0), 0.0, 31.0));
+    return l.x | (l.y << 5) | (l.z << 10) | (h.x << 15) | (h.y << 20) | (h.z << 25);
+}
+void plagueLocalUnpackBox(uint packed, out vec3 lo, out vec3 hi) {
+    // Zero is what an unwritten record reads as, and a box of no size emits nothing at all. A
+    // record from an older frame would otherwise switch every light in the world off for a frame.
+    if (packed == 0u) { lo = vec3(0.0); hi = vec3(1.0); return; }
+    lo = vec3(packed & 31u, (packed >> 5) & 31u, (packed >> 10) & 31u) / 16.0;
+    hi = vec3((packed >> 15) & 31u, (packed >> 20) & 31u, (packed >> 25) & 31u) / 16.0;
+}
 const int PLAGUE_LOCAL_SOURCE_WORDS = PLAGUE_LOCAL_RECORDS + PLAGUE_LOCAL_CAPACITY * PLAGUE_LOCAL_RECORD_WORDS;
 // Authored work domain: three quarters of one 16-block section. Only source distance tapers;
 // the adjacent 27 sections contain every candidate, independently of eye distance/height.

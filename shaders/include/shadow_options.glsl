@@ -25,7 +25,7 @@
 // Taps per side (real count is double, +/- pairs). Powers of two so each tier doubles the cost.
 #define SHADOW_SAMPLES 8 //[2 4 8 16] compile "Shadow Samples" {2="Low" 4="Medium" 8="High" 16="Epic"}
 
-#define u_ShadowSoftness 1.5 //[0.0..6.0 step 0.5] runtime "Shadow Softness"
+#define u_ShadowSoftness 1.0 //[0.0..4.0 step 0.05] runtime "Shadow Softness"
 // The engine reads this exact name to size the shadow frustum, so it must stay in blocks.
 #define u_ShadowDistance 96.0 //[16.0..512.0 step 16.0] runtime "Shadow Distance"
 

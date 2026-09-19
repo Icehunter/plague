@@ -21,7 +21,7 @@
 // radius_i = diskRadius * (i / SHADOW_SAMPLES)^p. Fitted jointly across all four sample counts.
 const float PLAGUE_SHADOW_RADIAL_EXPONENT = 1.266505;
 
-// Disk outer radius per sample count, in (u_ShadowSoftness / SHADOW_RESOLUTION) texel units.
+// Disk outer radius per sample count, as a share of whatever width the filter is given.
 // Growing with N is expected: more rings reach further out for the same profile width.
 #if SHADOW_SAMPLES == 2
 const float PLAGUE_SHADOW_DISK_RADIUS = 1.358320;
@@ -45,6 +45,64 @@ const float PLAGUE_SHADOW_AMBIENT_BROADEN = 4.0;
 // Overcast rain is a larger, softer light source, so the penumbra widens with the square of rain
 // intensity (matched to the fixture's recorded full-rain d-scale).
 const float PLAGUE_SHADOW_RAIN_WIDEN_SCALE = 3.0;
+
+// The Sun's angular diameter seen from Earth, in radians: 0.53 degrees. This is the only number
+// the penumbra width needs, and it is a measurement rather than a taste.
+const float PLAGUE_SUN_ANGULAR_SIZE = 0.00925;
+// How far the blocker search reaches, in shadow-map texels. Wide enough to find the caster for any
+// penumbra this can produce at a sane shadow distance, narrow enough that the search stays cheap.
+const float PLAGUE_SHADOW_SEARCH_TEXELS = 4.0;
+// The light camera's depth half-extent is max(8192, shadowDistance * 2) blocks, so its full depth
+// range is twice that. Stored depth runs 0 to 1 across it, which is what turns a depth difference
+// back into blocks. See ShadowCamera.depthHalfExtent.
+float plagueShadowDepthRangeBlocks() {
+    return 2.0 * max(8192.0, u_ShadowDistance * 2.0);
+}
+
+/**
+ * How wide this receiver's penumbra is, in shadow-map UV.
+ *
+ * Finds what is casting on this point, measures how far above it that caster sits, and turns the
+ * gap into a width using the Sun's own angular size. A caster touching the ground gives almost
+ * nothing, so contact stays sharp; the same caster fifty blocks up gives a wide soft band. That is
+ * how a shadow behaves, and no setting can be right in both places at once.
+ *
+ * Zero means nothing was found casting here, so there is nothing to soften and the filter is
+ * skipped. The search reads raw stored depths, not the comparison sampler: a comparison answers
+ * lit or not, and this needs to know HOW FAR.
+ */
+float plagueShadowPenumbraUv(vec2 shadowUv, float refDepth, float temporalNoise) {
+    ivec2 size = textureSize(SHADOW_RAW_MAP, 0);
+    vec2 texel = 1.0 / vec2(size);
+    float frameAngle = temporalNoise * PLAGUE_SHADOW_TWO_PI;
+    float blockerSum = 0.0;
+    float blockerCount = 0.0;
+    for (int i = 1; i <= SHADOW_SAMPLES; ++i) {
+        float t = float(i) / float(SHADOW_SAMPLES);
+        float radius = PLAGUE_SHADOW_SEARCH_TEXELS * pow(t, PLAGUE_SHADOW_RADIAL_EXPONENT);
+        float angle = float(i) * PLAGUE_SHADOW_GOLDEN_ANGLE + frameAngle;
+        vec2 offset = vec2(cos(angle), sin(angle)) * radius * texel;
+        for (int side = 0; side < 2; ++side) {
+            vec2 uv = side == 0 ? shadowUv + offset : shadowUv - offset;
+            if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0) {
+                continue;
+            }
+            float stored = texelFetch(SHADOW_RAW_MAP, ivec2(uv * vec2(size)), 0).r;
+            // Nearer the light than the receiver, which is what casts on it. The handoff compares
+            // the same way round: step(reference, stored) is lit.
+            if (stored < refDepth) {
+                blockerSum += stored;
+                blockerCount += 1.0;
+            }
+        }
+    }
+    if (blockerCount <= 0.0) {
+        return 0.0;
+    }
+    float gapBlocks = (refDepth - blockerSum / blockerCount) * plagueShadowDepthRangeBlocks();
+    // Across the map, which spans twice the shadow distance.
+    return (gapBlocks * PLAGUE_SUN_ANGULAR_SIZE) / max(2.0 * u_ShadowDistance, 1.0);
+}
 
 // temporalNoise rotates the whole disk each frame (interleaved gradient noise stepped by the
 // golden-ratio fraction, Jimenez 2014), so the rotation spreads evenly around the circle over many
@@ -106,9 +164,17 @@ float sunVisibilityAt(vec3 worldPos, vec3 normal, vec3 sunDir, float rainFactorF
     const float goldenRatioFrac = 0.61803398875;
     float temporalNoise = fract(gradientNoise + goldenRatioFrac * mod(u_FrameState.x, 4096.0));
 
-    // Divides by SHADOW_RESOLUTION, not a literal 2048.0: the map does resize, and a constant
-    // would detach softness from texel size at 1024/4096.
-    float texelScale = (u_ShadowSoftness / float(SHADOW_RESOLUTION)) * radiusScale;
+    // The width comes from the geometry, not from a setting: how far the caster sits above this
+    // point, times the Sun's angular size. Nothing casting here means nothing to soften.
+    // Shadow Softness scales the width the geometry asked for, rather than setting it. At 1 the
+    // edge is the width the Sun's angular size gives; lower sharpens it, higher spreads it. One
+    // value suits every shadow, because the width it scales moves with the geometry.
+    float penumbraUv = plagueShadowPenumbraUv(shadowUv, refDepth, temporalNoise)
+            * radiusScale * u_ShadowSoftness;
+    // The fitted disk radii describe the filter's SHAPE at whatever width it is given, so the
+    // width divides out here and the profile they were fitted under is kept. A width of zero
+    // collapses every tap onto the middle texel, which is a hard edge and costs no branch.
+    float texelScale = penumbraUv / PLAGUE_SHADOW_DISK_RADIUS;
 
     return plagueSunVisibilityFiltered(worldPos, shadowUv, refDepth, texelScale, temporalNoise,
                                        rainFactorForShadow);
