@@ -64,31 +64,36 @@ void main() {
     int raw=PLAGUE_LOCAL_RECORDS+index*8;
     int base=PLAGUE_LOCAL_RECORDS+index*PLAGUE_LOCAL_RECORD_WORDS;
     for(int word=0;word<8;word++) localRadianceWords[base+word]=sourceWindowWords[raw+word];
-    localRadianceWords[base+6]=0u; localRadianceWords[base+7]=0u;
+    localRadianceWords[base+6]=0u;
     localRadianceWords[base+PLAGUE_LOCAL_RECORD_BOX]=0u;
     int entry; uint facts;
     if(!plagueLocalSourceCellCurrent(raw,entry,facts) || (facts&64u)!=0u) return;
-    for(int face=0;face<6;face++) if((facts&(1u<<face))!=0u) {
-        PlagueLocalSourceFace mapping;
-        if(!plagueLocalSourceFace(entry,face,facts,mapping)) return;
+    // One record is one run, and a run is one face. Which face it is comes from the run word the
+    // engine wrote, not from walking the six.
+    int face=plagueLocalRunFace(sourceWindowWords[raw+PLAGUE_LOCAL_RECORD_RUN]);
+    PlagueLocalSourceFace mapping;
+    if(!plagueLocalSourceFace(entry,face,facts,mapping)) return;
+    vec3 faceSum=vec3(0.0);
+    for(int quarter=0;quarter<4;quarter++) {
+        vec3 sum=vec3(0.0);
+        ivec2 first=ivec2(quarter&1,quarter>>1)*2;
+        for(int y=0;y<2;y++) for(int x=0;x<2;x++)
+            sum+=plagueLocalSourceSample(mapping,(vec2(first+ivec2(x,y))+0.5)/4.0);
+        sum*=0.25; // Arithmetic mean of the four midpoint texels, separate from geometric area.
+        int sampleBase=base+8+quarter*4;
+        localRadianceWords[sampleBase]=floatBitsToUint(sum.x);
+        localRadianceWords[sampleBase+1]=floatBitsToUint(sum.y);
+        localRadianceWords[sampleBase+2]=floatBitsToUint(sum.z);
+        faceSum+=sum;
     }
-    for(int face=0;face<6;face++) {
-        if((facts&(1u<<face))==0u) continue;
-        PlagueLocalSourceFace mapping;
-        plagueLocalSourceFace(entry,face,facts,mapping);
-        for(int quarter=0;quarter<4;quarter++) {
-            vec3 sum=vec3(0.0);
-            ivec2 first=ivec2(quarter&1,quarter>>1)*2;
-            for(int y=0;y<2;y++) for(int x=0;x<2;x++)
-                sum+=plagueLocalSourceSample(mapping,(vec2(first+ivec2(x,y))+0.5)/4.0);
-            sum*=0.25; // Arithmetic mean of the four midpoint texels, separate from geometric area.
-            int sampleBase=base+8+face*16+quarter*4;
-            localRadianceWords[sampleBase]=floatBitsToUint(sum.x);
-            localRadianceWords[sampleBase+1]=floatBitsToUint(sum.y);
-            localRadianceWords[sampleBase+2]=floatBitsToUint(sum.z);
-            localRadianceWords[sampleBase+3]=floatBitsToUint(1.0);
-        }
-    }
+    // The whole face in one colour, for a receiver far enough to take the face as one piece. It
+    // sits in the fourth word each quarter carries, so reading it costs three words rather than
+    // the twelve the four quarters take. See PLAGUE_LOCAL_RECORD_FACE_COLOUR.
+    faceSum*=0.25;
+    localRadianceWords[base+8+3]=floatBitsToUint(faceSum.x);
+    localRadianceWords[base+8+7]=floatBitsToUint(faceSum.y);
+    localRadianceWords[base+8+11]=floatBitsToUint(faceSum.z);
+    localRadianceWords[base+8+15]=floatBitsToUint(1.0);
     // How much of its cell this block fills, as one box around every box it has. A full shape has
     // no box list and fills the cell. Several boxes merge into the one that holds them all, since a
     // record is one light and a light has one size.
@@ -110,6 +115,5 @@ void main() {
         }
     }
     localRadianceWords[base+PLAGUE_LOCAL_RECORD_BOX]=plagueLocalPackBox(boxLo,boxHi);
-    localRadianceWords[base+7]=facts&63u;
     localRadianceWords[base+6]=1u; // Bad material data skips only its own lamp, never neighbouring lamps.
 }

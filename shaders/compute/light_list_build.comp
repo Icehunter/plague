@@ -64,36 +64,29 @@ void main() {
         return;
     }
 
-    // Every lit face, every quarter of it. The list carries one light per cell, so what it wants
-    // is the total: a glowstone lighting a room through four open faces is four times the light of
-    // one buried in a wall.
-    uint faces = sources.words[base + 7] & 63u;
+    // One record is one run: one face, however many cells wide. Every quarter of that one face.
+    uint run = sources.words[base + PLAGUE_LOCAL_RECORD_RUN];
+    vec2 runSpan = plagueLocalRunSpan(run);
     vec3 total = vec3(0.0);
-    for (int face = 0; face < 6; ++face) {
-        if ((faces & (1u << face)) == 0u) {
+    for (int quarter = 0; quarter < 4; ++quarter) {
+        int quarterBase = base + 8 + quarter * 4;
+        vec3 le = uintBitsToFloat(uvec3(sources.words[quarterBase], sources.words[quarterBase + 1u],
+                                        sources.words[quarterBase + 2u]));
+        // The scan leaves a face it could not read as something that is not a number. Adding one
+        // poisons the whole entry, and a light whose colour is not a number reads as no light at
+        // all wherever it is used.
+        if (any(isnan(le)) || any(isinf(le))) {
             continue;
         }
-        for (int quarter = 0; quarter < 4; ++quarter) {
-            int quarterBase = base + 8 + face * 16 + quarter * 4;
-            vec3 le = uintBitsToFloat(uvec3(sources.words[quarterBase], sources.words[quarterBase + 1u],
-                                            sources.words[quarterBase + 2u]));
-            // The scan leaves a face it could not read as something that is not a number. Adding
-            // one poisons the whole entry, and a light whose colour is not a number reads as no
-            // light at all wherever it is used.
-            if (any(isnan(le)) || any(isinf(le))) {
-                continue;
-            }
-            total += max(le, vec3(0.0));
-        }
+        total += max(le, vec3(0.0));
     }
 
-    // What the list carries is a point standing in for the block's lit faces, and the number a
-    // point needs is the light it throws averaged over every direction. For a flat face that is its
-    // area over four, so a block face of one square block averages a quarter. The four quarters
-    // above are samples of one such face, not four faces, so they average as well: a quarter of a
-    // quarter, one sixteenth of the total. Same result for any number of open faces, since each one
-    // contributes its own area over four.
-    vec3 intensity = total / 16.0;
+    // What the list carries is a point standing in for the run's face, and the number a point
+    // needs is the light it throws averaged over every direction. For a flat face that is its area
+    // over four, so one square block of face averages a quarter. The four quarters above are
+    // samples of that one face, so they average as well: a quarter of a quarter, one sixteenth.
+    // Times how many square blocks the run really covers.
+    vec3 intensity = total * (runSpan.x * runSpan.y / 16.0);
 
     // The strongest channel, so the colour beside it never leaves the 0 to 1 the packing holds and
     // the two multiplied back together are the light itself. Dividing by brightness instead would
@@ -116,7 +109,13 @@ void main() {
     ivec3 cell = ivec3(sources.words[base], sources.words[base + 1u], sources.words[base + 2u]);
     int d = u_VoxelWindow.w;
     ivec3 firstSection = u_VoxelWindow.xyz - ivec3((d - 1) / 2);
-    vec3 local = vec3(cell - firstSection * 16) + 0.5;
+    int face = plagueLocalRunFace(run);
+    // The middle of the run, not of its first cell: a rectangle ten cells long stands in for a
+    // light at its own centre.
+    vec3 span = vec3(1.0);
+    span[face < 4 ? 0 : 1] = runSpan.x;
+    span[face < 2 ? 2 : face < 4 ? 1 : 2] = runSpan.y;
+    vec3 local = vec3(cell - firstSection * 16) + span * 0.5;
 
     // The list holds 256 lights and the scan commits up to 4096 cells across the whole window, so
     // without a cull the cap goes to whichever cells the scan reached first, which can be the far
@@ -131,7 +130,7 @@ void main() {
     uint packedColour = uint(colour.r * 1023.0 + 0.5)
             | (uint(colour.g * 1023.0 + 0.5) << 10)
             | (uint(colour.b * 1023.0 + 0.5) << 20);
-    // The low byte is the radius in blocks. One cell is one light here, so the count above it is
+    // The low byte is the radius in blocks. One run is one light here, so the count above it is
     // one, in the 4.4 fixed point the layout names.
     uint radiusCount = uint(PLAGUE_LOCAL_REACH) | (16u << 8);
 

@@ -639,7 +639,7 @@ enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
 [targets.voxelLocalRadiance]
 kind = "buffer"
 stride_bytes = 4
-count = 501970 # ABI2 header/ranges 71890 + 4096 cells * 105 words
+count = 174290 # ABI2 header/ranges 71890 + 4096 runs * 25 words
 
 [targets.voxelLocalDirect]
 format = "rgba16f"

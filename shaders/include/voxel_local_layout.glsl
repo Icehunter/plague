@@ -6,11 +6,26 @@ const int PLAGUE_LOCAL_CAPACITY = 4096;
 const int PLAGUE_LOCAL_MAX_SLOTS = 33 * 33 * 33;
 const int PLAGUE_LOCAL_RECORDS = 16 + PLAGUE_LOCAL_MAX_SLOTS * 2;
 const int PLAGUE_LOCAL_RAW_WORDS = PLAGUE_LOCAL_RECORDS + PLAGUE_LOCAL_CAPACITY * 8;
-const int PLAGUE_LOCAL_RECORD_WORDS = 105;
-// Word 104 of a record: the box the emitting block actually fills, in the same five-bits-per-axis
-// packing the brick grid uses for its own boxes. A full block is the whole cell; a torch or a
-// lantern is a small box inside it, and how wide a source is decides how sharp its shadows are.
-const int PLAGUE_LOCAL_RECORD_BOX = 104;
+// A record is one RUN: a flat rectangle of touching faces of one block kind, all facing the same
+// way. A lone lamp face is a run of one cell by one, so nothing needs a small case. A run holds
+// one face, which is what keeps the record small.
+const int PLAGUE_LOCAL_RECORD_WORDS = 25;
+// Words 8 to 23 hold four quarters of the one face, four words each. Three of every four carry
+// that quarter's colour. The fourth word of the first three quarters carries the whole face's
+// colour, the four quarters averaged, at offsets 3, 7 and 11.
+const int PLAGUE_LOCAL_RECORD_FACE_COLOUR = 3;
+// Word 24: the box the emitting block fills inside ONE of its cells, in the same five-bits-per-axis
+// packing the brick grid uses. A full block is the whole cell; a torch is a small box inside it.
+// How far the run reaches past that one cell is the span, in the run word.
+const int PLAGUE_LOCAL_RECORD_BOX = 24;
+// Word 7: which way the face points in bits 0 to 2, then each span one less than the number of
+// cells it covers, four bits each. The two spans run along the face in the order a face reads its
+// own axes: a Y face spans x then z, a Z face spans x then y, an X face spans y then z.
+const int PLAGUE_LOCAL_RECORD_RUN = 7;
+int plagueLocalRunFace(uint run) { return int(run & 7u); }
+vec2 plagueLocalRunSpan(uint run) {
+    return vec2(float((run >> 3) & 15u) + 1.0, float((run >> 7) & 15u) + 1.0);
+}
 
 /** The unit cell, which is what a full-shaped block fills. */
 uint plagueLocalPackBox(vec3 lo, vec3 hi) {

@@ -1,17 +1,26 @@
 #ifndef PLAGUE_VOXEL_LOCAL_LIGHT
 #define PLAGUE_VOXEL_LOCAL_LIGHT
-#ifndef PLAGUE_LOCAL_EMITTER_SIZE
-#define PLAGUE_LOCAL_EMITTER_SIZE 0 //[0 1 2] compile "Local Light Source Size" {0="Quarter block" 1="Half block" 2="Full face"}
-#endif
-// Side of the centred square each quarter is cut from, as a fraction of the face. Full face (2)
-// is 1.0, the whole face.
-#if PLAGUE_LOCAL_EMITTER_SIZE==0
-const float PLAGUE_LOCAL_EMITTER_SPAN=0.25;
-#elif PLAGUE_LOCAL_EMITTER_SIZE==1
-const float PLAGUE_LOCAL_EMITTER_SPAN=0.5;
-#else
-const float PLAGUE_LOCAL_EMITTER_SPAN=1.0;
-#endif
+// How many shadow rays one pixel may spend on local lights.
+//
+// Every sample still offers its light. The budget only decides which of them get asked whether
+// something stands in the way, and the answer from those carries the rest. It bites on a surface
+// made of emitters, where the samples nearly all give the same answer anyway.
+//
+// A sample earns a ray by being worth at least its share of the budget, so a near lamp keeps its
+// own shadow in a scene whose sample count is dominated by something dim and wide. The ceiling
+// bounds the work when the shares keep climbing instead of levelling off.
+//
+// Thirty-two because one glowstone offers twenty-four probes, six faces of four, and spends
+// every ray it asks for.
+const int PLAGUE_LOCAL_RAY_BUDGET = 32;
+// How much of the sky a face has to cover before it is worth cutting into four.
+//
+// Four probes buy a softer shadow edge only while the face still has an edge worth shaping. Past
+// that they are four rays for one answer. A sixteenth of a steradian is a whole block face seen
+// head on from four blocks, which is about where a block's own penumbra stops being wider than a
+// pixel.
+const float PLAGUE_LOCAL_SPLIT_SOLID_ANGLE = 0.0625;
+const int PLAGUE_LOCAL_RAY_CEILING = 48;
 #moj_import <fornax_runtime:voxel_local_layout.glsl>
 #moj_import <fornax_runtime:voxel_visibility.glsl>
 #ifdef PLAGUE_VOXEL_ENTITY_OCCLUDERS
@@ -52,7 +61,6 @@ bool plagueLocalSegment(vec3 point,vec3 geometricNormal,vec3 emitter,vec3 emitte
 #endif
     return true;
 }
-#moj_import <fornax_runtime:voxel_local_aperture.glsl>
 
 // Transmission belongs to rendered thin cutouts, never to a grass cube merely carrying a
 // subsurface material. Missing geometry cannot certify a sheet. CROSS is the two-plane ABI;
@@ -89,6 +97,32 @@ bool plagueLocalThinReceiver(vec3 point,vec3 geometricNormal) {
     return textureSize(u_Input10)==d*d*d*96*42
             && (texelFetch(u_Input10,entry*42+face*7).r&0x03000000u)==0x03000000u;
 }
+// The light a flat rectangle of uniform brightness delivers to one point, as a vector.
+//
+// Its length is how much arrives and its direction is where from, so dotting it with a surface
+// normal gives that surface's share exactly: no sampling, no pieces, right at any size and any
+// distance. Points spread over a rectangle cannot do that. A floor lying on a bright sheet reads
+// a small fraction of the light it should, and cutting the rectangle finer closes the gap far too
+// slowly to rescue.
+//
+// The sum runs over the rectangle's edges: each edge contributes the angle it subtends, pointing
+// along the normal of the wedge it and the point make. Lambert, "Photometria", 1760; the vector
+// form is Arvo, "The Irradiance Jacobian for Partially Occluded Polyhedral Sources", SIGGRAPH 1994.
+vec3 plagueLocalRectFlux(vec3 c0,vec3 c1,vec3 c2,vec3 c3,vec3 point) {
+    vec3 v0=normalize(c0-point),v1=normalize(c1-point);
+    vec3 v2=normalize(c2-point),v3=normalize(c3-point);
+    vec3 flux=vec3(0.0);
+    vec3 e=cross(v0,v1); float len=length(e);
+    if(len>1e-8) flux+=acos(clamp(dot(v0,v1),-1.0,1.0))*(e/len);
+    e=cross(v1,v2); len=length(e);
+    if(len>1e-8) flux+=acos(clamp(dot(v1,v2),-1.0,1.0))*(e/len);
+    e=cross(v2,v3); len=length(e);
+    if(len>1e-8) flux+=acos(clamp(dot(v2,v3),-1.0,1.0))*(e/len);
+    e=cross(v3,v0); len=length(e);
+    if(len>1e-8) flux+=acos(clamp(dot(v3,v0),-1.0,1.0))*(e/len);
+    return 0.5*flux;
+}
+
 // Three answers from one walk of the emitters, because only one of them is noisy.
 //
 // `radiance` is what this pixel actually receives, shadows and all, for a caller with nowhere to
@@ -107,8 +141,12 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
     // Nothing offered reads as fully lit: a pixel no emitter reaches is not a shadowed pixel, and
     // zero here would paint it black once the two are multiplied.
     visibility=1.0;
+    // Every sample's worth, which is what sets the bar a sample has to clear to earn a ray.
+    float worth=0.0;
+    // The worth of the samples a ray was actually spent on, and how much of it got through.
     float offered=0.0;
     float reached=0.0;
+    int rays=0;
     int d=u_VoxelWindow.w;
     if(d<1 || d>33 || plagueLocalSourceSize()!=PLAGUE_LOCAL_SOURCE_WORDS
             || plagueLocalSourceWord(0)!=2u || plagueLocalSourceWord(1)!=uint(PLAGUE_LOCAL_CAPACITY)
@@ -148,140 +186,133 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
                 if(any(lessThan(owner,first)) || any(greaterThanEqual(owner,first+ivec3(d)))
                         || any(greaterThan(abs(owner-receiverSection),ivec3(1)))) continue;
             } else if(any(notEqual(owner,section))) continue;
+            uint run=plagueLocalSourceWord(base+PLAGUE_LOCAL_RECORD_RUN);
+            int face=plagueLocalRunFace(run);
+            vec2 runSpan=plagueLocalRunSpan(run);
+            int faceAxis=face<2 ? 1 : face<4 ? 2 : 0;
+            int axisU=face<4 ? 0 : 1;
+            int axisV=face<2 ? 2 : face<4 ? 1 : 2;
+            // How many cells the run covers on each axis. One on the axis it faces along.
+            vec3 runExtent=vec3(1.0);
+            runExtent[axisU]=runSpan.x;
+            runExtent[axisV]=runSpan.y;
             vec3 sourceOrigin=vec3(cell-cameraCell)-fractional;
-            vec3 separation=max(max(sourceOrigin-point,point-sourceOrigin-1.0),vec3(0.0));
+            vec3 separation=max(max(sourceOrigin-point,point-sourceOrigin-runExtent),vec3(0.0));
             if(dot(separation,separation)>=PLAGUE_LOCAL_REACH*PLAGUE_LOCAL_REACH) continue;
-            uint faces=plagueLocalSourceWord(base+7)&63u;
-            // How much of its cell this block fills. A glowstone fills it; a torch is a small box
-            // inside it. Everything below works in cell coordinates, so the box only narrows the
-            // range each face covers.
+            // How much of one cell the emitting block fills. A glowstone fills it; a torch is a
+            // small box inside it, and a run wider than one cell is only ever made of blocks that
+            // fill theirs. The span carries the rest of the reach past that first cell.
             vec3 boxLo,boxHi;
             plagueLocalUnpackBox(plagueLocalSourceWord(base+PLAGUE_LOCAL_RECORD_BOX),boxLo,boxHi);
-            for(int face=0;face<6;face++) {
-                if((faces&(1u<<face))==0u) continue;
-                vec3 sourceNormal=plagueLocalNormal(face);
-                int faceAxis=face<2 ? 1 : face<4 ? 2 : 0;
-                float facePlane=(face&1)==0 ? boxLo[faceAxis] : boxHi[faceAxis];
-                vec2 tangentLo=face<2 ? vec2(boxLo.x,boxLo.z)
-                        : face<4 ? vec2(boxLo.x,boxLo.y) : vec2(boxLo.y,boxLo.z);
-                vec2 tangentHi=face<2 ? vec2(boxHi.x,boxHi.z)
-                        : face<4 ? vec2(boxHi.x,boxHi.y) : vec2(boxHi.y,boxHi.z);
-                vec2 faceSpan=tangentHi-tangentLo;
-                // How big this face really is, in square blocks. A face with no area gives no
-                // light, and dividing the clipped area by it has no answer.
-                float faceArea=faceSpan.x*faceSpan.y;
-                if(!(faceArea>0.0)) continue;
-                // A planar emitter's facing sign is identical for every point on that plane.
-                // Reject it once, before fetching its four radiance/visibility samples.
-                vec2 faceMiddle=tangentLo+faceSpan*0.5;
-                vec3 centre=sourceOrigin+(face<2 ? vec3(faceMiddle.x,facePlane,faceMiddle.y)
-                        : face<4 ? vec3(faceMiddle,facePlane) : vec3(facePlane,faceMiddle));
-                if(dot(sourceNormal,point-centre)<=0.0) continue;
-                // Support bound of the face projected on the receiver normal. This only removes a
-                // face whose entire area lies behind an opaque receiver hemisphere.
-                // Half the face's own width on each axis, zero on the axis it faces along.
-                vec3 halfSpan=0.5*(face<2 ? vec3(faceSpan.x,0.0,faceSpan.y)
-                        : face<4 ? vec3(faceSpan.x,faceSpan.y,0.0)
-                        : vec3(0.0,faceSpan.x,faceSpan.y));
-                float extent=dot(abs(geometricNormal),halfSpan);
-                if(transmission==0.0 && dot(geometricNormal,centre-point)+extent<=0.0) continue;
-                // A certified side wall clips source area continuously instead of switching whole quarter
-                // samples. Thin transmission keeps both receiver hemispheres on the ordinary path.
-                vec4 aperture=transmission==0.0
-                        ? plagueApertureRect(cell,sourceOrigin,face,point,geometricNormal) : vec4(0.0,0.0,1.0,1.0);
-                for(int quarter=0;quarter<4;quarter++) {
-                    // Authored look choice: light comes from a centred square of side SPAN
-                    // (1, 0.5 or 0.25 for Full face, Half block, Quarter block), not the whole
-                    // face, so a thin blocker can fully shadow it. The square is cut into its
-                    // four quarters first and only then clipped by the aperture, so a certified
-                    // side wall still clips smoothly instead of switching a whole quarter on or
-                    // off. SPAN 1 is the untouched face.
-                    vec2 quarterLo=(1.0-PLAGUE_LOCAL_EMITTER_SPAN)*0.5
-                            +vec2(quarter&1,quarter>>1)*(0.5*PLAGUE_LOCAL_EMITTER_SPAN);
-                    vec2 areaLo=max(quarterLo,aperture.xy),areaHi=min(quarterLo+0.5*PLAGUE_LOCAL_EMITTER_SPAN,aperture.zw);
-                    if(any(lessThanEqual(areaHi,areaLo))) continue;
-                    // The square's area is SPAN*SPAN, so dividing by it keeps the total light the
-                    // same at every SPAN: four unclipped quarters always sum to 1.0.
-                    // As a fraction of the face, so four unclipped quarters always sum to one at
-                    // any span and any box. The face's real area multiplies back in below.
-                    float clippedArea=(areaHi.x-areaLo.x)*(areaHi.y-areaLo.y)
-                            /(faceArea*PLAGUE_LOCAL_EMITTER_SPAN*PLAGUE_LOCAL_EMITTER_SPAN);
-                    // TWO points on the same clipped quarter, and which one is used where is the
-                    // whole reason the split works.
-                    //
-                    // The middle is where the light is measured from: distance, both cosines and
-                    // the BRDF all read it, and all of them are then the same for neighbouring
-                    // pixels. Measuring from the jittered point instead puts the dither into the
-                    // brightness as well as the shadow, and no filter over one of them can reach it.
-                    //
-                    // The jittered point is where the ray is sent, and nowhere else. Neighbouring
-                    // pixels asking about different parts of the quarter is what a soft edge is
-                    // made of, and it lands in the visibility fraction alone, which is filtered.
-                    float areaPlane=facePlane;
-                    vec2 centreST=mix(areaLo,areaHi,vec2(0.5));
-                    // Each face and quarter looks at a DIFFERENT part of its own square. One
-                    // offset shared by all of them moves every sample together, so the twenty-four
-                    // agree with each other and their average is exactly as noisy as one of them.
-                    // Walking the offset by slot spreads them instead, and twenty-four samples that
-                    // disagree average down by nearly five.
-                    //
-                    // R2 again, for the same reason as anywhere else: each step lands in the
-                    // largest gap the earlier ones left, so a handful of slots already covers the
-                    // square evenly rather than clumping. Roberts, "The Unreasonable Effectiveness
-                    // of Quasirandom Sequences", 2018.
-                    vec2 probeST=mix(areaLo,areaHi,fract(jitterUV
-                            +float(face*4+quarter)*vec2(0.7548776662466927,0.5698402909980532)));
-                    vec3 emitter=sourceOrigin+(face<2 ? vec3(centreST.x,areaPlane,centreST.y)
-                            : face<4 ? vec3(centreST,areaPlane) : vec3(areaPlane,centreST));
-                    vec3 probe=sourceOrigin+(face<2 ? vec3(probeST.x,areaPlane,probeST.y)
-                            : face<4 ? vec3(probeST,areaPlane) : vec3(areaPlane,probeST));
-                    vec3 delta=emitter-point;
-                    float r2=dot(delta,delta);
-                    if(r2<=PLAGUE_LOCAL_NUDGE*PLAGUE_LOCAL_NUDGE || r2>=PLAGUE_LOCAL_REACH*PLAGUE_LOCAL_REACH) continue;
-                    float r=sqrt(r2); vec3 direction=delta/r;
-                    float sourceCosine=max(dot(sourceNormal,-direction),0.0);
-                    float geometricCosine=dot(geometricNormal,direction);
-                    if(sourceCosine<=0.0 || (geometricCosine<=0.0 && transmission==0.0)) continue;
-                    int sampleBase=base+8+face*16+quarter*4;
-                    vec3 le=uintBitsToFloat(uvec3(plagueLocalSourceWord(sampleBase),
-                            plagueLocalSourceWord(sampleBase+1),plagueLocalSourceWord(sampleBase+2)));
-                    if(any(isnan(le)) || any(isinf(le)) || !any(greaterThan(le,vec3(0.0)))) continue;
-                    // Exact zero of the front BRDF, before anything more expensive.
-                    if(geometricCosine>0.0 && dot(normal,direction)<=0.0) continue;
-                    vec3 response;
-                    if(geometricCosine>0.0) {
-                        PlagueBrdf brdf=plagueEvaluateBrdf(material,albedo,normal,viewDir,direction);
-                        response=brdf.diffuse*albedo*(1.0-transmission)+brdf.specular;
-                    } else {
-                        // Lambertian transmitted radiance: projected incident area / pi. Fresnel
-                        // reflection and metallic absorption remove energy before transmission.
-                        response=albedo*(1.0-plagueMaterialF0(material,albedo))*(1.0-material.metalness)
-                                *(transmission*max(-geometricCosine,0.0)/PLAGUE_PI);
-                    }
-                    if(!any(greaterThan(response,vec3(0.0)))) continue;
-                    // Quarter radiance stays piecewise constant over its surviving area. Source cosine /
-                    // distance squared converts that area; BRDF terms already include receiver cosine.
-                    // Times the face's real area: a torch's face is a fraction of a block and
-                    // sends a fraction of the light a glowstone's does, at the same brightness.
-                    vec3 offer=response*le
-                            *(clippedArea*faceArea*sourceCosine*plagueLocalFalloff(r)/r2);
-                    // What this sample is worth, so the visibility fraction averages by contribution.
-                    // Counting samples instead would let a dim far emitter outvote a bright near one.
-                    float share=dot(offer,vec3(0.2126,0.7152,0.0722));
-                    unshadowed+=offer;
-                    offered+=share;
-                    // The march is the expensive part, so it stays last and only runs for a sample
-                    // that would contribute. The BRDF above runs for blocked samples as well, which
-                    // is arithmetic against a walk through the grid.
-                    if(plagueLocalSegment(point,geometricCosine>0.0?geometricNormal:-geometricNormal,probe,sourceNormal)) {
-                        radiance+=offer;
-                        reached+=share;
-                    }
+            vec3 sourceNormal=plagueLocalNormal(face);
+            float facePlane=(face&1)==0 ? boxLo[faceAxis] : boxHi[faceAxis];
+            vec2 rectLo=vec2(boxLo[axisU],boxLo[axisV]);
+            vec2 rectHi=vec2(boxHi[axisU],boxHi[axisV])+runSpan-vec2(1.0);
+            vec2 faceSpan=rectHi-rectLo;
+            // How big the run really is, in square blocks. A rectangle with no area gives no
+            // light, and dividing the clipped area by it has no answer.
+            float faceArea=faceSpan.x*faceSpan.y;
+            if(!(faceArea>0.0)) continue;
+            // A planar emitter's facing sign is identical for every point on that plane.
+            // Reject it once, before fetching any radiance.
+            vec2 faceMiddle=rectLo+faceSpan*0.5;
+            vec3 centre=sourceOrigin+(face<2 ? vec3(faceMiddle.x,facePlane,faceMiddle.y)
+                    : face<4 ? vec3(faceMiddle,facePlane) : vec3(facePlane,faceMiddle));
+            if(dot(sourceNormal,point-centre)<=0.0) continue;
+            // Support bound of the rectangle projected on the receiver normal. This only removes a
+            // run whose entire area lies behind an opaque receiver hemisphere.
+            vec3 halfSpan=0.5*(face<2 ? vec3(faceSpan.x,0.0,faceSpan.y)
+                    : face<4 ? vec3(faceSpan.x,faceSpan.y,0.0)
+                    : vec3(0.0,faceSpan.x,faceSpan.y));
+            float extent=dot(abs(geometricNormal),halfSpan);
+            if(transmission==0.0 && dot(geometricNormal,centre-point)+extent<=0.0) continue;
+            // How much of the sky the rectangle covers: its area times how squarely it faces this
+            // pixel, over the distance squared. The shading is exact whatever this says; what it
+            // decides is how many shadow probes the rectangle earns.
+            vec3 toCentre=centre-point;
+            float centre2=max(dot(toCentre,toCentre),1e-8);
+            float faceSolidAngle=faceArea*max(dot(sourceNormal,-toCentre*inversesqrt(centre2)),0.0)
+                    /centre2;
+            bool split=faceSolidAngle>PLAGUE_LOCAL_SPLIT_SOLID_ANGLE;
+            // Where the rectangle's four corners are, in the frame everything here works in.
+            vec3 uVec=vec3(0.0); uVec[axisU]=1.0;
+            vec3 vVec=vec3(0.0); vVec[axisV]=1.0;
+            vec3 planeOrigin=sourceOrigin+sourceNormal*0.0;
+            planeOrigin[faceAxis]+=facePlane;
+            planeOrigin+=uVec*rectLo.x+vVec*rectLo.y;
+            vec3 corner1=planeOrigin+uVec*faceSpan.x;
+            vec3 corner2=corner1+vVec*faceSpan.y;
+            vec3 corner3=planeOrigin+vVec*faceSpan.y;
+            vec3 flux=plagueLocalRectFlux(planeOrigin,corner1,corner2,corner3,point);
+            // Which way round the corners were listed decides the sign. The receiver is on the
+            // face's front, so the light arrives from roughly against the face's own normal.
+            if(dot(flux,sourceNormal)>0.0) flux=-flux;
+            float front=max(dot(flux,normal),0.0);
+            float back=transmission>0.0 ? max(dot(flux,-normal),0.0) : 0.0;
+            if(front<=0.0 && back<=0.0) continue;
+
+            // The whole rectangle in one colour, the four quarters averaged. A run is one block
+            // kind, so its quarters are the same texture repeated and their average is its light.
+            int colourBase=base+8+PLAGUE_LOCAL_RECORD_FACE_COLOUR;
+            vec3 le=uintBitsToFloat(uvec3(plagueLocalSourceWord(colourBase),
+                    plagueLocalSourceWord(colourBase+4),plagueLocalSourceWord(colourBase+8)));
+            if(any(isnan(le)) || any(isinf(le)) || !any(greaterThan(le,vec3(0.0)))) continue;
+
+            // The BRDF is read once, aimed at the middle of the rectangle, and divided by its own
+            // cosine because the exact cosine is already inside `front`. For a diffuse surface
+            // that is exact; for a highlight it is the standard stand-in point. Karis, "Real
+            // Shading in Unreal Engine 4", SIGGRAPH 2013 course notes.
+            float centreDistance=sqrt(centre2);
+            vec3 dirRep=toCentre*inversesqrt(centre2);
+            vec3 offer;
+            if(front>0.0) {
+                if(dot(normal,dirRep)<=0.0) continue;
+                PlagueBrdf brdf=plagueEvaluateBrdf(material,albedo,normal,viewDir,dirRep);
+                float nDotL=max(dot(normal,dirRep),1e-3);
+                offer=(brdf.diffuse*albedo*(1.0-transmission)+brdf.specular)*(front/nDotL);
+            } else {
+                // Lambertian transmitted radiance: projected incident area over pi. Fresnel
+                // reflection and metallic absorption remove energy before transmission.
+                offer=albedo*(1.0-plagueMaterialF0(material,albedo))*(1.0-material.metalness)
+                        *(transmission*back/PLAGUE_PI);
+            }
+            offer*=le*plagueLocalFalloff(centreDistance);
+            if(!any(greaterThan(offer,vec3(0.0))) || any(isnan(offer)) || any(isinf(offer))) continue;
+            unshadowed+=offer;
+
+            // Everything above is exact and the same every frame. Only whether something stands
+            // in the way is sampled, so only that is cut into pieces: each probe speaks for its
+            // own quarter of the rectangle, and blocking one loses that quarter.
+            int probes=split ? 4 : 1;
+            float shareEach=dot(offer,vec3(0.2126,0.7152,0.0722))/float(probes);
+            for(int piece=0;piece<probes;piece++) {
+                worth+=shareEach;
+                // The march is the expensive part, so it only runs while the budget holds.
+                if(rays>=PLAGUE_LOCAL_RAY_CEILING
+                        || shareEach*float(PLAGUE_LOCAL_RAY_BUDGET)<worth) continue;
+                rays++;
+                offered+=shareEach;
+                // Neighbouring pixels asking about different parts of the piece is what a soft
+                // edge is made of, and it lands in the visibility fraction alone, which is
+                // filtered. R2 again, walked per piece so the probes spread rather than agree:
+                // each step lands in the largest gap the earlier ones left. Roberts, "The
+                // Unreasonable Effectiveness of Quasirandom Sequences", 2018.
+                vec2 pieceSize=faceSpan/float(probes==4 ? 2 : 1);
+                vec2 pieceLo=rectLo+vec2(piece&1,piece>>1)*pieceSize;
+                vec2 probeST=pieceLo+pieceSize*fract(jitterUV
+                        +float(face*4+piece)*vec2(0.7548776662466927,0.5698402909980532));
+                vec3 probe=sourceOrigin+(face<2 ? vec3(probeST.x,facePlane,probeST.y)
+                        : face<4 ? vec3(probeST,facePlane) : vec3(facePlane,probeST));
+                if(plagueLocalSegment(point,front>0.0?geometricNormal:-geometricNormal,probe,sourceNormal)) {
+                    reached+=shareEach;
                 }
             }
         }
     }
     if(offered>0.0) visibility=clamp(reached/offered,0.0,1.0);
+    // The fraction measured from the samples that got a ray, applied to every sample's light.
+    // Under the budget this is the same sum the marched samples alone would have given.
+    radiance=unshadowed*visibility;
     return !any(isnan(radiance)) && !any(isinf(radiance))
             && !any(isnan(unshadowed)) && !any(isinf(unshadowed));
 }
