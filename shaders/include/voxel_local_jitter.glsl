@@ -6,9 +6,16 @@
 // to the display: turn the camera and the wall slides underneath a pattern that stays put, so the
 // grain appears to swim over a surface that never moved.
 //
-// Held still in time as well, with no frame in it. Moving the point every frame only helps if
-// something averages the frames, and nothing here does. What clears the grain is the filter over
-// neighbouring pixels in voxel_local_combine, and that only needs neighbours to differ.
+// Moved every frame as well. A probe is a yes or no, and four of them per light leave a pixel
+// holding one of five answers, which reads as grain however well the neighbours are filtered.
+// voxel_local_accum averages a pixel over frames, so a point that asks about a different part of
+// its light each frame settles on the real fraction; a point that asks the same part forever
+// cannot. The frame walks the sequence in the other direction from the piece index, so the two
+// never march together.
+//
+// Wrapped at 48, which divides the engine's own counter wrap evenly and so cycles with no jump at
+// it. Longer than the frames voxel_local_accum gathers, so a pixel sees a fresh offset every frame
+// of its window.
 //
 // The cell this hashes is sized to the PIXEL, not to the block. A fixed world grid cannot work at
 // every distance: fine enough to differ between neighbouring pixels up close is far finer than a
@@ -49,6 +56,10 @@ vec2 plagueLocalJitter(vec3 point) {
     state = a * 747796405u + 2891336453u;
     state ^= state >> 15; state *= 2246822519u;
     uint b = state ^ (state >> 16);
-    return vec2(float(a & 0xFFFFFFu), float(b & 0xFFFFFFu)) / 16777216.0;
+    vec2 base = vec2(float(a & 0xFFFFFFu), float(b & 0xFFFFFFu)) / 16777216.0;
+    // R2, the same reason as anywhere else: each step lands in the largest gap the earlier ones
+    // left. Roberts, "The Unreasonable Effectiveness of Quasirandom Sequences", 2018.
+    float frame = mod(u_FrameState.x, 48.0);
+    return fract(base + frame * vec2(0.5698402909980532, 0.7548776662466927));
 }
 #endif

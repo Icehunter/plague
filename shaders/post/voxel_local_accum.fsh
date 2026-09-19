@@ -10,7 +10,7 @@
 // Only the visibility is averaged. The light beside it is already smooth and already carries the
 // block's texture, so it has nothing to gain and detail to lose.
 
-uniform sampler2D u_Input0; // voxelLocalUnshadowed, a = this frame's visibility
+uniform sampler2D u_Input0; // voxelLocalVisibility, r = this frame's visibility
 uniform sampler2D u_Input1; // voxelLocalVisAccum.history, r = what previous frames settled on
 uniform sampler2D u_Input2; // builtin.gMotion
 uniform sampler2D u_Input3; // builtin.depth
@@ -19,15 +19,37 @@ uniform sampler2D u_Input4; // builtin.gNormal
 in vec2 texCoord;
 out vec4 fragColor;
 
-// How many frames a settled pixel averages over. Deliberately long: a ceiling only sees the top
-// face of a glowstone, so barely a handful of the twenty-four emitter samples ever contribute
-// there, and a handful of yes-or-no answers is close to one. Frames are the only cheap axis left,
-// since every extra sample within a frame is another voxel march.
-const float PLAGUE_LOCAL_ACCUM_FRAMES = 25.0;
-// How far this frame may disagree with the average before the average is treated as stale. A
-// surface that comes out of shadow steps by far more than the sampling noise ever does, so this
-// separates a real change from a coin toss.
-const float PLAGUE_LOCAL_ACCUM_STEP = 0.35;
+// How many frames a settled pixel averages over.
+//
+// This is what a change costs to land. The average moves by one part in this many each frame, so
+// at eight a pixel is most of the way there in a quarter of a second and settled inside one. A
+// longer window is smoother and slower, and past about this the wait is the thing a player sees
+// rather than the grain.
+//
+// Four probes a frame is what the frame rate affords, so the window carries more of the
+// smoothing than it otherwise would. Twelve is the middle of the two failures: shorter and the
+// grain shows at rest, longer and the wait after a block moves is what shows instead.
+const float PLAGUE_LOCAL_ACCUM_FRAMES = 12.0;
+// How far this frame may disagree with the average before the average is treated as stale.
+//
+// Four yes-or-no probes land on one of five answers, so a pixel sitting in the soft edge of a
+// shadow can differ from its own settled average by three quarters and still be telling the truth.
+// A light going out, or a block dropped in the way, moves it by everything. The bar sits above the
+// first and below the second.
+const float PLAGUE_LOCAL_ACCUM_STEP = 0.8;
+// A change smaller than that bar hides under the sampling noise, so it is found by watching which
+// SIDE of the average the samples keep landing on. Noise lands on both sides and averages to
+// nothing; a block dropped in the way lands on one side every frame, and the running average of
+// the gap walks away from zero.
+//
+// How fast that running average follows, and how far it has to walk. Both are set against the
+// noise four probes leave: the running average of the gap wanders with a spread of about one
+// twelfth, so a bar of three tenths sits near four times that. Steady noise crosses it roughly
+// once in a hundred thousand pixel-frames, a handful of pixels a frame, and each of those costs
+// one frame of that pixel's average and nothing else. Below the bar a change still lands, on the
+// ordinary average.
+const float PLAGUE_LOCAL_ACCUM_DRIFT = 0.2;
+const float PLAGUE_LOCAL_ACCUM_DRIFT_BAR = 0.3;
 // As a FRACTION of the depth, since depth is reversed-Z and nonlinear.
 const float PLAGUE_LOCAL_ACCUM_DEPTH_REJECT = 0.02;
 // Cosine of about 25 degrees. Two surfaces further apart than this in facing are not the same
@@ -36,7 +58,7 @@ const float PLAGUE_LOCAL_ACCUM_DEPTH_REJECT = 0.02;
 const float PLAGUE_LOCAL_ACCUM_NORMAL_REJECT = 0.9;
 
 void main() {
-    float current = texture(u_Input0, texCoord).a;
+    float current = texture(u_Input0, texCoord).r;
     // Green carries how many frames this pixel has gathered. A fresh pixel starts at one, which is
     // the whole point: the first frame is taken outright, the second is averaged with it, the third
     // is a third, and so on until the count reaches its cap. A flat blend instead makes every new
@@ -67,15 +89,20 @@ void main() {
         return;
     }
 
-    vec2 previous = texture(u_Input1, previousUv).rg;
+    vec3 previous = texture(u_Input1, previousUv).rgb;
     float history = previous.r;
     float gathered = previous.g;
+    // Blue carries the running average of the gap between a frame and the settled answer.
+    float drift = mix(previous.b, current - history, PLAGUE_LOCAL_ACCUM_DRIFT);
     // A step far bigger than sampling noise is the light itself changing, not a coin landing the
-    // other way. Starting the count again lets the new value arrive at once instead of being
-    // outvoted by tens of frames of a stale answer.
-    if (abs(current - history) > PLAGUE_LOCAL_ACCUM_STEP) {
+    // other way. A smaller step that keeps landing on one side is the same thing arriving quietly.
+    // Starting the count again lets the new value arrive at once instead of being outvoted by tens
+    // of frames of a stale answer.
+    if (abs(current - history) > PLAGUE_LOCAL_ACCUM_STEP
+            || abs(drift) > PLAGUE_LOCAL_ACCUM_DRIFT_BAR) {
         gathered = 0.0;
+        drift = 0.0;
     }
     gathered = min(gathered + 1.0, PLAGUE_LOCAL_ACCUM_FRAMES);
-    fragColor = vec4(mix(history, current, 1.0 / gathered), gathered, 0.0, 1.0);
+    fragColor = vec4(mix(history, current, 1.0 / gathered), gathered, drift, 1.0);
 }

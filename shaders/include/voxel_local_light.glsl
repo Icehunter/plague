@@ -10,9 +10,9 @@
 // own shadow in a scene whose sample count is dominated by something dim and wide. The ceiling
 // bounds the work when the shares keep climbing instead of levelling off.
 //
-// Thirty-two because one glowstone offers twenty-four probes, six faces of four, and spends
-// every ray it asks for.
-const int PLAGUE_LOCAL_RAY_BUDGET = 32;
+// Twenty-four because one glowstone offers exactly that: six faces, four probes each, and it
+// spends every ray it asks for.
+const int PLAGUE_LOCAL_RAY_BUDGET = 24;
 const int PLAGUE_LOCAL_RAY_CEILING = 48;
 #moj_import <fornax_runtime:voxel_local_layout.glsl>
 #moj_import <fornax_runtime:voxel_visibility.glsl>
@@ -116,6 +116,17 @@ vec3 plagueLocalRectFlux(vec3 c0,vec3 c1,vec3 c2,vec3 c3,vec3 point) {
     return 0.5*flux;
 }
 
+// Which half of the answer this caller wants.
+//
+// The light is exact and smooth and carries the pixel's own texture, so it is worked out for every
+// pixel. Whether something stands in the way is sampled and then averaged over frames and over
+// neighbours before anything sees it, so it has no business being asked per pixel at all: that
+// half runs on a smaller image and is stretched back over this one.
+//
+// Defining PLAGUE_LOCAL_VISIBILITY_ONLY drops the BRDF, since a sample's only job there is to say
+// how much of the answer it speaks for, and a flat response weighs that as well as an exact one.
+// Leaving it undefined drops the probes and their rays, which is the whole cost of the pass.
+//
 // Three answers from one walk of the emitters, because only one of them is noisy.
 //
 // `radiance` is what this pixel actually receives, shadows and all, for a caller with nowhere to
@@ -255,9 +266,13 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
             vec3 offer;
             if(front>0.0) {
                 if(dot(normal,dirRep)<=0.0) continue;
+#ifdef PLAGUE_LOCAL_VISIBILITY_ONLY
+                offer=albedo*((1.0-transmission)*front/PLAGUE_PI);
+#else
                 PlagueBrdf brdf=plagueEvaluateBrdf(material,albedo,normal,viewDir,dirRep);
                 float nDotL=max(dot(normal,dirRep),1e-3);
                 offer=(brdf.diffuse*albedo*(1.0-transmission)+brdf.specular)*(front/nDotL);
+#endif
             } else {
                 // Lambertian transmitted radiance: projected incident area over pi. Fresnel
                 // reflection and metallic absorption remove energy before transmission.
@@ -268,15 +283,22 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
             if(!any(greaterThan(offer,vec3(0.0))) || any(isnan(offer)) || any(isinf(offer))) continue;
             unshadowed+=offer;
 
+#ifdef PLAGUE_LOCAL_VISIBILITY_ONLY
             // Everything above is exact and the same every frame. Only whether something stands
             // in the way is sampled, so only that is cut into pieces: each probe speaks for its
-            // own quarter of the rectangle, and blocking one loses that quarter.
+            // own share of the rectangle, and blocking one loses that share.
             //
-            // Always four. One probe leaves a pixel's visibility at nothing or everything, and
-            // the jitter is locked to world position, so the same point takes the same probe every
-            // frame and no amount of waiting smooths it. Varying the count by distance puts a hard
-            // edge in the grain wherever the count changes. The ray budget bounds the cost.
-            const int PLAGUE_LOCAL_PROBES=4;
+            // Four, cut two by two, and the same four wherever the rectangle is. One probe
+            // leaves a pixel's visibility at nothing or everything, and the jitter is locked to
+            // world position, so the same point takes the same probe every frame. Varying the
+            // count by distance puts a hard edge in the grain wherever the count changes.
+            //
+            // How many there are decides what the smoothing costs. Probes are rays, frames of
+            // waiting are how long a block edit takes to land, and a wider filter over neighbours
+            // eats the shadow edge. Four is what the frame rate affords; the wait is bought with
+            // the other two instead. The ray budget bounds it.
+            const int PLAGUE_LOCAL_PROBE_SIDE=2;
+            const int PLAGUE_LOCAL_PROBES=PLAGUE_LOCAL_PROBE_SIDE*PLAGUE_LOCAL_PROBE_SIDE;
             float shareEach=dot(offer,vec3(0.2126,0.7152,0.0722))/float(PLAGUE_LOCAL_PROBES);
             for(int piece=0;piece<PLAGUE_LOCAL_PROBES;piece++) {
                 worth+=shareEach;
@@ -290,16 +312,19 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
                 // filtered. R2 again, walked per piece so the probes spread rather than agree:
                 // each step lands in the largest gap the earlier ones left. Roberts, "The
                 // Unreasonable Effectiveness of Quasirandom Sequences", 2018.
-                vec2 pieceSize=faceSpan*0.5;
-                vec2 pieceLo=rectLo+vec2(piece&1,piece>>1)*pieceSize;
+                vec2 pieceSize=faceSpan/float(PLAGUE_LOCAL_PROBE_SIDE);
+                vec2 pieceLo=rectLo+vec2(piece%PLAGUE_LOCAL_PROBE_SIDE,
+                        piece/PLAGUE_LOCAL_PROBE_SIDE)*pieceSize;
                 vec2 probeST=pieceLo+pieceSize*fract(jitterUV
-                        +float(face*4+piece)*vec2(0.7548776662466927,0.5698402909980532));
+                        +float(face*PLAGUE_LOCAL_PROBES+piece)
+                                *vec2(0.7548776662466927,0.5698402909980532));
                 vec3 probe=sourceOrigin+(face<2 ? vec3(probeST.x,facePlane,probeST.y)
                         : face<4 ? vec3(probeST,facePlane) : vec3(facePlane,probeST));
                 if(plagueLocalSegment(point,front>0.0?geometricNormal:-geometricNormal,probe,sourceNormal)) {
                     reached+=shareEach;
                 }
             }
+#endif
         }
     }
     if(offered>0.0) visibility=clamp(reached/offered,0.0,1.0);

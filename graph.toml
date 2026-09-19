@@ -651,10 +651,20 @@ filter = "nearest"
 # got through, the only sampled quantity and the only one filtered.
 # Visibility averaged over frames. history = true IS the ping-pong: the pass reads its own previous
 # frame. Only this one signal is averaged; the light beside it is smooth already.
+# Half the screen on each axis, which is where the shadow rays are spent. What it holds is already
+# averaged over frames and spread over neighbours before anything reads it, so a quarter of the
+# pixels carry it at no loss anyone can see. The light beside it stays full size, because that one
+# carries the block's own texture.
+[targets.voxelLocalVisibility]
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+
 [targets.voxelLocalVisAccum]
 enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
 format = "rgba16f"
-scale = 1.0
+scale = 0.5
 history = true
 filter = "linear"
 
@@ -687,6 +697,18 @@ inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "voxelOccupanc
           "entityOccluders"]
 outputs = ["voxelLocalUnshadowed"]
 
+# Same walk of the emitters, on a quarter of the pixels, and only the half of it that needs rays.
+[[pass]]
+name = "voxel_local_visibility"
+type = "fullscreen"
+shader = "shaders/post/voxel_local_visibility.fsh"
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
+inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "voxelOccupancy",
+          "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelLocalRadiance",
+          "builtin.gMotion", "builtin.blockAtlas", "voxelFaceTexture", "cloudShadowMask",
+          "entityOccluders"]
+outputs = ["voxelLocalVisibility"]
+
 [[pass]]
 # Frames are the cheap axis: the same surface under the same lamp answers the same every frame, so
 # averaging over time costs no extra marches.
@@ -694,7 +716,7 @@ name = "voxel_local_accum"
 type = "fullscreen"
 shader = "shaders/post/voxel_local_accum.fsh"
 enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
-inputs = ["voxelLocalUnshadowed", "voxelLocalVisAccum.history", "builtin.gMotion", "builtin.depth",
+inputs = ["voxelLocalVisibility", "voxelLocalVisAccum.history", "builtin.gMotion", "builtin.depth",
           "builtin.gNormal"]
 outputs = ["voxelLocalVisAccum"]
 
