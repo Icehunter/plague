@@ -2,6 +2,7 @@
 
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:color.glsl>
+#moj_import <fornax_runtime:geometric_normal.glsl>
 #moj_import <fornax_runtime:light_and_ambient_colors.glsl>
 #moj_import <fornax_runtime:light_options.glsl>
 #define PLAGUE_GI 0 //[0 1] compile "Bounce Light" {0="Off" 1="On"}
@@ -78,6 +79,7 @@ uniform sampler2D u_Input15;
 // Appended after every existing input; these are positional and an inserted one re-points every
 // later sampler with no error anywhere.
 #define GI_BOUNCE u_Input20
+#define GI_BOUNCE_DIR u_Input21
 uniform sampler2D u_Input16; // atmoSkyView, the marched dome (atmo_lut.glsl)
 #define ATMO_SKY_VIEW u_Input16
 
@@ -95,6 +97,7 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 // All use the world-position receiver handoff before their shared filtering.
 uniform sampler2D u_Input18; // rtShadowComposite
 uniform sampler2D u_Input20; // giBounce
+uniform sampler2D u_Input21; // giBounceDir, which way that light arrives and how much it agrees
 #define RT_SHADOW_COMPOSITE u_Input18
 // u_Input19 stays reserved (bound to builtin.depth) so no input numbers shift.
 // Must follow NOISE_TEX: PLAGUE_CLOUD_NOISE expands inline where clouds.glsl calls it, so an
@@ -255,6 +258,83 @@ vec3 plagueUnderwaterSunTint(float pattern) {
     vec3 core = PLAGUE_UW_SUN_CORE_AMPLITUDE * pow(coreInput, PLAGUE_UW_SUN_CORE_EXPONENT);
 
     return glow + core;
+}
+#endif
+
+#if PLAGUE_GI != 0
+// How far a cell's light may be pushed up by a pixel facing the light more squarely than the cell
+// did. A pixel turned almost edge-on to the cell's own facing divides by almost nothing, so without
+// a ceiling one bumpy pixel returns many times the light that ever reached it.
+const float PLAGUE_GI_SHAPE_CEILING = 3.0;
+// Below this the cell's facing is too near edge-on for the ratio to mean anything.
+const float PLAGUE_GI_SHAPE_FLOOR = 0.1;
+
+/**
+ * One cell's light, re-aimed at the normal THIS pixel has.
+ *
+ * A cell holds the light arriving at whatever the surface was doing at its own centre, one sample
+ * for every few dozen pixels, so every bump inside it comes out flat. The bearing says which way
+ * that light arrived and how much the arrivals agreed, which is enough to ask the question the grid
+ * could not: how much of it would reach a surface turned THIS way instead.
+ *
+ * Scaled by the ratio of the two cosines, so a cell facing the light squarely and a pixel turned
+ * away from it lose exactly what the turn costs. Faded out by the agreement, since light arriving
+ * from every side has no bearing worth re-aiming and the cell's own value is already right.
+ */
+vec3 plagueGiShape(vec3 light, vec3 bearing, vec4 cellNormal, vec3 pixelNormal) {
+    float agreement = length(bearing);
+    if (agreement <= 1e-4 || dot(cellNormal.xyz, cellNormal.xyz) <= 1e-6) {
+        return light;
+    }
+    vec3 towards = bearing / agreement;
+    // The FLAT face the cell sits on, from gNormal's alpha, not the bumpy normal in its rgb. The
+    // whole point is to measure how far this pixel's bump turns away from the face it lies on, and
+    // a reference that already carries a bump of its own measures one bump against another: the
+    // ratio then swings on whichever way the cell's own centre happened to be tilted, which is
+    // noise dressed up as detail.
+    vec3 face = plagueDecodeGeometricNormal(cellNormal.a, normalize(cellNormal.xyz));
+    float atCell = dot(face, towards);
+    if (atCell < PLAGUE_GI_SHAPE_FLOOR) {
+        return light;
+    }
+    float atPixel = max(dot(pixelNormal, towards), 0.0);
+    float shape = clamp(atPixel / atCell, 0.0, PLAGUE_GI_SHAPE_CEILING);
+    return light * mix(1.0, shape, clamp(agreement, 0.0, 1.0));
+}
+
+// The bounce grid is far coarser than the screen, so reading it straight stretches one cell over
+// many pixels and the picture reads as soft blocks.
+//
+// Four cells around this pixel, each weighted by how close its own depth is to the pixel's. A cell
+// sitting on another surface carries another surface's light, and weighting by depth is what stops
+// it crossing the corner. Falls back to the nearest cell where every neighbour is rejected.
+vec3 plagueGiUpsample(vec2 uv, float depth, vec3 pixelNormal) {
+    const float side = 256.0;
+    vec2 texel = uv * side - 0.5;
+    vec2 base = floor(texel);
+    vec2 f = texel - base;
+    vec3 total = vec3(0.0);
+    float weight = 0.0;
+    for (int y = 0; y <= 1; ++y) {
+        for (int x = 0; x <= 1; ++x) {
+            vec2 cell = (base + vec2(x, y) + 0.5) / side;
+            float cellDepth = texture(G_DEPTH, cell).r;
+            if (cellDepth <= 0.0 || abs(depth - cellDepth) > 0.02 * max(depth, 1e-4)) {
+                continue;
+            }
+            float bilinear = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
+            // Shaped per cell, before the mix: each one arrived from its own bearing, and
+            // averaging the bearings first would aim the whole tap at a direction none of them saw.
+            total += plagueGiShape(texture(GI_BOUNCE, cell).rgb, texture(GI_BOUNCE_DIR, cell).rgb,
+                                   texture(G_NORMAL, cell), pixelNormal) * bilinear;
+            weight += bilinear;
+        }
+    }
+    if (weight > 0.0) {
+        return total / weight;
+    }
+    return plagueGiShape(texture(GI_BOUNCE, uv).rgb, texture(GI_BOUNCE_DIR, uv).rgb,
+                         texture(G_NORMAL, uv), pixelNormal);
 }
 #endif
 
@@ -734,12 +814,9 @@ int debugView = int(u_Param3 + 0.5);
     float shadowSkyGate = shadowSubmergedDepth > 0.0
             ? max(skyLight, exp(-shadowSubmergedDepth / 24.0))
             : skyLight;
-    // Clamped: mix() extrapolates, and a strength above 1.0 drives `shadow` negative across the
-    // deep half of every penumbra, subtracting light instead of removing it. Above 1.0 belongs to
-    // shadowFade at the end, never here.
-    float shadow = mix(1.0, visibility,
-                       clamp(u_ShadowStrength, 0.0, 1.0) * shadowSkyGate * casterStrength)
-                 * pomShadow;
+    // Fully occluded ground receives no direct sun, and that is the whole of it. What fills a
+    // shadow is the sky and what bounces into it, both of which arrive on their own further down.
+    float shadow = mix(1.0, visibility, shadowSkyGate * casterStrength) * pomShadow;
 
     // Separate from sunVisibility(): the shadow map knows only opaque terrain, never the cloud
     // volume, so this multiplies in on its own. Computed in cloud_shadow_mask.fsh at quarter
@@ -913,7 +990,10 @@ int debugView = int(u_Param3 + 0.5);
 
     vec3 localRadiance = vec3(0.0);
     float localBlockLight = blockLight;
-#if PLAGUE_GI != 0
+// Only when the voxel path is off. That path ASSIGNS localRadiance below rather than adding to it,
+// so with both on the bounce is thrown away a line later. Zeroing the block light here as well
+// would then leave the room with neither: no vanilla fill, and a traced answer nothing reads.
+#if PLAGUE_GI != 0 && PLAGUE_LOCAL_LIGHTING == 0
     // Traced light replaces vanilla's block light rather than adding to it. That lightmap is a
     // flood fill: it fills a room evenly whatever stands in the way, so a surface behind a wall
     // reads as lit. The bounce measures the same light against the geometry, and the two together
@@ -921,7 +1001,7 @@ int debugView = int(u_Param3 + 0.5);
     localBlockLight = 0.0;
     // The grid holds light ARRIVING at the surface. A matte surface sends back its own colour
     // times that, so the albedo belongs here rather than in the grid.
-    localRadiance += albedo * texture(GI_BOUNCE, texCoord).rgb;
+    localRadiance += albedo * plagueGiUpsample(texCoord, depth, normal);
 #endif
 #if PLAGUE_LOCAL_LIGHTING != 0
     localRadiance=texture(CLOUD_SHADOW_MASK,texCoord).rgb;
@@ -1042,13 +1122,12 @@ int debugView = int(u_Param3 + 0.5);
     float shadowOcclusion = smoothstep(0.2, 0.9, 1.0 - ambientVisibility)
             * shadowSkyGate * casterStrength * PLAGUE_AMBIENT_SHADOW_MAX;
     // A caster blocks the sun, not the sky, so the fill mostly survives. One flat factor for the
-    // caster's share of the hemisphere, no slider: the conductor chain holds no u_ShadowStrength.
+    // caster's share of the hemisphere.
     envShadowDim = shadowOcclusion * 0.25;
-    // The whole above-1.0 range in one number. The torch guard keeps locally-lit shadow readable:
-    // block light is light the caster never blocked, and it rides the smooth lightmap.
-    float torchShare = plagueBlockLightCurve(blockLight, u_ScreenBrightness);
-    shadowFade = 1.0 - max(u_ShadowStrength - 1.0, 0.0) * shadowOcclusion
-            * (1.0 - clamp(torchShare, 0.0, 1.0));
+    // Nothing dims the sky fill beyond the share the caster actually covers. Pushing it darker
+    // than that is a look, not a measurement, and a shadow deeper than the light it is missing
+    // has no physical reading.
+    shadowFade = 1.0;
 #endif
 
     PlagueLitResult litResult = plagueDoLighting(

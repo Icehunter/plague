@@ -151,6 +151,13 @@ bool plagueVoxelSegmentVisible(vec3 originRel,vec3 dir,float maxDistance,int max
                     +plagueCoverageMod(section.x,d);
             summary=texelFetch(u_Input6,slot).r;
         }
+        // Bit 31 is the pending sentinel: a window recenter zeroed this slot and the harvest has
+        // not run yet, so its occupancy and payload are not this section's data.
+        //
+        // Not certified, so not visible, the same answer every other uncertifiable case here gives.
+        // Stepping over it as if empty was tried and is worse: a pending section then passes light
+        // through a wall that is about to exist, and a lit block-shaped patch on a shadowed wall is
+        // more obvious than a dark one, not less.
         if((summary&0x80000000u)!=0u) return false;
         if((summary&1u)==0u) {
             t=plagueVoxelSkipEmptySection(cell,stepDir,delta,next);

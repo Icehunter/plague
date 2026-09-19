@@ -26,10 +26,6 @@
 #define SHADOW_SAMPLES 8 //[2 4 8 16] compile "Shadow Samples" {2="Low" 4="Medium" 8="High" 16="Epic"}
 
 #define u_ShadowSoftness 1.5 //[0.0..6.0 step 0.5] runtime "Shadow Softness"
-// Past 1.0 also darkens ambient fill inside shadow, keyed on a broadened occlusion query
-// (PLAGUE_SHADOW_AMBIENT_BROADEN) rather than the noisy sharp signal, capped by
-// PLAGUE_AMBIENT_SHADOW_MAX so shadowed ground never reaches black.
-#define u_ShadowStrength 1.50 //[0.00..2.00 step 0.05] runtime "Shadow Strength"
 // The engine reads this exact name to size the shadow frustum, so it must stay in blocks.
 #define u_ShadowDistance 96.0 //[16.0..512.0 step 16.0] runtime "Shadow Distance"
 

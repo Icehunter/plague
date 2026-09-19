@@ -17,7 +17,7 @@ const float PLAGUE_LOCAL_EMITTER_SPAN=1.0;
 #ifdef PLAGUE_VOXEL_ENTITY_OCCLUDERS
 #moj_import <fornax_runtime:entity_occluders.glsl>
 #endif
-// Caller supplies source word/size accessors, a plagueLocalJitter() per-pixel 2D dither and
+// Caller supplies source word/size accessors, the 2D dither (taken in uniform control flow) and
 // voxel_coverage traversal. Primary and reflected surfaces use the same finite segment query;
 // there is no screen or receiver-quadrant cache.
 vec3 plagueLocalSegmentStart(vec3 point,vec3 geometricNormal) {
@@ -89,15 +89,31 @@ bool plagueLocalThinReceiver(vec3 point,vec3 geometricNormal) {
     return textureSize(u_Input10)==d*d*d*96*42
             && (texelFetch(u_Input10,entry*42+face*7).r&0x03000000u)==0x03000000u;
 }
+// Three answers from one walk of the emitters, because only one of them is noisy.
+//
+// `radiance` is what this pixel actually receives, shadows and all, for a caller with nowhere to
+// put the pieces. `unshadowed` is the same sum with every emitter treated as visible: smooth,
+// deterministic, and carrying the pixel's own texture, normal and relief. `visibility` is the
+// fraction of the offered light that got through, weighted by how much each sample was worth.
+//
+// Multiplied back together they give `radiance` again. Kept apart, a screen-space filter can clean
+// the sampling noise out of `visibility` alone, which is the only place it lives, and leave the
+// texture untouched. Filtering the product instead blurs the block.
 bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
-        PlagueMaterial material,vec3 albedo,out vec3 radiance) {
+        PlagueMaterial material,vec3 albedo,vec2 jitterUV,out vec3 radiance,out vec3 unshadowed,
+        out float visibility) {
     radiance=vec3(0.0);
+    unshadowed=vec3(0.0);
+    // Nothing offered reads as fully lit: a pixel no emitter reaches is not a shadowed pixel, and
+    // zero here would paint it black once the two are multiplied.
+    visibility=1.0;
+    float offered=0.0;
+    float reached=0.0;
     int d=u_VoxelWindow.w;
     if(d<1 || d>33 || plagueLocalSourceSize()!=PLAGUE_LOCAL_SOURCE_WORDS
             || plagueLocalSourceWord(0)!=2u || plagueLocalSourceWord(1)!=uint(PLAGUE_LOCAL_CAPACITY)
             || plagueLocalSourceWord(2)>uint(PLAGUE_LOCAL_CAPACITY)) return false;
     if(any(isnan(point)) || any(isinf(point)) || any(isnan(normal)) || any(isinf(normal))) return false;
-    vec2 jitterUV=plagueLocalJitter();
     // Authored thin-sheet model: at maximum subsurface response half the diffuse energy goes
     // to each hemisphere. This splits diffuse energy; it adds no extra emitter power and gives
     // solid backing no transmission. It is a local sheet approximation, not a volume BSSRDF.
@@ -166,12 +182,35 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
                     // same at every SPAN: four unclipped quarters always sum to 1.0.
                     float clippedArea=(areaHi.x-areaLo.x)*(areaHi.y-areaLo.y)
                             /(PLAGUE_LOCAL_EMITTER_SPAN*PLAGUE_LOCAL_EMITTER_SPAN);
-                    // Shift the sample point inside its clipped quarter. The quarter's weight is
-                    // the clipped area above; the point does not change it.
-                    vec2 areaST=mix(areaLo,areaHi,jitterUV);
+                    // TWO points on the same clipped quarter, and which one is used where is the
+                    // whole reason the split works.
+                    //
+                    // The middle is where the light is measured from: distance, both cosines and
+                    // the BRDF all read it, and all of them are then the same for neighbouring
+                    // pixels. Measuring from the jittered point instead puts the dither into the
+                    // brightness as well as the shadow, and no filter over one of them can reach it.
+                    //
+                    // The jittered point is where the ray is sent, and nowhere else. Neighbouring
+                    // pixels asking about different parts of the quarter is what a soft edge is
+                    // made of, and it lands in the visibility fraction alone, which is filtered.
                     float areaPlane=float(face&1);
-                    vec3 emitter=sourceOrigin+(face<2 ? vec3(areaST.x,areaPlane,areaST.y)
-                            : face<4 ? vec3(areaST,areaPlane) : vec3(areaPlane,areaST));
+                    vec2 centreST=mix(areaLo,areaHi,vec2(0.5));
+                    // Each face and quarter looks at a DIFFERENT part of its own square. One
+                    // offset shared by all of them moves every sample together, so the twenty-four
+                    // agree with each other and their average is exactly as noisy as one of them.
+                    // Walking the offset by slot spreads them instead, and twenty-four samples that
+                    // disagree average down by nearly five.
+                    //
+                    // R2 again, for the same reason as anywhere else: each step lands in the
+                    // largest gap the earlier ones left, so a handful of slots already covers the
+                    // square evenly rather than clumping. Roberts, "The Unreasonable Effectiveness
+                    // of Quasirandom Sequences", 2018.
+                    vec2 probeST=mix(areaLo,areaHi,fract(jitterUV
+                            +float(face*4+quarter)*vec2(0.7548776662466927,0.5698402909980532)));
+                    vec3 emitter=sourceOrigin+(face<2 ? vec3(centreST.x,areaPlane,centreST.y)
+                            : face<4 ? vec3(centreST,areaPlane) : vec3(areaPlane,centreST));
+                    vec3 probe=sourceOrigin+(face<2 ? vec3(probeST.x,areaPlane,probeST.y)
+                            : face<4 ? vec3(probeST,areaPlane) : vec3(areaPlane,probeST));
                     vec3 delta=emitter-point;
                     float r2=dot(delta,delta);
                     if(r2<=PLAGUE_LOCAL_NUDGE*PLAGUE_LOCAL_NUDGE || r2>=PLAGUE_LOCAL_REACH*PLAGUE_LOCAL_REACH) continue;
@@ -183,9 +222,8 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
                     vec3 le=uintBitsToFloat(uvec3(plagueLocalSourceWord(sampleBase),
                             plagueLocalSourceWord(sampleBase+1),plagueLocalSourceWord(sampleBase+2)));
                     if(any(isnan(le)) || any(isinf(le)) || !any(greaterThan(le,vec3(0.0)))) continue;
-                    // Exact zero of the front BRDF, before the more expensive visibility query.
+                    // Exact zero of the front BRDF, before anything more expensive.
                     if(geometricCosine>0.0 && dot(normal,direction)<=0.0) continue;
-                    if(!plagueLocalSegment(point,geometricCosine>0.0?geometricNormal:-geometricNormal,emitter,sourceNormal)) continue;
                     vec3 response;
                     if(geometricCosine>0.0) {
                         PlagueBrdf brdf=plagueEvaluateBrdf(material,albedo,normal,viewDir,direction);
@@ -199,11 +237,25 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
                     if(!any(greaterThan(response,vec3(0.0)))) continue;
                     // Quarter radiance stays piecewise constant over its surviving area. Source cosine /
                     // distance squared converts that area; BRDF terms already include receiver cosine.
-                    radiance+=response*le*(clippedArea*sourceCosine*plagueLocalFalloff(r)/r2);
+                    vec3 offer=response*le*(clippedArea*sourceCosine*plagueLocalFalloff(r)/r2);
+                    // What this sample is worth, so the visibility fraction averages by contribution.
+                    // Counting samples instead would let a dim far emitter outvote a bright near one.
+                    float share=dot(offer,vec3(0.2126,0.7152,0.0722));
+                    unshadowed+=offer;
+                    offered+=share;
+                    // The march is the expensive part, so it stays last and only runs for a sample
+                    // that would contribute. The BRDF above runs for blocked samples as well, which
+                    // is arithmetic against a walk through the grid.
+                    if(plagueLocalSegment(point,geometricCosine>0.0?geometricNormal:-geometricNormal,probe,sourceNormal)) {
+                        radiance+=offer;
+                        reached+=share;
+                    }
                 }
             }
         }
     }
-    return !any(isnan(radiance)) && !any(isinf(radiance));
+    if(offered>0.0) visibility=clamp(reached/offered,0.0,1.0);
+    return !any(isnan(radiance)) && !any(isinf(radiance))
+            && !any(isnan(unshadowed)) && !any(isinf(unshadowed));
 }
 #endif

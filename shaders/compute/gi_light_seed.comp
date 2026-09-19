@@ -1,0 +1,94 @@
+#version 450
+
+// A ray from each cell's surface to one glowing block, so the light gets found rather than
+// stumbled upon.
+//
+// A bounce ray sent into the hemisphere finds a torch only by luck. One that does comes back very
+// bright, and a single lucky sample among many dark ones is what a firefly is. Reading the list of
+// lights and aiming at one finds it every time, and the ray that goes there answers whether
+// anything is in the way.
+
+#define PLAGUE_GI 0 //[0 1] compile "Bounce Light" {0="Off" 1="On"}
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#define PLAGUE_GI_LIGHT_READER
+#moj_import <fornax_runtime:gi_lights.glsl>
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Bindings: 0 globals, 1 packOptions (engine-injected), 2 the light list, 3 depth, 4 gNormal,
+// 5 the rays.
+layout(std430, set = 0, binding = 2) readonly buffer AnalyticLightList {
+    uint words[];
+} lights;
+layout(set = 0, binding = 3) uniform sampler2D u_Depth;
+layout(set = 0, binding = 4) uniform sampler2D u_GNormal;
+layout(std430, set = 0, binding = 5) buffer GiLightRequests {
+    vec4 words[];
+} rays;
+
+// The chooser lives in the include and the list lives here, so this is how it reads one.
+uint plagueGiLightWord(uint index) {
+    return lights.words[index];
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= PLAGUE_GI_SIDE * PLAGUE_GI_SIDE) return;
+
+    vec2 cell = vec2(float(index % PLAGUE_GI_SIDE), float(index / PLAGUE_GI_SIDE));
+    vec2 uv = (cell + 0.5) / float(PLAGUE_GI_SIDE);
+
+    float depth = texture(u_Depth, uv).r;
+    vec3 n = texture(u_GNormal, uv).xyz;
+    uint count = min(lights.words[0], PLAGUE_GI_MAX_LIGHTS);
+    // Sky, an unwritten normal, or a frame with no lights at all. A zero-length direction is a
+    // caller bug to the engine's kernel, and a tMax of zero is what says this ray wants no trace.
+    if (depth <= 0.0 || dot(n, n) <= 1e-6 || count == 0u) {
+        rays.words[index * 2u] = vec4(0.0);
+        rays.words[index * 2u + 1u] = vec4(0.0, 1.0, 0.0, 0.0);
+        return;
+    }
+
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 world = u_InvProjModelView * clip;
+    vec3 surface = world.xyz / world.w;
+    vec3 normal = normalize(n);
+
+    // Weighted by what each light would give this cell, so the one ray this cell can afford goes
+    // where the light is. The resolve runs the same chooser on the same cell and frame and lands on
+    // the same light, which is what makes this ray the right question for the shade it answers.
+    PlagueGiPick pick = plagueGiPickLight(surface, normal, count, index);
+    vec3 toLight = pick.light.position - surface;
+    float distance = length(toLight);
+    // Nothing in reach facing this way, or a light the cell sits inside. Neither is a ray worth
+    // tracing, and the resolve drops the same cases by the same test.
+    if (!pick.valid || !(distance > 1e-3)) {
+        rays.words[index * 2u] = vec4(0.0);
+        rays.words[index * 2u + 1u] = vec4(0.0, 1.0, 0.0, 0.0);
+        return;
+    }
+
+    // Straight at the light's middle, the same point every frame. One aim means every pixel asks
+    // the same question, so the answer is either blocked or not and the edge lands exactly where
+    // the geometry puts it: a hard shadow, no penumbra, nothing to average and nothing to drift.
+    // Spreading the aim across the source is what makes a soft edge, and that comes back as its
+    // own control once this is right.
+    vec3 toTarget = toLight;
+    float span = distance;
+
+    // Lifted along the normal rather than along the ray: a light almost level with the surface
+    // leaves tMin alone and would re-hit the face it started on.
+    //
+    // Stopped short of the light by half a block's DIAGONAL, not by a hair. The list puts a light at
+    // the centre of its block, which is inside solid geometry, so a ray that runs almost the whole
+    // way there ends deep inside the very block it is asking about and comes back blocked by it.
+    // Every surface in the room then reads as shadowed and only the light's own faces stay lit.
+    // Half the diagonal of a unit cube is the furthest its surface can be from its centre, so
+    // stopping there clears the block from any direction.
+    // A surface closer than that is already against the light, and the stub that is left misses,
+    // which is the answer that reads as lit.
+    rays.words[index * 2u] = vec4(surface + normal * 0.03, 0.001);
+    rays.words[index * 2u + 1u] = vec4(toTarget / span, max(span - 0.8660254, 0.01));
+}

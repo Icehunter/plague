@@ -1,9 +1,10 @@
 #version 450
 
-// First spreading step over the bounce grid, taps side by side.
+// Second spreading step, taps two cells apart.
 //
-// The kernel and the reason for two passes live in gi_blur_kernel.glsl. This one writes to the
-// middle pair, which only gi_blur_wide reads.
+// Every cell it reads is already an average of its own neighbours, so stepping over the ones in
+// between loses nothing and reaches twice as far. The kernel and the reason are in
+// gi_blur_kernel.glsl.
 
 #define PLAGUE_GI 0 //[0 1] compile "Bounce Light" {0="Off" 1="On"}
 #define FORNAX_COMPUTE_GLOBALS
@@ -12,8 +13,8 @@
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
-// Bindings: 0 globals, 1 packOptions (engine-injected), 2 the raw bounce, 3 depth, 4 the raw
-// bearing, then the outputs, 5 the light and 6 its bearing.
+// Bindings: 0 globals, 1 packOptions (engine-injected), 2 the once-spread bounce, 3 depth, 4 its
+// bearing, then the outputs, 5 the light the frame reads and 6 its bearing.
 layout(rgba16f, set = 0, binding = 2) uniform readonly image2D u_Bounce;
 layout(set = 0, binding = 3) uniform sampler2D u_Depth;
 layout(rgba16f, set = 0, binding = 4) uniform readonly image2D u_Dir;
@@ -25,5 +26,5 @@ layout(rgba16f, set = 0, binding = 6) uniform writeonly image2D u_OutDir;
 void main() {
     ivec2 cell = ivec2(gl_GlobalInvocationID.xy);
     if (cell.x >= PLAGUE_GI_SIDE || cell.y >= PLAGUE_GI_SIDE) return;
-    plagueGiBlurCell(cell, 1);
+    plagueGiBlurCell(cell, 2);
 }

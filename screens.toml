@@ -14,6 +14,7 @@
 # owns them and they appear here, even though the shader that uses them could never declare them.
 
 sliders = [
+    "u_GiLightStrength",
     "u_LightReach",
     "u_RefractStrength",
     "u_AmbientBounceWarmth",
@@ -68,7 +69,6 @@ sliders = [
     "u_ScreenBrightness",
     "u_BlockLightTemp",
     "u_ShadowSoftness",
-    "u_ShadowStrength",
     "u_ShadowDistance",
     "u_RtShadowDistance",
     "u_SsaoRadius",
@@ -512,7 +512,6 @@ elements = [
     "SHADOW_SAMPLES|requires:SHADOWS",
     "u_ShadowDistance|requires:SHADOWS",
     "u_ShadowSoftness|requires:SHADOWS",
-    "u_ShadowStrength|requires:SHADOWS",
     "HIDE_VANILLA_BLOB_SHADOWS",
 ]
 
@@ -790,7 +789,9 @@ elements = [
 
     "<group:Bounce Light>",
     "PLAGUE_GI",
+    "u_GiLightStrength|requires:PLAGUE_GI",
     "PLAGUE_GI_VIEW|requires:PLAGUE_GI",
+    "PLAGUE_LOCAL_DEBUG|requires:PLAGUE_LOCAL_LIGHTING",
 
     "<group:Local Lighting>",
     "PLAGUE_LOCAL_LIGHTING",
@@ -916,6 +917,18 @@ back nothing. Glowing blocks send light whatever the sun does, which is what lig
 
 This takes over from the game's own block light rather than adding to it. That light is a flood \
 fill: it fills a room evenly whatever stands in the way. This light has to get past the walls."""
+
+u_GiLightStrength = """
+How strong glowing blocks are in the bounce light.
+
+One lights a room at 1. Raise it for a brighter, more open look, lower it for a darker one."""
+
+PLAGUE_LOCAL_DEBUG = """
+Shows one half of Coloured Lighting on its own.
+
+Visibility only is how much of each glowing block reaches a surface, as grey. Light only is the \
+brightness with nothing in the way. Everything else multiplies the two together, so a test view is \
+the only way to tell which of them carries a fault."""
 
 PLAGUE_GI_VIEW = """
 Paints the bounce light over the screen on its own, without the rest of the frame.
@@ -1873,13 +1886,6 @@ How soft the edges of shadows are, with plain shadows or with Ray Traced Shadows
 
 Low gives a crisp edge, high gives a wide, soft edge. Changing Shadow Resolution does not change \
 this look."""
-
-u_ShadowStrength = """
-How dark shadows are, with plain shadows or with Ray Traced Shadows turned on.
-
-At 1.0 shadowed ground gets no direct sunlight at all, only light from the sky. Lower lets some \
-sun bleed through, which reads like soft bounced light. Above 1.0 the sky light inside shadows \
-fades too, gradually, and never all the way to black."""
 
 RT_SHADOWS = """
 Uses a more realistic method for sun and moon shadows on nearby surfaces, when your graphics \

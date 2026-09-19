@@ -106,11 +106,19 @@ vec3 plagueVoxelSurfaceDirect(PlagueVoxelSurface surface, vec3 viewDir, vec3 sun
     vec3 localRadiance = vec3(0.0);
     float localBlockLight = blockLight;
 #if PLAGUE_LOCAL_LIGHTING != 0
+    vec3 reflectedUnshadowed;
+    float reflectedVisibility;
     // The camera-column water height cannot classify a reflected surface (dry caves may be below
     // zero). Water reflection recovery already bypasses wet eyes; keep that same boundary here.
     if (u_WaterState.x >= 0.5
+            // A reflected surface has no screen-space neighbours to filter against, so it takes
+            // the shaded answer whole and leaves the split to the primary view.
+            // The middle of every quarter, with no dither. A reflected surface has no screen
+            // neighbours to filter a dither against, and a derivative taken here would sit behind
+            // this very branch, where it is not defined.
             || !plagueLocalLight(surface.position,surface.geometricNormal,surface.normal,viewDir,
-                    surface.material,surface.albedo,localRadiance)) localRadiance=vec3(0.0);
+                    surface.material,surface.albedo,vec2(0.5),localRadiance,reflectedUnshadowed,
+                    reflectedVisibility)) localRadiance=vec3(0.0);
 #endif
     PlagueLitResult lit = plagueDoLighting(colours.sunColour,colours.ambientColour,
             surface.normal,sunDir,shadow,localBlockLight,surface.light.y,surface.ao,surface.emission,

@@ -1,0 +1,25 @@
+#version 450
+
+// Clears the light count before the build pass appends to it.
+//
+// The list is rebuilt from nothing every frame, and the build pass claims its slots with an atomic
+// add on word zero. Without this the count only ever climbs, and within a few frames every append
+// lands past the end of the list where nothing reads it.
+//
+// The engine knows this pass by name. Renaming it leaves the list unbuilt with no error anywhere.
+
+#define PLAGUE_GI 0 //[0 1] compile "Bounce Light" {0="Off" 1="On"}
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+// Bindings: 0 globals, 1 packOptions (engine-injected), 2 the list.
+layout(std430, set = 0, binding = 2) buffer AnalyticLightList {
+    uint words[];
+} lights;
+
+void main() {
+    lights.words[0] = 0u;
+}

@@ -25,14 +25,26 @@ int plagueEntityOccluderSize() { return textureSize(u_Input12); }
 #moj_import <fornax_runtime:voxel_local_jitter.glsl>
 #moj_import <fornax_runtime:voxel_local_light.glsl>
 in vec2 texCoord;
+// ONE output. A fullscreen pass may declare exactly one, and a second is not a compile error: the
+// graph never builds at all and every frame retries, which reads as a black screen.
+//
+// rgb is the light this pixel would receive with nothing in the way: smooth, carrying the pixel's
+// own texture, normal and relief. Alpha is the fraction that got through, the only sampled quantity
+// here and so the only one a filter should touch. The cloud shadow rides in voxelLocalDirect's
+// alpha, and voxel_local_combine reads it straight from the mask to put it there.
 out vec4 fragColor;
 void main() {
-    fragColor=vec4(0.0,0.0,0.0,texture(u_Input11,texCoord).r);
+    // Fully lit where nothing is computed: a pixel no emitter reaches is not a shadowed pixel.
+    fragColor=vec4(0.0,0.0,0.0,1.0);
 #if PLAGUE_LOCAL_LIGHTING != 0
     float depth=texture(u_Input2,texCoord).r;
-    if(depth<=0.0) return;
-    vec4 world=u_InvProjModelView*vec4(texCoord*2.0-1.0,depth,1.0);
+    // Reconstructed and dithered BEFORE any early return. plagueLocalJitter takes a screen
+    // derivative, which is only defined when every pixel of a 2 by 2 quad reaches it; behind a
+    // branch the quad diverges and the cell size comes back as garbage.
+    vec4 world=u_InvProjModelView*vec4(texCoord*2.0-1.0,max(depth,1e-6),1.0);
     vec3 point=world.xyz/world.w;
+    vec2 jitterUV=plagueLocalJitter(point);
+    if(depth<=0.0) return;
     vec4 packedNormal=texture(u_Input0,texCoord);
     if(dot(packedNormal.xyz,packedNormal.xyz)==0.0) return;
     vec3 normal=normalize(packedNormal.xyz);
@@ -46,7 +58,11 @@ void main() {
     float surfaceClass=texture(u_Input1,vec3(texCoord,2.0)).a;
     if(abs(surfaceClass-0.5)>=0.125) material.subsurface=0.0;
     vec3 radiance;
-    if(plagueLocalLight(point,geometricNormal,normal,viewDir,material,albedo,radiance))
-        fragColor.rgb=radiance;
+    vec3 unshadowed;
+    float visibility;
+    if(plagueLocalLight(point,geometricNormal,normal,viewDir,material,albedo,jitterUV,radiance,
+            unshadowed,visibility)) {
+        fragColor=vec4(unshadowed,visibility);
+    }
 #endif
 }

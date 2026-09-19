@@ -6,20 +6,26 @@
 // it. What is left is the colour that surface sends back.
 
 #define PLAGUE_GI 0 //[0 1] compile "Bounce Light" {0="Off" 1="On"}
+#define PLAGUE_GI_VIEW 0 //[0 1] compile "Test View: Bounce Light" {0="Off" 1="On"}
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax:ray_answer.glsl>
 #moj_import <fornax_runtime:light_options.glsl>
 #define PLAGUE_ATMO_READS_SKYVIEW
+#define PLAGUE_ATMO_READS_TRANSMITTANCE
 #moj_import <fornax_runtime:atmo_lut.glsl>
+#define PLAGUE_GI_LIGHT_READER
+#moj_import <fornax_runtime:gi_lights.glsl>
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 // Bindings follow the pass's declaration order, inputs then outputs: 0 globals, 1 packOptions
 // (both engine-injected), 2 the bounce hits, 3 the sun hits, 4 the atlas, 5 last frame's result,
-// 6 motion, 7 depth, 8 the sky table, 9 the bounce rays, 10 the output. Inputs are APPENDED, never
-// inserted: an inserted one re-points every binding after it with no error anywhere.
+// 6 motion, 7 depth, 8 the sky table, 9 the bounce rays, 10 the light list, 11 the light hits,
+// 12 the surface normal, 13 the transmittance table, 14 last frame's direction, then the two
+// outputs, 15 the light and 16 its direction. Inputs are APPENDED, never inserted: an inserted one
+// re-points every binding after it with no error anywhere.
 layout(std430, set = 0, binding = 2) readonly buffer GiRayHits {
     uint words[];
 } hits;
@@ -36,9 +42,25 @@ layout(rgba16f, set = 0, binding = 8) uniform readonly image2D u_SkyView;
 layout(std430, set = 0, binding = 9) readonly buffer GiRayRequests {
     vec4 words[];
 } bounce;
-layout(rgba16f, set = 0, binding = 10) uniform writeonly image2D u_OutBounce;
+layout(std430, set = 0, binding = 10) readonly buffer AnalyticLightList {
+    uint words[];
+} lightList;
+layout(std430, set = 0, binding = 11) readonly buffer GiLightHits {
+    uint words[];
+} lightHits;
+layout(set = 0, binding = 12) uniform sampler2D u_SurfaceNormal;
+// APPENDED, never inserted: a binding put anywhere earlier re-points every one after it with no
+// error anywhere.
+layout(rgba16f, set = 0, binding = 13) uniform readonly image2D u_Transmittance;
+layout(rgba16f, set = 0, binding = 14) uniform readonly image2D u_DirHistory;
 
-const uint PLAGUE_GI_SIDE = 256u;
+// The chooser lives in the include and the list lives here, so this is how it reads one.
+uint plagueGiLightWord(uint index) {
+    return lightList.words[index];
+}
+layout(rgba16f, set = 0, binding = 15) uniform writeonly image2D u_OutBounce;
+layout(rgba16f, set = 0, binding = 16) uniform writeonly image2D u_OutDir;
+
 // Word offsets inside one 8-word hit record. Appending to the record is safe; inserting moves
 // every later field with nothing to report it.
 const uint PLAGUE_GI_HIT_WORDS = 9u;
@@ -51,10 +73,18 @@ const uint PLAGUE_GI_WORD_TIER = 7u;
 // in the top one.
 const uint PLAGUE_GI_WORD_TINT = 8u;
 const float PLAGUE_GI_PI = 3.14159265358979;
-// A full-strength block reads as this much light. Tuned against the sun's own radiance so a
-// glowstone lights a room without out-shouting daylight through the door.
-const float PLAGUE_GI_EMISSION_GAIN = 12.0;
+#define u_GiLightStrength 1.0 //[0.0..4.0 step 0.05] runtime "Bounce Light Strength"
 const uint PLAGUE_GI_FLAG_UV_KNOWN = 1u << 12;
+
+vec4 plagueAtmoFetchTransmittance(vec2 uv) {
+    ivec2 i0, i1;
+    vec2 f;
+    plagueAtmoBilinearSetup(uv, imageSize(u_Transmittance), i0, i1, f);
+    return plagueAtmoBilinearMix(imageLoad(u_Transmittance, i0),
+                                 imageLoad(u_Transmittance, ivec2(i1.x, i0.y)),
+                                 imageLoad(u_Transmittance, ivec2(i0.x, i1.y)),
+                                 imageLoad(u_Transmittance, i1), f);
+}
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
     ivec2 i0, i1;
@@ -64,9 +94,11 @@ vec4 plagueAtmoFetchSkyView(vec2 uv) {
                                  imageLoad(u_SkyView, ivec2(i0.x, i1.y)), imageLoad(u_SkyView, i1), f);
 }
 // How much of each frame's new sample survives the blend. One ray per cell is far too noisy to
-// look at on its own, and this many frames of averaging is what makes a shape out of it; higher
-// and the noise stays, lower and light drags behind a moving camera.
-const float PLAGUE_GI_BLEND = 0.15;
+// look at on its own, and averaging frames is what makes a shape out of it; higher and the noise
+// stays, lower and light drags behind a moving camera. About three frames of memory: a narrow
+// source spread leaves less noise to average away, so the memory can be shorter and the light
+// follows the camera instead of trailing it.
+const float PLAGUE_GI_BLEND = 0.3;
 // Two surfaces this far apart in depth are not the same surface, so the older one is not history
 // for the newer: past this the sample starts again rather than smearing one onto the other.
 // As a FRACTION of the depth. Depth is reversed-Z and nonlinear, so a fixed gap means different
@@ -78,25 +110,122 @@ const float PLAGUE_GI_DEPTH_REJECT = 0.02;
 // the reprojected cell is a poor guess.
 const float PLAGUE_GI_MOTION_CELLS = 12.0;
 
-// This frame's sample, blended with wherever this cell's surface was last frame.
-vec3 plagueGiAccumulate(vec3 current, vec2 uv, float depth) {
+// Two surfaces this far apart in facing are not the same surface either. Depth alone passes a
+// wall and the floor it meets wherever they sit at a similar distance, and the corner then drags
+// one surface's light across the other as the view moves, which is what reads as a smear.
+// Cosine of about 25 degrees.
+const float PLAGUE_GI_NORMAL_REJECT = 0.9;
+
+/** How much a colour counts toward the average bearing: what the eye reads as its brightness. */
+float plagueGiWeight(vec3 colour) {
+    return dot(colour, vec3(0.2126, 0.7152, 0.0722));
+}
+
+/**
+ * Two arrivals folded into one vector: average bearing in its direction, agreement in its length.
+ *
+ * Two lights on opposite sides cancel to nearly nothing, which is the honest answer, since a
+ * surface between them gains no shape from either. One light leaves the vector at full length.
+ */
+vec3 plagueGiBearing(vec3 dirA, vec3 a, vec3 dirB, vec3 b) {
+    float wa = plagueGiWeight(a);
+    float wb = plagueGiWeight(b);
+    float total = wa + wb;
+    return total > 1e-6 ? (dirA * wa + dirB * wb) / total : vec3(0.0);
+}
+
+// Where this cell's surface sat last frame, and whether that spot is still the same surface. The
+// light and the direction it comes from must keep or drop together: one averaged over frames the
+// other was not is a bearing that belongs to a different picture.
+bool plagueGiReproject(vec2 uv, float depth, out ivec2 previousCell) {
+    previousCell = ivec2(0);
     vec2 motion = texture(u_Motion, uv).rg;
     vec2 previousUv = uv - motion;
     if (!(previousUv.x >= 0.0 && previousUv.x <= 1.0
             && previousUv.y >= 0.0 && previousUv.y <= 1.0)) {
-        return current;
+        return false;
     }
     if (abs(depth - texture(u_Depth, previousUv).r) > PLAGUE_GI_DEPTH_REJECT * max(depth, 1e-4)) {
-        return current;
+        return false;
     }
-    ivec2 previousCell = ivec2(clamp(previousUv * float(PLAGUE_GI_SIDE), vec2(0.0),
-            vec2(float(PLAGUE_GI_SIDE) - 1.0)));
+    vec3 nowNormal = texture(u_SurfaceNormal, uv).xyz;
+    vec3 thenNormal = texture(u_SurfaceNormal, previousUv).xyz;
+    if (dot(nowNormal, nowNormal) > 1e-6 && dot(thenNormal, thenNormal) > 1e-6
+            && dot(normalize(nowNormal), normalize(thenNormal)) < PLAGUE_GI_NORMAL_REJECT) {
+        return false;
+    }
     // Kept or dropped, never faded. A blend that rides camera speed makes the amount of noise a
     // function of how fast the view is moving, which reads as the picture breathing.
     if (length(motion) * float(PLAGUE_GI_SIDE) > PLAGUE_GI_MOTION_CELLS) {
-        return current;
+        return false;
     }
-    return mix(imageLoad(u_History, previousCell).rgb, current, PLAGUE_GI_BLEND);
+    previousCell = ivec2(clamp(previousUv * float(PLAGUE_GI_SIDE), vec2(0.0),
+            vec2(float(PLAGUE_GI_SIDE) - 1.0)));
+    return true;
+}
+
+/**
+ * This frame's light and the bearing it came from, each blended with last frame's.
+ *
+ * The bearing is one vector doing two jobs: which way, and how much the arrivals agree. Adding the
+ * contributions as vectors is what produces both at once, since light from every side cancels to a
+ * short vector while light from one lamp stays long.
+ */
+void plagueGiStore(ivec2 cell, vec3 current, vec3 bearing, vec2 uv, float depth) {
+    ivec2 previousCell;
+    if (plagueGiReproject(uv, depth, previousCell)) {
+        current = mix(imageLoad(u_History, previousCell).rgb, current, PLAGUE_GI_BLEND);
+        bearing = mix(imageLoad(u_DirHistory, previousCell).rgb, bearing, PLAGUE_GI_BLEND);
+    }
+    imageStore(u_OutBounce, cell, vec4(current, 1.0));
+    imageStore(u_OutDir, cell, vec4(bearing, 1.0));
+}
+
+/**
+ * What the glowing blocks around this cell send it, when the ray aimed at one got through.
+ *
+ * One ray stands in for the whole list. The chooser took a light in proportion to its own share of
+ * the light arriving here, so shading with the total of every candidate's share, and letting that
+ * one ray say whether the chosen path is clear, gives the arriving light on average while a single
+ * lamp in a room of lamps still reads at full strength.
+ *
+ * The same chooser the seed pass used, so the light shaded here is the light that ray asked about.
+ * A miss on the ray is the good case: nothing stood between the surface and the light.
+ */
+vec3 plagueGiDirectLight(vec2 uv, uint index, float depth, out vec3 bearing) {
+    bearing = vec3(0.0);
+    uint count = min(lightList.words[0], PLAGUE_GI_MAX_LIGHTS);
+    if (count == 0u) {
+        return vec3(0.0);
+    }
+    uint base = index * PLAGUE_GI_HIT_WORDS;
+    uint tier = lightHits.words[base + PLAGUE_GI_WORD_TIER];
+    float distance = uintBitsToFloat(lightHits.words[base + PLAGUE_GI_WORD_DISTANCE]);
+    // Unanswered counts as blocked: a surface no ray reached must not be painted lit.
+    if (int(tier) == FORNAX_RAY_TIER_NONE || distance >= 0.0) {
+        return vec3(0.0);
+    }
+
+    vec3 n = texture(u_SurfaceNormal, uv).xyz;
+    if (dot(n, n) <= 1e-6) {
+        return vec3(0.0);
+    }
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 world = u_InvProjModelView * clip;
+    vec3 surface = world.xyz / world.w;
+
+    PlagueGiPick pick = plagueGiPickLight(surface, normalize(n), count, index);
+    if (!pick.valid) {
+        return vec3(0.0);
+    }
+    vec3 toLight = pick.light.position - surface;
+    float reach = length(toLight);
+    bearing = reach > 1e-4 ? toLight / reach : vec3(0.0);
+    // Every candidate's colour and share, not the one the ray went to. The share already carries
+    // the cosine at the surface, how the light falls off with distance, and the close of its reach.
+    // Over pi because what this pass hands on is light arriving, and the resolve that reads it
+    // multiplies by the surface it lands on.
+    return pick.colourSum * (u_GiLightStrength / PLAGUE_GI_PI);
 }
 
 void main() {
@@ -109,12 +238,14 @@ void main() {
     ivec2 cell = ivec2(coord);
     uint base = index * PLAGUE_GI_HIT_WORDS;
 
+
     // The tier first. A buffer nothing traced reads back all zeros, zero is a legal distance and a
     // negative distance is a legal answer, so no other word can tell an answer from untouched
     // memory. Red marks the records nothing answered, which is what an unrun trace looks like.
     uint tier = hits.words[base + PLAGUE_GI_WORD_TIER];
     if (int(tier) == FORNAX_RAY_TIER_NONE) {
         imageStore(u_OutBounce, cell, vec4(1.0, 0.0, 0.0, 1.0));
+        imageStore(u_OutDir, cell, vec4(0.0, 0.0, 0.0, 1.0));
         return;
     }
 
@@ -125,10 +256,23 @@ void main() {
     uint flags = hits.words[base + PLAGUE_GI_WORD_FLAGS];
     // A bounce that met nothing escaped to the sky, and carries the sky's own colour in the
     // direction it left. Outdoors that is most of the fill light, so it is not a black miss.
-    if (distance < 0.0 || (flags & PLAGUE_GI_FLAG_UV_KNOWN) == 0u) {
-        vec4 request = bounce.words[index * 2u + 1u];
-        vec3 sky = plagueAtmoSkyView(normalize(request.xyz), sunDir, plagueAtmoCameraRadius()).rgb;
-        imageStore(u_OutBounce, cell, vec4(plagueGiAccumulate(sky, uv, depth), 1.0));
+    //
+    // Only a real miss counts. A ray that MET something and could not name its texture is a hit
+    // with no colour to read, and painting it as sky puts open sky behind every wall: a closed room
+    // then floods with sky light no wall can block, which is the opposite of what a traced bounce
+    // is for. Such a hit carries nothing instead.
+    vec3 directBearing;
+    vec3 direct = plagueGiDirectLight(uv, index, depth, directBearing);
+    vec3 bounceDir = normalize(bounce.words[index * 2u + 1u].xyz);
+
+    if (distance < 0.0) {
+        vec3 sky = plagueAtmoSkyView(bounceDir, sunDir, plagueAtmoCameraRadius()).rgb;
+        plagueGiStore(cell, sky + direct,
+                plagueGiBearing(bounceDir, sky, directBearing, direct), uv, depth);
+        return;
+    }
+    if ((flags & PLAGUE_GI_FLAG_UV_KNOWN) == 0u) {
+        plagueGiStore(cell, direct, directBearing, uv, depth);
         return;
     }
 
@@ -160,11 +304,19 @@ void main() {
     // takes the cosine of a surface square to the sun rather than poisoning the average.
     float cosine = dot(hitNormal, hitNormal) > 1e-6
             ? max(dot(normalize(hitNormal), sunDir), 0.0) : 1.0;
-    vec3 carried = albedo * (lit * cosine / PLAGUE_GI_PI) * plagueAtmoSunRadiance(sunDir);
-    // A glowing block sends light back whether or not the sun reaches it, which is the whole of
-    // indoor bounce light. Its level is vanilla's 0 to 15, squared so a torch does not read as
-    // half a glowstone.
-    float emission = float(tintWord >> 24) / 15.0;
-    carried += albedo * (emission * emission * PLAGUE_GI_EMISSION_GAIN);
-    imageStore(u_OutBounce, cell, vec4(plagueGiAccumulate(carried, uv, depth), 1.0));
+    // plagueAtmoSunRadiance is the sun ABOVE the air, so on its own it shines just as hard at
+    // midnight as at noon: the sun below the world lights every face pointing down at it, a bounce
+    // off a grass floor throws green over the ceiling, and gaps in geometry cut beams through it.
+    // Transmittance to the light is what the air takes out on the way down, and it is zero once the
+    // sun is under the horizon. Every other caller of the radiance passes it through a march that
+    // applies this; a bounce has no march, so it applies it here.
+    vec3 sunlight = plagueAtmoSunRadiance(sunDir)
+            * plagueAtmoTransmittanceToLight(plagueAtmoCameraRadius(), sunDir.y);
+    vec3 carried = albedo * (lit * cosine / PLAGUE_GI_PI) * sunlight;
+    // No emission term here. A glowing block is found by aiming a ray at it from the light list,
+    // which every cell does every frame. Counting it again where a bounce happens to land on one
+    // lights it twice, and a bounce meets a small bright block by luck: one lucky sample among
+    // many dark ones is what speckle is made of.
+    plagueGiStore(cell, carried + direct,
+            plagueGiBearing(bounceDir, carried, directBearing, direct), uv, depth);
 }
