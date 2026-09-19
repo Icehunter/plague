@@ -23,3 +23,11 @@ blocks = [
     "minecraft:redstone_lamp",
 ]
 lighting.voxel = true
+
+# Lava has no model quad to read, so the engine takes its faces from the fluid's own sprite. That
+# path works. The cost of it does not: a lava fall fills the reach with source records and the
+# receiver pass carries all of them. Lava stays out of the light field until that is solved.
+# Uncomment to turn it on.
+#[categories.voxel_fluids]
+#blocks = ["minecraft:lava"]
+#lighting.voxel = true
