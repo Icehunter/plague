@@ -539,41 +539,43 @@ inputs = ["ssr"]
 outputs = []
 
 # --- Bloom ----------------------------------------------------------------------------------------
-# Seven levels, LODs 2..8, each a 7x7 binomial blur of the level above (see bloom_blur.fsh for why
-# derived not tabulated). rgba16f: levels are summed, so 8-bit quantisation error would compound
-# across all seven before the composite sees it.
+# Seven levels, each a 7x7 binomial blur of the level above at half its width (see bloom_blur.fsh
+# for why derived not tabulated). A level is named for how far down it is: bloomDown16 is a
+# sixteenth of the screen on each axis, which is also what its pass is called, so a line in the
+# profiler says which level it is. rgba16f: levels are summed, so 8-bit quantisation error would
+# compound across all seven before the composite sees it.
 
-[targets.bloom1]
+[targets.bloomDown4]
 format = "rgba16f"
 scale = 0.25
 filter = "linear"
 
-[targets.bloom2]
+[targets.bloomDown8]
 format = "rgba16f"
 scale = 0.125
 filter = "linear"
 
-[targets.bloom3]
+[targets.bloomDown16]
 format = "rgba16f"
 scale = 0.0625
 filter = "linear"
 
-[targets.bloom4]
+[targets.bloomDown32]
 format = "rgba16f"
 scale = 0.03125
 filter = "linear"
 
-[targets.bloom5]
+[targets.bloomDown64]
 format = "rgba16f"
 scale = 0.015625
 filter = "linear"
 
-[targets.bloom6]
+[targets.bloomDown128]
 format = "rgba16f"
 scale = 0.0078125
 filter = "linear"
 
-[targets.bloom7]
+[targets.bloomDown256]
 format = "rgba16f"
 scale = 0.00390625
 filter = "linear"
@@ -2490,60 +2492,60 @@ outputs = ["exposure"]
 # Strictly sequential — each level blurs the one above, accumulating all prior levels to widen the
 # blur without striding a full-res image sparsely (see bloom_blur.fsh).
 [[pass]]
-name = "bloom_blur1"
+name = "bloom_down_4"
 type = "fullscreen"
 shader = "shaders/post/bloom_blur.fsh"
 enabled_if = "BLOOM_ENABLED"
 inputs = ["sceneHdrRefracted"]
-outputs = ["bloom1"]
+outputs = ["bloomDown4"]
 
 [[pass]]
-name = "bloom_blur2"
+name = "bloom_down_8"
 type = "fullscreen"
 shader = "shaders/post/bloom_blur.fsh"
 enabled_if = "BLOOM_ENABLED"
-inputs = ["bloom1"]
-outputs = ["bloom2"]
+inputs = ["bloomDown4"]
+outputs = ["bloomDown8"]
 
 [[pass]]
-name = "bloom_blur3"
+name = "bloom_down_16"
 type = "fullscreen"
 shader = "shaders/post/bloom_blur.fsh"
 enabled_if = "BLOOM_ENABLED"
-inputs = ["bloom2"]
-outputs = ["bloom3"]
+inputs = ["bloomDown8"]
+outputs = ["bloomDown16"]
 
 [[pass]]
-name = "bloom_blur4"
+name = "bloom_down_32"
 type = "fullscreen"
 shader = "shaders/post/bloom_blur.fsh"
 enabled_if = "BLOOM_ENABLED"
-inputs = ["bloom3"]
-outputs = ["bloom4"]
+inputs = ["bloomDown16"]
+outputs = ["bloomDown32"]
 
 [[pass]]
-name = "bloom_blur5"
+name = "bloom_down_64"
 type = "fullscreen"
 shader = "shaders/post/bloom_blur.fsh"
 enabled_if = "BLOOM_ENABLED"
-inputs = ["bloom4"]
-outputs = ["bloom5"]
+inputs = ["bloomDown32"]
+outputs = ["bloomDown64"]
 
 [[pass]]
-name = "bloom_blur6"
+name = "bloom_down_128"
 type = "fullscreen"
 shader = "shaders/post/bloom_blur.fsh"
 enabled_if = "BLOOM_ENABLED"
-inputs = ["bloom5"]
-outputs = ["bloom6"]
+inputs = ["bloomDown64"]
+outputs = ["bloomDown128"]
 
 [[pass]]
-name = "bloom_blur7"
+name = "bloom_down_256"
 type = "fullscreen"
 shader = "shaders/post/bloom_blur.fsh"
 enabled_if = "BLOOM_ENABLED"
-inputs = ["bloom6"]
-outputs = ["bloom7"]
+inputs = ["bloomDown128"]
+outputs = ["bloomDown256"]
 
 # Kept as its own pass so tonemap takes one input instead of seven, and so the level weighting is
 # stated in one place rather than spread across the composite.
@@ -2552,7 +2554,7 @@ name = "bloom_combine"
 type = "fullscreen"
 shader = "shaders/post/bloom_combine.fsh"
 enabled_if = "BLOOM_ENABLED"
-inputs = ["bloom1", "bloom2", "bloom3", "bloom4", "bloom5", "bloom6", "bloom7"]
+inputs = ["bloomDown4", "bloomDown8", "bloomDown16", "bloomDown32", "bloomDown64", "bloomDown128", "bloomDown256"]
 outputs = ["bloomFinal"]
 
 # Linear HDR -> displayable sRGB. Kept separate from the resolve so bloom, exposure metering and this

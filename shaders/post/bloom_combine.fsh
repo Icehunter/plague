@@ -9,13 +9,13 @@
 // pyramid combining back to the same brightness, so raising bloom strength never darkens the
 // frame as a side effect (the composite blends TOWARD this buffer rather than adding it).
 
-uniform sampler2D u_Bloom1; // finest level  (least blurred, tightest core)
-uniform sampler2D u_Bloom2;
-uniform sampler2D u_Bloom3;
-uniform sampler2D u_Bloom4;
-uniform sampler2D u_Bloom5;
-uniform sampler2D u_Bloom6;
-uniform sampler2D u_Bloom7; // widest level  (most blurred, softest halo)
+uniform sampler2D u_BloomDown4; // finest level  (least blurred, tightest core)
+uniform sampler2D u_BloomDown8;
+uniform sampler2D u_BloomDown16;
+uniform sampler2D u_BloomDown32;
+uniform sampler2D u_BloomDown64;
+uniform sampler2D u_BloomDown128;
+uniform sampler2D u_BloomDown256; // widest level  (most blurred, softest halo)
 
 in vec2 texCoord;
 out vec4 fragColor;
@@ -50,13 +50,13 @@ void main() {
     float w4 = plagueBloomWeight(4);
     float w5 = plagueBloomWeight(5);
     float w6 = plagueBloomWeight(6);
-    vec3 weightedSum = plagueBloomSanitize(texture(u_Bloom1, texCoord).rgb)
-                      + plagueBloomSanitize(texture(u_Bloom2, texCoord).rgb)
-                      + plagueBloomSanitize(texture(u_Bloom3, texCoord).rgb)
-                      + plagueBloomSanitize(texture(u_Bloom4, texCoord).rgb) * w3
-                      + plagueBloomSanitize(texture(u_Bloom5, texCoord).rgb) * w4
-                      + plagueBloomSanitize(texture(u_Bloom6, texCoord).rgb) * w5
-                      + plagueBloomSanitize(texture(u_Bloom7, texCoord).rgb) * w6;
+    vec3 weightedSum = plagueBloomSanitize(texture(u_BloomDown4, texCoord).rgb)
+                      + plagueBloomSanitize(texture(u_BloomDown8, texCoord).rgb)
+                      + plagueBloomSanitize(texture(u_BloomDown16, texCoord).rgb)
+                      + plagueBloomSanitize(texture(u_BloomDown32, texCoord).rgb) * w3
+                      + plagueBloomSanitize(texture(u_BloomDown64, texCoord).rgb) * w4
+                      + plagueBloomSanitize(texture(u_BloomDown128, texCoord).rgb) * w5
+                      + plagueBloomSanitize(texture(u_BloomDown256, texCoord).rgb) * w6;
     float weightSum = 3.0 + w3 + w4 + w5 + w6;
 
     vec3 combined = plagueBloomSanitize(weightedSum / weightSum);
