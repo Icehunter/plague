@@ -11,13 +11,6 @@
 // Weighted by depth and by facing, so the filter stops at an edge. Depth alone passes a wall and
 // the floor it meets wherever they sit at a similar distance, and light then crawls around the
 // corner.
-//
-// The taps spread further apart for a pixel that has only just started gathering. Those five
-// frames after a block moves are the ones with almost nothing behind them, and the same five taps
-// spaced wider reach over four times the area for the same cost. A settled pixel goes back to
-// touching taps, so the shadow edge it holds stays as sharp as it was. Dammertz, Sewtz, Hanika and
-// Lensch, "Edge-Avoiding A-Trous Wavelet Transform for Fast Global Illumination Filtering",
-// HPG 2009, which is the same trick the bounce light's own blur uses.
 
 // Which half of the local light to show on its own, so the grain can be pinned to one of them
 // instead of guessed at. The light and the visibility are multiplied together by the time anything
@@ -33,17 +26,21 @@ uniform sampler2D u_VoxelLocalVisAccum; // voxelLocalVisAccum, r = visibility al
 in vec2 texCoord;
 out vec4 fragColor;
 
-// Binomial row of five, the discrete Gaussian at this width. Nearer taps count for more.
-const float PLAGUE_LOCAL_VIS_TAP[5] = float[5](0.0625, 0.25, 0.375, 0.25, 0.0625);
+// How far either side of the pixel's own place the taps reach, counted in the visibility's texels.
+// Four across on each axis, which both smooths the sampling and carries the answer up to the
+// screen's size in one go.
+const int PLAGUE_LOCAL_VIS_RADIUS = 2;
+// A tap's share by how far it sits from the pixel's true place, which is somewhere between texels
+// rather than on one. Falls to nothing at the edge of the reach, so a tap entering or leaving
+// arrives at no weight and nothing steps.
+float plagueLocalVisTap(float distance) {
+    return max(0.0, 1.0 - abs(distance) / float(PLAGUE_LOCAL_VIS_RADIUS));
+}
 // As a FRACTION of the depth: depth is reversed-Z and nonlinear, so a fixed gap means different
 // things near and far.
 const float PLAGUE_LOCAL_VIS_DEPTH_REJECT = 0.02;
 // Cosine of about 25 degrees. Past this the tap is another face.
 const float PLAGUE_LOCAL_VIS_NORMAL_REJECT = 0.9;
-// Frames gathered at which the taps close back up to touching. Below it they spread, furthest at
-// the first frame after a change.
-const float PLAGUE_LOCAL_VIS_SETTLED = 6.0;
-const float PLAGUE_LOCAL_VIS_LOOSE = 3.0;
 
 void main() {
     vec4 light = texture(u_VoxelLocalUnshadowed, texCoord);
@@ -62,21 +59,26 @@ void main() {
     }
 
     vec3 normal = normalize(n);
-    // The visibility is held at its own smaller size, so the taps step by ITS texel, not the
-    // screen's. Stepping by the screen's would walk five taps across two of its pixels.
-    vec2 texel = 1.0 / vec2(textureSize(u_VoxelLocalVisAccum, 0));
-    // How many frames this pixel has behind it. Fewer means a wider reach.
-    float gathered = texture(u_VoxelLocalVisAccum, texCoord).g;
-    float spread = gathered >= PLAGUE_LOCAL_VIS_SETTLED ? 1.0
-            : gathered >= PLAGUE_LOCAL_VIS_LOOSE ? 2.0 : 4.0;
+    // Taps named by WHICH texel, not by how far along the picture.
+    //
+    // The visibility may be held smaller than the screen. Asking for it at this pixel's place lands
+    // between its texels, and the two it blends alternate with the column, which stands on the wall
+    // as a bar. Naming the texel and weighting it here leaves nothing to alternate: the answer
+    // moves smoothly with the pixel's true place inside a texel, whatever the two sizes are.
+    vec2 accumSize = vec2(textureSize(u_VoxelLocalVisAccum, 0));
+    vec2 place = texCoord * accumSize - 0.5;
+    ivec2 nearest = ivec2(floor(place));
+    vec2 offset = place - vec2(nearest);
     float total = 0.0;
     float weight = 0.0;
-    for (int y = -2; y <= 2; ++y) {
-        for (int x = -2; x <= 2; ++x) {
-            vec2 tapUv = texCoord + vec2(x, y) * spread * texel;
-            if (any(lessThan(tapUv, vec2(0.0))) || any(greaterThan(tapUv, vec2(1.0)))) {
+    for (int y = 1 - PLAGUE_LOCAL_VIS_RADIUS; y <= PLAGUE_LOCAL_VIS_RADIUS; ++y) {
+        for (int x = 1 - PLAGUE_LOCAL_VIS_RADIUS; x <= PLAGUE_LOCAL_VIS_RADIUS; ++x) {
+            ivec2 tap = nearest + ivec2(x, y);
+            if (any(lessThan(tap, ivec2(0))) || any(greaterThanEqual(tap, ivec2(accumSize)))) {
                 continue;
             }
+            // Where that texel sits on the screen, so the surface under it can be compared.
+            vec2 tapUv = (vec2(tap) + 0.5) / accumSize;
             float tapDepth = texture(u_Depth, tapUv).r;
             if (tapDepth <= 0.0
                     || abs(depth - tapDepth) > PLAGUE_LOCAL_VIS_DEPTH_REJECT * max(depth, 1e-4)) {
@@ -87,8 +89,12 @@ void main() {
                     || dot(normal, normalize(tapN)) < PLAGUE_LOCAL_VIS_NORMAL_REJECT) {
                 continue;
             }
-            float tapWeight = PLAGUE_LOCAL_VIS_TAP[x + 2] * PLAGUE_LOCAL_VIS_TAP[y + 2];
-            total += texture(u_VoxelLocalVisAccum, tapUv).r * tapWeight;
+            float tapWeight = plagueLocalVisTap(float(x) - offset.x)
+                    * plagueLocalVisTap(float(y) - offset.y);
+            if (tapWeight <= 0.0) {
+                continue;
+            }
+            total += texelFetch(u_VoxelLocalVisAccum, tap, 0).r * tapWeight;
             weight += tapWeight;
         }
     }

@@ -20,8 +20,9 @@
 // The cell this hashes is sized to the PIXEL, not to the block. A fixed world grid cannot work at
 // every distance: fine enough to differ between neighbouring pixels up close is far finer than a
 // pixel further away, and a world grid beating against the pixel grid is a moire ripple that slides
-// as the camera walks. Sizing the cell by how much world one pixel covers keeps it at about one
-// cell per pixel wherever the surface is, so neighbours always differ and nothing ever beats.
+// as the camera walks. Sizing the cell by how much world one pixel covers, on each axis by itself,
+// keeps it at about one cell per pixel wherever the surface is and whichever way it faces, so
+// neighbours always differ and nothing ever beats.
 //
 // fwidth is a screen derivative, so this MUST be called in uniform control flow: every pixel of a
 // 2 by 2 quad has to reach it. Behind an early return the quad diverges, the derivative is
@@ -31,14 +32,20 @@
 // The point is camera-relative, which keeps the numbers small and the derivative meaningful far
 // from the origin.
 vec2 plagueLocalJitter(vec3 point) {
-    vec3 footprint = fwidth(point);
-    float cellSize = max(max(footprint.x, footprint.y), footprint.z);
+    // One size PER AXIS, not the largest of the three.
+    //
+    // A wall running away from the camera covers a lot of world for one pixel along itself and
+    // almost none up itself. One size taken from the largest of those is far wider than a pixel on
+    // the short axis, so a whole column of pixels falls in one cell and takes the same sample: a
+    // bar standing straight up the wall. It bites hardest where the pass runs smaller than the
+    // screen, since fwidth is measured in that pass's own pixels and the cell grows with them.
+    vec3 cellSize = fwidth(point);
     // A degenerate derivative at a depth discontinuity would divide by zero; a millimetre of block
     // is far below anything the eye resolves and keeps the division finite.
     // Floored against a degenerate derivative, capped against a quad that straddles a silhouette:
     // one pixel of sky beside one pixel of wall gives a derivative the size of the render distance,
     // and an unbounded cell there is a visible block rather than grain.
-    cellSize = clamp(cellSize, 1.0 / 1024.0, 0.25);
+    cellSize = clamp(cellSize, vec3(1.0 / 1024.0), vec3(0.25));
 
     // Absolute, so the cell belongs to the world rather than to the camera, split into the camera's
     // own block and the offset from it so precision holds far from the origin.

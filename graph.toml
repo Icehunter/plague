@@ -653,20 +653,21 @@ filter = "nearest"
 # got through, the only sampled quantity and the only one filtered.
 # Visibility averaged over frames. history = true IS the ping-pong: the pass reads its own previous
 # frame. Only this one signal is averaged; the light beside it is smooth already.
-# Half the screen on each axis, which is where the shadow rays are spent. What it holds is already
-# averaged over frames and spread over neighbours before anything reads it, so a quarter of the
-# pixels carry it at no loss anyone can see. The light beside it stays full size, because that one
-# carries the block's own texture.
+# How much of each light reaches a pixel, which is where every shadow ray is spent. The screen's
+# own size: held smaller it puts vertical bars on every wall it lights, on walls and ceiling alike,
+# and a pattern that keeps one screen direction across three surface facings is not in the world.
+# What it holds is averaged over frames and spread over neighbours before anything reads it, so a
+# quarter of the pixels would carry it if the bars can ever be explained.
 [targets.voxelLocalVisibility]
 enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
 format = "rgba16f"
-scale = 0.5
+scale = 1.0
 filter = "linear"
 
 [targets.voxelLocalVisAccum]
 enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
 format = "rgba16f"
-scale = 0.5
+scale = 1.0
 history = true
 filter = "linear"
 
