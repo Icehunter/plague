@@ -4,8 +4,8 @@
 // Default Off keeps the normal graph unchanged. These views only read data; they add no light.
 #define PLAGUE_SOURCE_DIAGNOSTIC 0 //[0 1 2 3] compile "Test View: Light Sources" {0="Off" 1="Sources" 2="Freshness" 3="Face Colours"}
 
-uniform sampler2D u_Input0; // opaque depth: sections behind water are terrain, not reflected hits
-uniform sampler2D u_Input1; // section status written by the compute pass, not the raw voxel data
+uniform sampler2D u_Depth; // opaque depth: sections behind water are terrain, not reflected hits
+uniform sampler2D u_VoxelSourceStatus; // section status written by the compute pass, not the raw voxel data
 in vec2 texCoord;
 out vec4 fragColor;
 
@@ -14,7 +14,7 @@ int plagueSourceMod(int a, int d) { return ((a % d) + d) % d; }
 void main() {
     fragColor = vec4(0.0);
 #if PLAGUE_SOURCE_DIAGNOSTIC == 1 || PLAGUE_SOURCE_DIAGNOSTIC == 2
-    float depth = texture(u_Input0, texCoord).r;
+    float depth = texture(u_Depth, texCoord).r;
     if (depth <= 0.0) return;
     // These bright marker colors are status codes, not real light color or strength.
     vec3 marker = vec3(1.0);
@@ -32,8 +32,8 @@ void main() {
     }
     int slot = (plagueSourceMod(section.y, d) * d + plagueSourceMod(section.z, d)) * d
                + plagueSourceMod(section.x, d);
-    ivec2 size = textureSize(u_Input1, 0);
-    vec4 status = texelFetch(u_Input1, ivec2(slot % size.x, slot / size.x), 0);
+    ivec2 size = textureSize(u_VoxelSourceStatus, 0);
+    vec4 status = texelFetch(u_VoxelSourceStatus, ivec2(slot % size.x, slot / size.x), 0);
     // A cleared status image has never been written, and must not look like valid coverage.
     if (status.a < 1.0) { fragColor = vec4(1.0); return; }
     status.a -= 1.0;

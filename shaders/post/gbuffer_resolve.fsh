@@ -32,62 +32,62 @@
 
 #define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="Experimental"}
 
-uniform sampler2D u_Input0; // builtin.gNormal
-#define G_NORMAL u_Input0
+uniform sampler2D u_GNormal; // builtin.gNormal
+#define G_NORMAL u_GNormal
 // A "consolidate" pass (graph.toml) packs three builtins into one sampler slot, one per array
 // layer. See docs/PACK-FORMAT.md, "consolidate exists for the sampler budget".
-uniform sampler2DArray u_Input1; // layer 0 = gAlbedo   (rgb albedo, a = sky light)
+uniform sampler2DArray u_ConsolidatedGbuf; // layer 0 = gAlbedo   (rgb albedo, a = sky light)
                                   // layer 1 = gMaterial (r = smoothness, g = F0, b = porosity/SSS, a = block light)
                                   // layer 2 = gAo       (r = per-texel AO, g = emission,
                                   //                      b = parallax self-shadow, a = surface class)
-#define G_BUF u_Input1
-uniform sampler2D u_Input2; // builtin.depth
-#define G_DEPTH u_Input2
-uniform sampler2D u_Input3; // builtin.lightmap, vanilla's own light-colour LUT
-#define VANILLA_LIGHTMAP u_Input3
+#define G_BUF u_ConsolidatedGbuf
+uniform sampler2D u_Depth; // builtin.depth
+#define G_DEPTH u_Depth
+uniform sampler2D u_Lightmap; // builtin.lightmap, vanilla's own light-colour LUT
+#define VANILLA_LIGHTMAP u_Lightmap
 // Bound by the engine as a hardware COMPARISON sampler, so this must be sampler2DShadow: texture()
 // returns the depth-test result, not the stored depth.
-uniform sampler2DShadow u_Input4; // sunShadowMap
-#define SUN_SHADOW_MAP u_Input4
-uniform sampler2D u_Input5; // ssao. 1.0 unoccluded, 0.0 fully occluded
-#define SSAO_TEX u_Input5
+uniform sampler2DShadow u_SunShadowMap; // sunShadowMap
+#define SUN_SHADOW_MAP u_SunShadowMap
+uniform sampler2D u_Ssao; // ssao. 1.0 unoccluded, 0.0 fully occluded
+#define SSAO_TEX u_Ssao
 
-uniform sampler2D u_Input6; // builtin.gMotion, debug views only
-#define G_MOTION u_Input6
-uniform sampler2D u_Input7; // builtin.celestials, vanilla's sun + 8 moon-phase sprite atlas
-#define CELESTIALS_ATLAS u_Input7
-uniform sampler2D u_Input8; // builtin.noise, engine's 512x512 tileable RGBA noise (R smooth, B fbm)
-#define NOISE_TEX u_Input8
+uniform sampler2D u_GMotion; // builtin.gMotion, debug views only
+#define G_MOTION u_GMotion
+uniform sampler2D u_Celestials; // builtin.celestials, vanilla's sun + 8 moon-phase sprite atlas
+#define CELESTIALS_ATLAS u_Celestials
+uniform sampler2D u_Noise; // builtin.noise, engine's 512x512 tileable RGBA noise (R smooth, B fbm)
+#define NOISE_TEX u_Noise
 // Level 0 is a texel-exact copy of `ssr`; higher mips are the environment convolved to roughness,
 // see plagueReflectionLod.
-uniform sampler2D u_Input9; // ssrPrefilter. rgb = reflected colour, a = hit confidence, mipped.
-#define SSR_PREFILTER u_Input9
+uniform sampler2D u_SsrPrefilter; // ssrPrefilter. rgb = reflected colour, a = hit confidence, mipped.
+#define SSR_PREFILTER u_SsrPrefilter
 // Appended, not inserted: u_InputN is positional, so inserting one shifts every later binding.
-uniform sampler2D u_Input10; // builtin.waterDepth. Reversed-Z, 0.0 = no water surface here.
-#define WATER_DEPTH_TEX u_Input10
-uniform sampler2D u_Input11; // causticsTexture
-#define CAUSTICS_TEX u_Input11
+uniform sampler2D u_WaterDepth; // builtin.waterDepth. Reversed-Z, 0.0 = no water surface here.
+#define WATER_DEPTH_TEX u_WaterDepth
+uniform sampler2D u_CausticsTexture; // causticsTexture
+#define CAUSTICS_TEX u_CausticsTexture
 // u_Input12 stays reserved; raw-map debug views come through RT_SHADOW_COMPOSITE instead.
-uniform sampler2D u_Input13; // moonAlbedo, equirectangular, near side centred
-#define MOON_ALBEDO u_Input13
-uniform sampler2D u_Input14; // moonNormal, tangent-space relief for the same projection
-#define MOON_NORMAL u_Input14
+uniform sampler2D u_MoonAlbedo; // moonAlbedo, equirectangular, near side centred
+#define MOON_ALBEDO u_MoonAlbedo
+uniform sampler2D u_MoonNormal; // moonNormal, tangent-space relief for the same projection
+#define MOON_NORMAL u_MoonNormal
 // voxelLocalDirect: RGB is local direct radiance; alpha is the cloud shadow mask.
 // Sharing this binding keeps the debug arms inside Metal's sixteen-sampler limit.
-uniform sampler2D u_Input15;
-#define CLOUD_SHADOW_MASK u_Input15
+uniform sampler2D u_VoxelLocalDirect;
+#define CLOUD_SHADOW_MASK u_VoxelLocalDirect
 // Appended after every existing input; these are positional and an inserted one re-points every
 // later sampler with no error anywhere.
-#define GI_BOUNCE u_Input20
-#define GI_BOUNCE_DIR u_Input21
-uniform sampler2D u_Input16; // atmoSkyView, the marched dome (atmo_lut.glsl)
-#define ATMO_SKY_VIEW u_Input16
+#define GI_BOUNCE u_GiBounce
+#define GI_BOUNCE_DIR u_GiBounceDir
+uniform sampler2D u_AtmoSkyView; // atmoSkyView, the marched dome (atmo_lut.glsl)
+#define ATMO_SKY_VIEW u_AtmoSkyView
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
     return texture(ATMO_SKY_VIEW, uv);
 }
-uniform sampler2D u_Input17; // atmoAerial, in-scatter and transmittance per screen froxel
-#define ATMO_AERIAL u_Input17
+uniform sampler2D u_AtmoAerial; // atmoAerial, in-scatter and transmittance per screen froxel
+#define ATMO_AERIAL u_AtmoAerial
 
 vec4 plagueAtmoFetchAerial(vec2 uv) {
     return texture(ATMO_AERIAL, uv);
@@ -95,10 +95,10 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 
 // Earlier pass output: r/g = direct/wide ambient visibility; b = the seabed caustic query.
 // All use the world-position receiver handoff before their shared filtering.
-uniform sampler2D u_Input18; // rtShadowComposite
-uniform sampler2D u_Input20; // giBounce
-uniform sampler2D u_Input21; // giBounceDir, which way that light arrives and how much it agrees
-#define RT_SHADOW_COMPOSITE u_Input18
+uniform sampler2D u_RtShadowComposite; // rtShadowComposite
+uniform sampler2D u_GiBounce; // giBounce
+uniform sampler2D u_GiBounceDir; // giBounceDir, which way that light arrives and how much it agrees
+#define RT_SHADOW_COMPOSITE u_RtShadowComposite
 // u_Input19 stays reserved (bound to builtin.depth) so no input numbers shift.
 // Must follow NOISE_TEX: PLAGUE_CLOUD_NOISE expands inline where clouds.glsl calls it, so an
 // earlier import would name NOISE_TEX before it exists. clouds.glsl also declares

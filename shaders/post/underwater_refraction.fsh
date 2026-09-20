@@ -9,10 +9,10 @@
 
 #moj_import <fornax:globals.glsl>
 
-uniform sampler2D u_Input0; // sceneHdrComposited
-uniform sampler2D u_Input1; // builtin.depth: opaque reversed-Z
-uniform sampler2D u_Input2; // builtin.noise: existing tileable engine noise
-uniform sampler2D u_Input3; // builtin.waterDepth: water-surface reversed-Z
+uniform sampler2D u_SceneHdrShimmer; // sceneHdrComposited
+uniform sampler2D u_Depth; // builtin.depth: opaque reversed-Z
+uniform sampler2D u_Noise; // builtin.noise: existing tileable engine noise
+uniform sampler2D u_WaterDepth; // builtin.waterDepth: water-surface reversed-Z
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -44,7 +44,7 @@ vec3 plagueAddonWorldPosAt(vec2 uv, float depth) {
 
 vec2 plagueAddonDepthPair(vec2 uv) {
     // Reversed-Z: larger is nearer. Water depth is included so the warp can't cross its silhouette.
-    return vec2(texture(u_Input1, uv).r, texture(u_Input3, uv).r);
+    return vec2(texture(u_Depth, uv).r, texture(u_WaterDepth, uv).r);
 }
 
 // Callers test depth > 0.0 before calling, so there's no depth <= 0.0 sentinel case to handle here.
@@ -53,7 +53,7 @@ float plagueAddonDistance(vec2 uv, float depth) {
 }
 
 void main() {
-    vec4 original = texture(u_Input0, texCoord);
+    vec4 original = texture(u_SceneHdrShimmer, texCoord);
 
 #if PLAGUE_UNDERWATER
     if (u_WaterState.x > 0.5) {
@@ -85,8 +85,8 @@ void main() {
                              0.60 * probe.x + 0.80 * probe.z)
                       * (u_UnderwaterFlowScale * 1.37)
                       + vec2(-0.008, 0.013) * time + vec2(0.31, 0.17);
-        vec2 flowA = texture(u_Input2, noiseUvA).rg * 2.0 - 1.0;
-        vec2 flowB = texture(u_Input2, noiseUvB).rg * 2.0 - 1.0;
+        vec2 flowA = texture(u_Noise, noiseUvA).rg * 2.0 - 1.0;
+        vec2 flowB = texture(u_Noise, noiseUvB).rg * 2.0 - 1.0;
         vec2 flow = (flowA + flowB) * 0.5;
 
         float sceneDistance = centreDepth > 0.0
@@ -126,7 +126,7 @@ void main() {
         }
 
         vec2 warpedUv = mix(texCoord, candidateUv, edgeGuard);
-        vec3 colour = texture(u_Input0, warpedUv).rgb;
+        vec3 colour = texture(u_SceneHdrShimmer, warpedUv).rgb;
 
         // A second, independently-curved and wrongly-coloured lateral water fog used to live here,
         // duplicating the veil fog.glsl already applies; removed rather than left at a zero default.

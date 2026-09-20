@@ -17,9 +17,9 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:water_reflection.glsl>
 
-uniform sampler2D u_Input0; // builtin.waterNormal: xyz = wave normal, a = signed flags (see terrain.fsh)
-uniform sampler2D u_Input1; // builtin.waterDepth: reversed-Z, 0.0 = no water
-uniform sampler2D u_Input2; // builtin.depth: opaque scene depth, what the ray tests against
+uniform sampler2D u_WaterNormal; // builtin.waterNormal: xyz = wave normal, a = signed flags (see terrain.fsh)
+uniform sampler2D u_WaterDepth; // builtin.waterDepth: reversed-Z, 0.0 = no water
+uniform sampler2D u_Depth; // builtin.depth: opaque scene depth, what the ray tests against
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -62,7 +62,7 @@ float behindAt(vec3 screen, vec3 rayWorldPos) {
     if (screen.x <= 0.0 || screen.x >= 1.0 || screen.y <= 0.0 || screen.y >= 1.0) {
         return -1e9;
     }
-    float sceneDepth = texture(u_Input2, screen.xy).r;
+    float sceneDepth = texture(u_Depth, screen.xy).r;
     if (sceneDepth <= 0.0) {
         return -1e9; // sky: nothing to hit
     }
@@ -92,7 +92,7 @@ float plagueGlintVisibility(vec3 origin, vec3 waveNormal, vec3 lightDir) {
 }
 
 void main() {
-    vec4 waterSample = texture(u_Input0, texCoord);
+    vec4 waterSample = texture(u_WaterNormal, texCoord);
     vec3 waveNormal;
     float waterRoughness;
     float signedWaterFlags;
@@ -102,7 +102,7 @@ void main() {
         fragColor = vec4(-1.0, 0.0, 0.0, 0.0); // not a water texel
         return;
     }
-    float waterDepth = texture(u_Input1, texCoord).r;
+    float waterDepth = texture(u_WaterDepth, texCoord).r;
     if (waterDepth <= 0.0) {
         fragColor = vec4(-1.0, 0.0, 0.0, 0.0);
         return;

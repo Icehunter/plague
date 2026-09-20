@@ -5,8 +5,8 @@
 
 #moj_import <fornax:globals.glsl>
 
-uniform sampler2D u_Input0; // builtin.gNormal
-uniform sampler2D u_Input1; // builtin.depth
+uniform sampler2D u_GNormal; // builtin.gNormal
+uniform sampler2D u_Depth; // builtin.depth
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -41,14 +41,14 @@ float hash12(vec2 p) {
 }
 
 void main() {
-    float depth = texture(u_Input1, texCoord).r;
+    float depth = texture(u_Depth, texCoord).r;
     if (depth <= 0.0) {
         fragColor = 1.0; // sky is never occluded
         return;
     }
 
     vec3 origin = worldPosAt(texCoord, depth);
-    vec3 n = texture(u_Input0, texCoord).xyz;
+    vec3 n = texture(u_GNormal, texCoord).xyz;
     vec3 normal = dot(n, n) > 1e-6 ? normalize(n) : vec3(0.0, 1.0, 0.0);
 
     // Full sphere would report every flat surface as half-occluded.
@@ -90,7 +90,7 @@ void main() {
             continue;
         }
 
-        float sceneDepth = texture(u_Input1, sampleUv).r;
+        float sceneDepth = texture(u_Depth, sampleUv).r;
         if (sceneDepth <= 0.0) {
             continue; // sky behind this sample, nothing to occlude with
         }

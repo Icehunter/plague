@@ -3,10 +3,10 @@
 
 // BrickGridUpload ABI: 128 occupancy, 1024 payload, 96*16 palette words per 16^3-cell section.
 #ifndef PLAGUE_VOXEL_EXTERNAL_BUFFERS
-uniform usamplerBuffer u_Input3;
-uniform usamplerBuffer u_Input4;
-uniform usamplerBuffer u_Input5;
-uniform usamplerBuffer u_Input6;
+uniform usamplerBuffer u_VoxelOccupancy;
+uniform usamplerBuffer u_VoxelPayload;
+uniform usamplerBuffer u_VoxelPalette;
+uniform usamplerBuffer u_VoxelBrickSummary;
 #endif
 
 // Diagnostic codes: solid, cutout candidate, outside, pending, clear-to-boundary, invalid ABI.
@@ -78,15 +78,15 @@ uniform sampler2D u_Input9; // builtin.blockAtlas; appended after the existing r
 #endif
 
 bool plagueVoxelSpriteValid(int base) {
-    uint lo = texelFetch(u_Input5, base + 13).r;
-    uint hi = texelFetch(u_Input5, base + 14).r;
+    uint lo = texelFetch(u_VoxelPalette, base + 13).r;
+    uint hi = texelFetch(u_VoxelPalette, base + 14).r;
     return (hi >> 16) > (lo >> 16) && (hi & 65535u) > (lo & 65535u);
 }
 
 bool plagueVoxelAlphaSolid(int base, vec2 uv) {
     // BrickGridUpload.packUvWord: high half is U, low half V; each is unorm16.
-    uint start = texelFetch(u_Input5, base + 13).r;
-    uint end = texelFetch(u_Input5, base + 14).r;
+    uint start = texelFetch(u_VoxelPalette, base + 13).r;
+    uint end = texelFetch(u_VoxelPalette, base + 14).r;
     vec2 lo = vec2(start >> 16, start & 65535u) / 65535.0;
     vec2 hi = vec2(end >> 16, end & 65535u) / 65535.0;
     // Clamp to texel centres to avoid reading adjacent atlas sprites at cube/cross edges.
@@ -112,7 +112,7 @@ bool plagueVoxelCutoutHit(vec3 o, vec3 dir, ivec3 cell, int base, uint flags,
     if ((flags & 0x80000000u) != 0u) {
         if (!plagueVoxelSpriteValid(base)) { unavailable = true; return false; }
         // CROSS stores one box around two crossed planes, not a solid block.
-        uint packed = texelFetch(u_Input5, base + 7).r;
+        uint packed = texelFetch(u_VoxelPalette, base + 7).r;
         vec3 lo = vec3(packed & 31u, (packed >> 5) & 31u, (packed >> 10) & 31u) / 16.0;
         vec3 hi = vec3((packed >> 15) & 31u, (packed >> 20) & 31u, (packed >> 25) & 31u) / 16.0;
         vec3 size = hi - lo;
@@ -172,7 +172,7 @@ bool plagueVoxelCutoutHit(vec3 o, vec3 dir, ivec3 cell, int base, uint flags,
         // sprite rect stretched across that box rather than the whole cell, so this march agrees
         // with plagueVisibilityCutout in the shadow segment.
         for (int box = 0; box < boxes; box++) {
-            uint packed = texelFetch(u_Input5, base + 7 + box).r;
+            uint packed = texelFetch(u_VoxelPalette, base + 7 + box).r;
             vec3 lo = vec3(packed & 31u, (packed >> 5) & 31u, (packed >> 10) & 31u) / 16.0;
             vec3 hi = vec3((packed >> 15) & 31u, (packed >> 20) & 31u, (packed >> 25) & 31u) / 16.0;
             vec3 size = hi - lo;
@@ -228,8 +228,8 @@ float plagueVoxelTraceMaterialBounded(vec3 originRel, vec3 dir, float maxDistanc
     // Check before multiplying or addressing: the engine's window is at most 33 wide.
     if (d <= 0 || d > 33) return 6.0;
     int slots = d * d * d;
-    if (textureSize(u_Input3) != slots * 128 || textureSize(u_Input4) != slots * 1024
-            || textureSize(u_Input5) != slots * 1536 || textureSize(u_Input6) != slots) return 6.0;
+    if (textureSize(u_VoxelOccupancy) != slots * 128 || textureSize(u_VoxelPayload) != slots * 1024
+            || textureSize(u_VoxelPalette) != slots * 1536 || textureSize(u_VoxelBrickSummary) != slots) return 6.0;
     ivec3 first = u_VoxelWindow.xyz - ivec3((d - 1) / 2);
     // Working near the window origin keeps the small entry nudge alive far from world zero.
     vec3 o = (u_CameraAbs - vec3(first * 16)) + originRel;
@@ -262,7 +262,7 @@ float plagueVoxelTraceMaterialBounded(vec3 originRel, vec3 dir, float maxDistanc
             ivec3 section = localSection + first;
             slot = (plagueCoverageMod(section.y, d) * d + plagueCoverageMod(section.z, d)) * d
                    + plagueCoverageMod(section.x, d);
-            summary = texelFetch(u_Input6, slot).r;
+            summary = texelFetch(u_VoxelBrickSummary, slot).r;
         }
         // Waiting beats occupancy: the payload may still belong to whatever held this slot.
         if ((summary & 0x80000000u) != 0u) return 4.0;
@@ -276,14 +276,14 @@ float plagueVoxelTraceMaterialBounded(vec3 originRel, vec3 dir, float maxDistanc
             int address = slot * 128 + (idx >> 5);
             if (address != occupancyAddress) {
                 occupancyAddress = address;
-                occupancyWord = texelFetch(u_Input3, address).r;
+                occupancyWord = texelFetch(u_VoxelOccupancy, address).r;
             }
             if ((occupancyWord & (1u << uint(idx & 31))) != 0u) {
-                uint payload = texelFetch(u_Input4, slot * 1024 + (idx >> 2)).r;
+                uint payload = texelFetch(u_VoxelPayload, slot * 1024 + (idx >> 2)).r;
                 int entry = int((payload >> uint((idx & 3) * 8)) & 255u);
                 if (entry >= 96) return 6.0;
                 int base = slot * 1536 + entry * 16;
-                uint flags = texelFetch(u_Input5, base).r;
+                uint flags = texelFetch(u_VoxelPalette, base).r;
                 if ((flags & 0xc0000000u) != 0u) {
 #ifdef PLAGUE_VOXEL_ALPHA_CUTOUTS
                     float alphaHit;
@@ -298,14 +298,14 @@ float plagueVoxelTraceMaterialBounded(vec3 originRel, vec3 dir, float maxDistanc
                         int face = hitNormal.y != 0.0 ? (hitNormal.y > 0.0 ? 1 : 0)
                                  : hitNormal.z != 0.0 ? (hitNormal.z > 0.0 ? 3 : 2)
                                  : (hitNormal.x > 0.0 ? 5 : 4);
-                        hitColour = texelFetch(u_Input5, base + 1 + face).r;
+                        hitColour = texelFetch(u_VoxelPalette, base + 1 + face).r;
                         // The stand-in normal can land on an empty face. Average the faces that
                         // do exist rather than invent a colour.
                         if ((flags & 0x80000000u) == 0u && (hitColour >> 24) == 0u) {
                             uvec3 sum = uvec3(0u);
                             uint count = 0u;
                             for (int lane = 0; lane < 6; lane++) {
-                                uint sampleColour = texelFetch(u_Input5, base + 1 + lane).r;
+                                uint sampleColour = texelFetch(u_VoxelPalette, base + 1 + lane).r;
                                 if ((sampleColour >> 24) == 0u) continue;
                                 sum += uvec3((sampleColour >> 16) & 255u,
                                              (sampleColour >> 8) & 255u, sampleColour & 255u);
@@ -330,7 +330,7 @@ float plagueVoxelTraceMaterialBounded(vec3 originRel, vec3 dir, float maxDistanc
                     float nearest = 1e30; // farther than the checked window can reach
                     vec3 nearestNormal = vec3(0.0);
                     for (int box = 0; box < max(boxes, 1); box++) {
-                        uint packed = boxes == 0 ? 0u : texelFetch(u_Input5, base + 7 + box).r;
+                        uint packed = boxes == 0 ? 0u : texelFetch(u_VoxelPalette, base + 7 + box).r;
                         vec3 lo = boxes == 0 ? vec3(0.0)
                                 : vec3(packed & 31u, (packed >> 5) & 31u, (packed >> 10) & 31u) / 16.0;
                         vec3 hi = boxes == 0 ? vec3(1.0)
@@ -352,7 +352,7 @@ float plagueVoxelTraceMaterialBounded(vec3 originRel, vec3 dir, float maxDistanc
                         int face = hitNormal.y != 0.0 ? (hitNormal.y > 0.0 ? 1 : 0)
                                  : hitNormal.z != 0.0 ? (hitNormal.z > 0.0 ? 3 : 2)
                                  : (hitNormal.x > 0.0 ? 5 : 4);
-                        hitColour = texelFetch(u_Input5, base + 1 + face).r;
+                        hitColour = texelFetch(u_VoxelPalette, base + 1 + face).r;
                         return 1.0;
                     }
                 }

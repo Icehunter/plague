@@ -20,16 +20,16 @@
 #moj_import <fornax_runtime:heat_options.glsl>
 #moj_import <fornax_runtime:end_sky.glsl>
 
-uniform sampler2D u_Input0; // sceneHdrRefracted: linear, unbounded, finished composite (water, clouds, veil)
-uniform sampler2D u_Input1; // builtin.depth: reversed-Z, so 0.0 is the far plane
-uniform sampler2D u_Input2; // bloomFinal: half-res bloom pyramid, linear; zero-cleared when bloom is gated off
-uniform sampler2D u_Input3; // builtin.waterDepth: translucent boundary depth, reversed-Z
+uniform sampler2D u_SceneHdrRefracted; // sceneHdrRefracted: linear, unbounded, finished composite (water, clouds, veil)
+uniform sampler2D u_Depth; // builtin.depth: reversed-Z, so 0.0 is the far plane
+uniform sampler2D u_BloomFinal; // bloomFinal: half-res bloom pyramid, linear; zero-cleared when bloom is gated off
+uniform sampler2D u_WaterDepth; // builtin.waterDepth: translucent boundary depth, reversed-Z
 uniform sampler2D u_Input4; // exposure: 1x1 smoothed scene luma accumulator (exposure_measure.fsh), 0.0 if unrun
-uniform sampler2D u_Input5; // underwaterBlurred: half-resolution scene Gaussian
-uniform sampler2D u_Input6; // builtin.noise, the camera water transition mask
-uniform sampler2D u_Input7; // waterVolumeShaftsResolved: full-resolution linear shaft radiance
-uniform sampler2D u_Input8; // builtin.gAo: only .a is read here, the surface class (terrain.fsh:686)
-uniform sampler2D u_Input9; // heatBlurred: half-resolution scene Gaussian, Nether heat haze
+uniform sampler2D u_UnderwaterBlurred; // underwaterBlurred: half-resolution scene Gaussian
+uniform sampler2D u_Noise; // builtin.noise, the camera water transition mask
+uniform sampler2D u_WaterVolumeShaftsResolved; // waterVolumeShaftsResolved: full-resolution linear shaft radiance
+uniform sampler2D u_GAo; // builtin.gAo: only .a is read here, the surface class (terrain.fsh:686)
+uniform sampler2D u_HeatBlurred; // heatBlurred: half-resolution scene Gaussian, Nether heat haze
 
 // Only u_Param3 is read here; the trailing sun/celestial fields other passes append are left
 // undeclared, since the engine binds the full u_PassParams buffer regardless of block coverage.
@@ -102,7 +102,7 @@ float plagueAutoExposure(float luma) {
 #endif
 
 vec2 plagueTonemapDepthPair(vec2 uv) {
-    return vec2(texture(u_Input1, uv).r, texture(u_Input3, uv).r);
+    return vec2(texture(u_Depth, uv).r, texture(u_WaterDepth, uv).r);
 }
 
 float plagueTonemapDistance(vec2 uv, float depth) {
@@ -162,7 +162,7 @@ vec3 plagueHeatBilateralUpsample(sampler2D source, vec2 uv) {
     vec2 sourcePos = uv * sourceSize - 0.5;
     vec2 base = floor(sourcePos);
     vec2 fraction = fract(sourcePos);
-    float centerDepth = texture(u_Input1, uv).r;
+    float centerDepth = texture(u_Depth, uv).r;
     float centerDistance = plagueTonemapDistance(uv, centerDepth);
     vec3 sum = vec3(0.0);
     float weightSum = 0.0;
@@ -170,7 +170,7 @@ vec3 plagueHeatBilateralUpsample(sampler2D source, vec2 uv) {
         for (int x = 0; x < 2; ++x) {
             vec2 corner = vec2(float(x), float(y));
             vec2 tapUv = clamp((base + corner + 0.5) / sourceSize, vec2(0.0), vec2(1.0));
-            float tapDepth = texture(u_Input1, tapUv).r;
+            float tapDepth = texture(u_Depth, tapUv).r;
             float tapDistance = plagueTonemapDistance(tapUv, tapDepth);
             vec2 axisWeight = mix(vec2(1.0) - fraction, fraction, corner);
             float spatialWeight = axisWeight.x * axisWeight.y;
@@ -202,7 +202,7 @@ vec2 plagueWaterCameraUv(vec2 uv) {
         vec2 exitScale = vec2(0.5, 0.25 + exitAmount * exitAmount * 0.25)
                 * vec2(aspectRatio, 1.0);
         vec2 exitNoiseUv = (uv - vec2(0.0, exitAmount)) * exitScale;
-        float waterDrops = texture(u_Input6, exitNoiseUv).r;
+        float waterDrops = texture(u_Noise, exitNoiseUv).r;
         // The rising threshold above shrinks how much of the noise field survives as exitAmount
         // falls, but not how bright a surviving droplet is: a texel just over threshold reaches
         // the same peak near exitAmount == 0 as at exitAmount == 1. Surviving droplets held
@@ -225,7 +225,7 @@ vec2 plagueWaterCameraUv(vec2 uv) {
         // the frame briefly sample one screen-center point instead of the real underwater scene,
         // reading as the whole veil/tint dropping out for the splash's ~1 s decay. Ceiling is
         // u_WaterSplashStrength (water_options.glsl), not hardcoded.
-        float waterSplash = texture(u_Input6, entryNoiseUv).r * entryAmount * u_WaterSplashStrength;
+        float waterSplash = texture(u_Noise, entryNoiseUv).r * entryAmount * u_WaterSplashStrength;
         distortMask = max(distortMask, waterSplash);
     }
 
@@ -288,7 +288,7 @@ vec3 plagueMoteViewDirectionAt(vec2 uv) {
 // Distance to the nearest opaque sample, so a mote cannot be drawn inside or behind terrain. A
 // far-plane sample (reversed-Z zero) means open water, which the shell set bounds on its own.
 float plagueMoteSceneDistance(vec2 uv) {
-    float depth = texture(u_Input1, uv).r;
+    float depth = texture(u_Depth, uv).r;
     if (isnan(depth) || isinf(depth) || depth <= 0.0) {
         return 1e20;
     }
@@ -353,18 +353,18 @@ void main() {
         return;
     }
     if (debugView != 0) {
-        fragColor = vec4(texture(u_Input0, texCoord).rgb, 1.0);
+        fragColor = vec4(texture(u_SceneHdrRefracted, texCoord).rgb, 1.0);
         return;
     }
 
     vec2 frameUv = plagueUnderwaterViewUv(plagueWaterCameraUv(texCoord));
-    vec3 hdr = texture(u_Input0, frameUv).rgb;
+    vec3 hdr = texture(u_SceneHdrRefracted, frameUv).rgb;
 
     // Sky handling must match the resolve's exactly. With SKY_PROCEDURAL the resolve paints the dome
     // into sceneHdr, so tonemap it normally; without it sceneHdr holds LAST FRAME's discarded value,
     // so this must discard too and let vanilla's sky show through. Reversed-Z: far plane is 0.0.
 #ifndef SKY_PROCEDURAL
-    if (texture(u_Input1, frameUv).r <= 0.0) {
+    if (texture(u_Depth, frameUv).r <= 0.0) {
         discard;
     }
 #endif
@@ -395,7 +395,7 @@ void main() {
         // texture in open-ocean framings.
         const float UW_BLUR_BASELINE = 0.18;
         float uwAmount = mix(UW_BLUR_BASELINE, 1.0, smoothstep(0.0, 1.0, uwDistRamp));
-        vec3 uwBlurred = plagueUwBilateralUpsample(u_Input5, frameUv);
+        vec3 uwBlurred = plagueUwBilateralUpsample(u_UnderwaterBlurred, frameUv);
         // Ceiling at 0.92, not 1.0: at blend 1.0 mix() fully replaces the signal with the blur's own
         // flat average colour instead of blending toward it.
         float uwBlurBlend = clamp(u_UwBlurStrength, 0.0, 0.92) * uwAmount;
@@ -406,12 +406,12 @@ void main() {
     // Heat-haze blur, Nether only. Same shape as the underwater blur just above: the Gaussian
     // kernel lives in heat_blur_h.fsh/heat_blur_v.fsh, this only decides the blend amount.
     if (u_WorldBounds.w == 2.0 && u_HeatShimmerNether > 0.5 && u_NetherHeatBlurStrength > 0.0) {
-        float heatDepth = texture(u_Input1, frameUv).r;
+        float heatDepth = texture(u_Depth, frameUv).r;
         float heatDist = plagueTonemapDistance(frameUv, heatDepth);
         float heatBlurStartBlocks = u_NetherHeatBlurStart * 16.0;
         // Ramped over one chunk past the start, so it doesn't show as a hard ring.
         float heatDistRamp = smoothstep(heatBlurStartBlocks, heatBlurStartBlocks + 16.0, heatDist);
-        vec3 heatBlurred = plagueHeatBilateralUpsample(u_Input9, frameUv);
+        vec3 heatBlurred = plagueHeatBilateralUpsample(u_HeatBlurred, frameUv);
         // Same 0.92 ceiling as the underwater blend above, for the same reason.
         float heatBlurBlend = clamp(u_NetherHeatBlurStrength, 0.0, 0.92) * heatDistRamp;
         hdr = mix(hdr, heatBlurred, heatBlurBlend);
@@ -427,7 +427,7 @@ void main() {
 #ifdef BLOOM_ENABLED
     // Blended before exposure and the curve, in scene-referred linear light: bloom is light that
     // scattered in the lens, so it belongs to the scene the curve is measuring. mix(), not +=.
-    vec3 bloom = texture(u_Input2, frameUv).rgb;
+    vec3 bloom = texture(u_BloomFinal, frameUv).rgb;
     bloom = max(bloom, vec3(0.0));
     if (!any(isnan(bloom))) {
         hdr = mix(hdr, bloom, u_BloomStrength);
@@ -436,7 +436,7 @@ void main() {
 
     // Shafts join after the underwater Gaussian and bloom pyramid, so neither spatial filter can
     // spread them across a terrain edge. They remain before the final exposure multiplier below.
-    vec3 resolvedShafts = max(texture(u_Input7, frameUv).rgb, vec3(0.0));
+    vec3 resolvedShafts = max(texture(u_WaterVolumeShaftsResolved, frameUv).rgb, vec3(0.0));
     if (!any(isnan(resolvedShafts)) && !any(isinf(resolvedShafts))) {
         hdr += resolvedShafts;
     }
@@ -504,7 +504,7 @@ void main() {
     // Keep the owner's separate End outline strength; the same light-aware composite applies.
     float outlineScale = u_WorldBounds.w == 3.0 ? max(u_EndOutline, 0.0) : 1.0;
     display = plagueApplyOutline(display,
-            plagueOutlineAmount(u_Input1, u_Input8, u_Input3, frameUv, u_PassTexelSize)
+            plagueOutlineAmount(u_Depth, u_GAo, u_WaterDepth, frameUv, u_PassTexelSize)
                     * outlineScale);
 #endif
 

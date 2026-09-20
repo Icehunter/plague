@@ -8,7 +8,7 @@
 // Ungated: bloom/tonemap read sceneHdrComposited unconditionally, so with water off this must still
 // hand them an unmodified scene.
 
-uniform sampler2D u_Input0; // sceneHdr
+uniform sampler2D u_SceneHdr; // sceneHdr
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -20,5 +20,5 @@ in vec2 texCoord;
 out vec4 fragColor;
 
 void main() {
-    fragColor = texture(u_Input0, texCoord);
+    fragColor = texture(u_SceneHdr, texCoord);
 }

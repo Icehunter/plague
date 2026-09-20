@@ -19,26 +19,26 @@
 #define u_FogOpacityView 0 //[0 1] runtime "Fog Thickness View" {0="Off" 1="On"}
 
 // Positional graph ABI: the scene and its depth are read together, before any later composition.
-uniform sampler2D u_Input0; // sceneHdrUnfogged
-uniform sampler2D u_Input1; // builtin.depth
-uniform sampler2DArray u_Input2; // consolidatedGbuf, layer 0 alpha = sky light
-uniform sampler2D u_Input3; // builtin.waterDepth
-uniform sampler2D u_Input4; // atmoTransmittance
-uniform sampler2D u_Input5; // atmoMultiScatter
-uniform sampler2D u_Input6; // atmoSkyView
-uniform sampler2D u_Input7; // atmoAerial, enclosure metadata only
-uniform sampler2D u_Input8; // builtin.noise
-uniform sampler2DShadow u_Input9; // sunShadowMap
-uniform sampler2D u_Input10; // sunShadowMapRaw
-uniform sampler2D u_Input11; // rtTerrainShadowDepth
-uniform sampler2D u_Input12; // sunEntityShadowMapRaw
-#define G_DEPTH u_Input1
-#define WATER_DEPTH_TEX u_Input3
-#define NOISE_TEX u_Input8
-#define SHADOW_COMPARISON_MAP u_Input9
-#define SHADOW_RAW_MAP u_Input10
-#define RT_TERRAIN_SHADOW_DEPTH u_Input11
-#define ENTITY_SHADOW_RAW_MAP u_Input12
+uniform sampler2D u_SceneHdrUnfogged; // sceneHdrUnfogged
+uniform sampler2D u_Depth; // builtin.depth
+uniform sampler2DArray u_ConsolidatedGbuf; // consolidatedGbuf, layer 0 alpha = sky light
+uniform sampler2D u_WaterDepth; // builtin.waterDepth
+uniform sampler2D u_AtmoTransmittance; // atmoTransmittance
+uniform sampler2D u_AtmoMultiScatter; // atmoMultiScatter
+uniform sampler2D u_AtmoSkyView; // atmoSkyView
+uniform sampler2D u_AtmoAerial; // atmoAerial, enclosure metadata only
+uniform sampler2D u_Noise; // builtin.noise
+uniform sampler2DShadow u_SunShadowMap; // sunShadowMap
+uniform sampler2D u_SunShadowMapRaw; // sunShadowMapRaw
+uniform sampler2D u_RtTerrainShadowDepth; // rtTerrainShadowDepth
+uniform sampler2D u_SunEntityShadowMapRaw; // sunEntityShadowMapRaw
+#define G_DEPTH u_Depth
+#define WATER_DEPTH_TEX u_WaterDepth
+#define NOISE_TEX u_Noise
+#define SHADOW_COMPARISON_MAP u_SunShadowMap
+#define SHADOW_RAW_MAP u_SunShadowMapRaw
+#define RT_TERRAIN_SHADOW_DEPTH u_RtTerrainShadowDepth
+#define ENTITY_SHADOW_RAW_MAP u_SunEntityShadowMapRaw
 #moj_import <fornax_runtime:shadow_handoff.glsl>
 #ifdef SHADOWS
 #moj_import <fornax_runtime:atmo_shadow.glsl>
@@ -50,10 +50,10 @@ bool plagueAtmoShadowCovers(vec3 posBlocks, vec3 sunDir) {
 }
 #endif
 
-vec4 plagueAtmoFetchTransmittance(vec2 uv) { return texture(u_Input4, uv); }
-vec4 plagueAtmoFetchMultiScatter(vec2 uv) { return texture(u_Input5, uv); }
-vec4 plagueAtmoFetchSkyView(vec2 uv) { return texture(u_Input6, uv); }
-vec4 plagueAtmoFetchAerial(vec2 uv) { return texture(u_Input7, uv); }
+vec4 plagueAtmoFetchTransmittance(vec2 uv) { return texture(u_AtmoTransmittance, uv); }
+vec4 plagueAtmoFetchMultiScatter(vec2 uv) { return texture(u_AtmoMultiScatter, uv); }
+vec4 plagueAtmoFetchSkyView(vec2 uv) { return texture(u_AtmoSkyView, uv); }
+vec4 plagueAtmoFetchAerial(vec2 uv) { return texture(u_AtmoAerial, uv); }
 
 // Same fullscreen uniform ABI as material resolve; supplied for the resolve_hdr pass name.
 layout(std140) uniform u_PassParams {
@@ -81,7 +81,7 @@ in vec2 texCoord;
 out vec4 fragColor;
 
 void main() {
-    vec4 scene = texture(u_Input0, texCoord);
+    vec4 scene = texture(u_SceneHdrUnfogged, texCoord);
 #if !PLAGUE_FOG || PLAGUE_AIR_SHADOW_DEBUG
     fragColor = scene;
     return;
@@ -98,7 +98,7 @@ void main() {
     }
     vec4 worldH = u_InvProjModelView * vec4(texCoord * 2.0 - 1.0, depth, 1.0);
     vec3 worldPos = worldH.xyz / worldH.w;
-    float skyLight = texture(u_Input2, vec3(texCoord, 0.0)).a;
+    float skyLight = texture(u_ConsolidatedGbuf, vec3(texCoord, 0.0)).a;
     float rainFactor = clamp(u_SkyState.x, 0.0, 1.0);
     float trueSunHeight = u_SunDirection.w;
     vec3 sunDirTrue = plagueAtmoComputeSunDirection();

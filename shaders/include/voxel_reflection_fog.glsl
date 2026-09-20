@@ -17,9 +17,9 @@
 #moj_import <fornax_runtime:fog_aerial.glsl>
 #moj_import <fornax_runtime:end_sky.glsl>
 
-vec4 plagueAtmoFetchTransmittance(vec2 uv) { return texture(u_Input14, uv); }
-vec4 plagueAtmoFetchMultiScatter(vec2 uv) { return texture(u_Input15, uv); }
-vec4 plagueAtmoFetchSkyView(vec2 uv) { return texture(u_Input16, uv); }
+vec4 plagueAtmoFetchTransmittance(vec2 uv) { return texture(u_AtmoTransmittance, uv); }
+vec4 plagueAtmoFetchMultiScatter(vec2 uv) { return texture(u_AtmoMultiScatter, uv); }
+vec4 plagueAtmoFetchSkyView(vec2 uv) { return texture(u_AtmoSkyView, uv); }
 
 #ifdef SHADOWS
 #moj_import <fornax_runtime:atmo_shadow.glsl>

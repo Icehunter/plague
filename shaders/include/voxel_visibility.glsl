@@ -4,7 +4,7 @@
 // Uses voxel_coverage's buffer bindings, interval and DDA helpers. Visibility needs opacity,
 // not reflected colour: crossed plants have no cardinal face colours but still block light.
 bool plagueVisibilitySprite(int base, out vec2 lo, out vec2 hi) {
-    uint a=texelFetch(u_Input5,base+13).r, b=texelFetch(u_Input5,base+14).r;
+    uint a=texelFetch(u_VoxelPalette,base+13).r, b=texelFetch(u_VoxelPalette,base+14).r;
     lo=vec2(a>>16,a&65535u)/65535.0;
     hi=vec2(b>>16,b&65535u)/65535.0;
     return all(greaterThan(hi,lo));
@@ -49,7 +49,7 @@ int plagueVisibilityCutout(vec3 origin,vec3 dir,ivec3 cell,int base,uint flags,
     if((flags&0x80000000u)!=0u) {
         vec2 loUV,hiUV;
         if(!plagueVisibilitySprite(base,loUV,hiUV)) return 2;
-        uint packed=texelFetch(u_Input5,base+7).r;
+        uint packed=texelFetch(u_VoxelPalette,base+7).r;
         vec3 lo=vec3(packed&31u,(packed>>5)&31u,(packed>>10)&31u)/16.0;
         vec3 hi=vec3((packed>>15)&31u,(packed>>20)&31u,(packed>>25)&31u)/16.0;
         vec3 size=hi-lo;
@@ -90,7 +90,7 @@ int plagueVisibilityCutout(vec3 origin,vec3 dir,ivec3 cell,int base,uint flags,
     // A door, trapdoor, pane or iron bars: alpha-test each stored box's own faces, with the
     // sprite rect stretched across that box rather than the whole cell.
     for(int box=0;box<boxes;box++) {
-        uint packed=texelFetch(u_Input5,base+7+box).r;
+        uint packed=texelFetch(u_VoxelPalette,base+7+box).r;
         vec3 lo=vec3(packed&31u,(packed>>5)&31u,(packed>>10)&31u)/16.0;
         vec3 hi=vec3((packed>>15)&31u,(packed>>20)&31u,(packed>>25)&31u)/16.0;
         vec3 size=hi-lo;
@@ -121,8 +121,8 @@ bool plagueVoxelSegmentVisible(vec3 originRel,vec3 dir,float maxDistance,int max
     if(d<1 || d>33 || maxSteps<=0 || maxDistance<=0.0 || isnan(maxDistance) || isinf(maxDistance)
             || any(isnan(originRel)) || any(isinf(originRel)) || any(isnan(dir)) || any(isinf(dir))) return false;
     int slots=d*d*d;
-    if(textureSize(u_Input3)!=slots*128 || textureSize(u_Input4)!=slots*1024
-            || textureSize(u_Input5)!=slots*1536 || textureSize(u_Input6)!=slots
+    if(textureSize(u_VoxelOccupancy)!=slots*128 || textureSize(u_VoxelPayload)!=slots*1024
+            || textureSize(u_VoxelPalette)!=slots*1536 || textureSize(u_VoxelBrickSummary)!=slots
             || textureSize(u_Input10)!=slots*96*42) return false;
     ivec3 first=u_VoxelWindow.xyz-ivec3((d-1)/2);
     vec3 origin=(u_CameraAbs-vec3(first*16))+originRel;
@@ -149,7 +149,7 @@ bool plagueVoxelSegmentVisible(vec3 originRel,vec3 dir,float maxDistance,int max
             ivec3 section=localSection+first;
             slot=(plagueCoverageMod(section.y,d)*d+plagueCoverageMod(section.z,d))*d
                     +plagueCoverageMod(section.x,d);
-            summary=texelFetch(u_Input6,slot).r;
+            summary=texelFetch(u_VoxelBrickSummary,slot).r;
         }
         // Bit 31 is the pending sentinel: a window recenter zeroed this slot and the harvest has
         // not run yet, so its occupancy and payload are not this section's data.
@@ -168,21 +168,21 @@ bool plagueVoxelSegmentVisible(vec3 originRel,vec3 dir,float maxDistance,int max
         int address=slot*128+(index>>5);
         if(address!=occupancyAddress) {
             occupancyAddress=address;
-            occupancyWord=texelFetch(u_Input3,address).r;
+            occupancyWord=texelFetch(u_VoxelOccupancy,address).r;
         }
         if((occupancyWord&(1u<<uint(index&31)))!=0u) {
-            uint payload=texelFetch(u_Input4,slot*1024+(index>>2)).r;
+            uint payload=texelFetch(u_VoxelPayload,slot*1024+(index>>2)).r;
             int entry=int((payload>>uint((index&3)*8))&255u);
             if(entry>=96) return false;
             int base=slot*1536+entry*16;
-            uint flags=texelFetch(u_Input5,base).r;
+            uint flags=texelFetch(u_VoxelPalette,base).r;
             if((flags&0xc0000000u)!=0u) {
                 if(plagueVisibilityCutout(origin,dir,cell,base,flags,t,maxDistance)!=0) return false;
             } else {
                 int boxes=int(flags&15u);
                 if(boxes==0 || boxes>8) return false;
                 for(int box=0;box<boxes;box++) {
-                    uint packed=texelFetch(u_Input5,base+7+box).r;
+                    uint packed=texelFetch(u_VoxelPalette,base+7+box).r;
                     vec3 lo=vec3(packed&31u,(packed>>5)&31u,(packed>>10)&31u)/16.0;
                     vec3 hi=vec3((packed>>15)&31u,(packed>>20)&31u,(packed>>25)&31u)/16.0;
                     float a,b;

@@ -5,20 +5,20 @@
 #moj_import <fornax_runtime:geometric_normal.glsl>
 #moj_import <fornax_runtime:local_light_mode.glsl>
 
-uniform sampler2D u_Input0; // builtin.gNormal
-uniform sampler2DArray u_Input1; // consolidated GBuffer: albedo/material/AO
-uniform sampler2D u_Input2; // builtin.depth
+uniform sampler2D u_GNormal; // builtin.gNormal
+uniform sampler2DArray u_ConsolidatedGbuf; // consolidated GBuffer: albedo/material/AO
+uniform sampler2D u_Depth; // builtin.depth
 // Slots 3..6/9/10 use the existing shared voxel traversal's buffer/atlas names.
 #define PLAGUE_VOXEL_ALPHA_CUTOUTS
 #define PLAGUE_VOXEL_TEXTURED_FACES
 #moj_import <fornax_runtime:voxel_coverage.glsl>
-uniform sampler2D u_Input11; // cloudShadowMask packed into the otherwise unused output alpha
-uniform usamplerBuffer u_Input7; // sparse local radiance
-uint plagueLocalSourceWord(int word) { return texelFetch(u_Input7,word).r; }
-int plagueLocalSourceSize() { return textureSize(u_Input7); }
-uniform usamplerBuffer u_Input12; // entityOccluders, last input so every earlier slot keeps its index
-float plagueEntityOccluderWord(int word) { return uintBitsToFloat(texelFetch(u_Input12,word).r); }
-int plagueEntityOccluderSize() { return textureSize(u_Input12); }
+uniform sampler2D u_CloudShadowMask; // cloudShadowMask packed into the otherwise unused output alpha
+uniform usamplerBuffer u_VoxelLocalRadiance; // sparse local radiance
+uint plagueLocalSourceWord(int word) { return texelFetch(u_VoxelLocalRadiance,word).r; }
+int plagueLocalSourceSize() { return textureSize(u_VoxelLocalRadiance); }
+uniform usamplerBuffer u_EntityOccluders; // entityOccluders, last input so every earlier slot keeps its index
+float plagueEntityOccluderWord(int word) { return uintBitsToFloat(texelFetch(u_EntityOccluders,word).r); }
+int plagueEntityOccluderSize() { return textureSize(u_EntityOccluders); }
 // Only this pass binds entityOccluders. voxel_local_light.glsl reads it behind this guard, so the
 // reflection recovery pass, which shares that include but has no such buffer, still compiles.
 #define PLAGUE_VOXEL_ENTITY_OCCLUDERS
@@ -38,7 +38,7 @@ void main() {
     // Fully lit where nothing is computed: a pixel no emitter reaches is not a shadowed pixel.
     fragColor=vec4(1.0,0.0,0.0,1.0);
 #if PLAGUE_LOCAL_LIGHTING != 0
-    float depth=texture(u_Input2,texCoord).r;
+    float depth=texture(u_Depth,texCoord).r;
     // Reconstructed and dithered BEFORE any early return. plagueLocalJitter takes a screen
     // derivative, which is only defined when every pixel of a 2 by 2 quad reaches it; behind a
     // branch the quad diverges and the cell size comes back as garbage.
@@ -46,17 +46,17 @@ void main() {
     vec3 point=world.xyz/world.w;
     vec2 jitterUV=plagueLocalJitter(point);
     if(depth<=0.0) return;
-    vec4 packedNormal=texture(u_Input0,texCoord);
+    vec4 packedNormal=texture(u_GNormal,texCoord);
     if(dot(packedNormal.xyz,packedNormal.xyz)==0.0) return;
     vec3 normal=normalize(packedNormal.xyz);
     vec3 geometricNormal=plagueDecodeGeometricNormal(packedNormal.a,normal);
     vec3 viewDir=normalize(-point);
-    vec4 encodedMaterial=texture(u_Input1,vec3(texCoord,1.0));
-    vec3 albedo=plagueSrgbToLinear(texture(u_Input1,vec3(texCoord,0.0)).rgb);
+    vec4 encodedMaterial=texture(u_ConsolidatedGbuf,vec3(texCoord,1.0));
+    vec3 albedo=plagueSrgbToLinear(texture(u_ConsolidatedGbuf,vec3(texCoord,0.0)).rgb);
     PlagueMaterial material=plagueDecodeMaterial(encodedMaterial.r,encodedMaterial.g,encodedMaterial.b);
     // A voxel underneath an entity/particle is not the rendered receiver. Only the exact terrain
     // cutout draw class can opt into the geometry-backed thin-sheet response (quarter-step ABI).
-    float surfaceClass=texture(u_Input1,vec3(texCoord,2.0)).a;
+    float surfaceClass=texture(u_ConsolidatedGbuf,vec3(texCoord,2.0)).a;
     if(abs(surfaceClass-0.5)>=0.125) material.subsurface=0.0;
     vec3 radiance;
     vec3 unshadowed;

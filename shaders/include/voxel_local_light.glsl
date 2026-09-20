@@ -60,8 +60,8 @@ bool plagueLocalSegment(vec3 point,vec3 geometricNormal,vec3 emitter,vec3 emitte
 // a cube face additionally needs an actual cutout mapping with no opaque rendered backing.
 bool plagueLocalThinReceiver(vec3 point,vec3 geometricNormal) {
     int d=u_VoxelWindow.w;
-    if(d<1 || d>33 || textureSize(u_Input3)!=d*d*d*128 || textureSize(u_Input4)!=d*d*d*1024
-            || textureSize(u_Input5)!=d*d*d*1536 || textureSize(u_Input6)!=d*d*d) return false;
+    if(d<1 || d>33 || textureSize(u_VoxelOccupancy)!=d*d*d*128 || textureSize(u_VoxelPayload)!=d*d*d*1024
+            || textureSize(u_VoxelPalette)!=d*d*d*1536 || textureSize(u_VoxelBrickSummary)!=d*d*d) return false;
     ivec3 cameraCell=ivec3(floor(u_CameraAbs));
     vec3 relative=fract(u_CameraAbs)+point;
     for(int axis=0;axis<3;axis++) if(abs(geometricNormal[axis])==1.0) {
@@ -73,15 +73,15 @@ bool plagueLocalThinReceiver(vec3 point,vec3 geometricNormal) {
     ivec3 first=u_VoxelWindow.xyz-ivec3((d-1)/2);
     if(any(lessThan(section,first)) || any(greaterThanEqual(section,first+ivec3(d)))) return false;
     int slot=(plagueCoverageMod(section.y,d)*d+plagueCoverageMod(section.z,d))*d+plagueCoverageMod(section.x,d);
-    uint summary=texelFetch(u_Input6,slot).r;
+    uint summary=texelFetch(u_VoxelBrickSummary,slot).r;
     if((summary&0x80000001u)!=1u) return false;
     ivec3 local=cell&15;
     int idx=(local.y<<8)|(local.z<<4)|local.x;
-    if((texelFetch(u_Input3,slot*128+(idx>>5)).r&(1u<<uint(idx&31)))==0u) return false;
-    int entry=int((texelFetch(u_Input4,slot*1024+(idx>>2)).r>>uint((idx&3)*8))&255u);
+    if((texelFetch(u_VoxelOccupancy,slot*128+(idx>>5)).r&(1u<<uint(idx&31)))==0u) return false;
+    int entry=int((texelFetch(u_VoxelPayload,slot*1024+(idx>>2)).r>>uint((idx&3)*8))&255u);
     if(entry>=96) return false;
     entry+=slot*96;
-    uint flags=texelFetch(u_Input5,entry*16).r;
+    uint flags=texelFetch(u_VoxelPalette,entry*16).r;
     if((flags&0x80000000u)!=0u) return true;
     if((flags&0x40000000u)==0u || max(abs(geometricNormal.x),max(abs(geometricNormal.y),abs(geometricNormal.z)))!=1.0
             || plagueVoxelOpaqueFace(entry,geometricNormal)) return false;

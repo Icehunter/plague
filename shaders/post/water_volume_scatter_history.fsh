@@ -5,10 +5,10 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:water_volume.glsl>
 
-uniform sampler2D u_Input0; // waterVolumeScatterRaw
-uniform sampler2D u_Input1; // waterVolumeScatter.history
-uniform sampler2D u_Input2; // waterVolumeInterval
-uniform sampler2D u_Input3; // waterVolumeInterval.history
+uniform sampler2D u_WaterVolumeScatterRaw; // waterVolumeScatterRaw
+uniform sampler2D u_WaterVolumeScatter_history; // waterVolumeScatter.history
+uniform sampler2D u_WaterVolumeInterval; // waterVolumeInterval
+uniform sampler2D u_WaterVolumeInterval_history; // waterVolumeInterval.history
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -106,9 +106,9 @@ bool plagueWaterScatterHistoryFootprint(
     historyRgb = vec3(0.0);
     historyConfidence = 0.0;
 
-    ivec2 previousSize = textureSize(u_Input3, 0);
+    ivec2 previousSize = textureSize(u_WaterVolumeInterval_history, 0);
     if (any(lessThanEqual(previousSize, ivec2(0)))
-            || any(notEqual(textureSize(u_Input1, 0), previousSize))) {
+            || any(notEqual(textureSize(u_WaterVolumeScatter_history, 0), previousSize))) {
         return false;
     }
 
@@ -129,7 +129,7 @@ bool plagueWaterScatterHistoryFootprint(
             ivec2 sampleCoord = clamp(baseTexel + ivec2(x, y), ivec2(0),
                     previousSize - ivec2(1));
             PlagueWaterVolumeInterval sampleInterval = plagueDecodeWaterVolumeInterval(
-                    texelFetch(u_Input3, sampleCoord, 0));
+                    texelFetch(u_WaterVolumeInterval_history, sampleCoord, 0));
             if (!sampleInterval.valid) {
                 continue;
             }
@@ -138,7 +138,7 @@ bool plagueWaterScatterHistoryFootprint(
                     PLAGUE_WATER_HISTORY_ENTRY_TOLERANCE,
                     PLAGUE_WATER_HISTORY_EXIT_TOLERANCE,
                     PLAGUE_WATER_HISTORY_NORMAL_DOT_MIN);
-            vec4 sampleHistory = texelFetch(u_Input1, sampleCoord, 0);
+            vec4 sampleHistory = texelFetch(u_WaterVolumeScatter_history, sampleCoord, 0);
             if (intervalAgreement <= 0.0
                     || !plagueWaterScatterRawValid(sampleHistory, sampleInterval)) {
                 continue;
@@ -173,15 +173,15 @@ void main() {
     fragColor = vec4(0.0);
 
 #if PLAGUE_UNDERWATER && WATER_SCATTERING_QUALITY != 0
-    ivec2 currentSize = textureSize(u_Input2, 0);
+    ivec2 currentSize = textureSize(u_WaterVolumeInterval, 0);
     if (any(lessThanEqual(currentSize, ivec2(0)))
-            || any(notEqual(textureSize(u_Input0, 0), currentSize))) {
+            || any(notEqual(textureSize(u_WaterVolumeScatterRaw, 0), currentSize))) {
         return;
     }
     ivec2 currentCoord = clamp(
             ivec2(gl_FragCoord.xy), ivec2(0), currentSize - ivec2(1));
     PlagueWaterVolumeInterval currentInterval = plagueDecodeWaterVolumeInterval(
-            texelFetch(u_Input2, currentCoord, 0));
+            texelFetch(u_WaterVolumeInterval, currentCoord, 0));
     if (!currentInterval.valid) {
         fragColor = vec4(0.0);
         return;
@@ -194,7 +194,7 @@ void main() {
         return;
     }
 
-    vec4 centerRaw = texelFetch(u_Input0, currentCoord, 0);
+    vec4 centerRaw = texelFetch(u_WaterVolumeScatterRaw, currentCoord, 0);
     bool centerRawValid = plagueWaterScatterRawValid(centerRaw, currentInterval);
     vec3 currentScatter = centerRawValid ? centerRaw.rgb : vec3(0.0);
     vec3 filteredScatter = vec3(0.0);
@@ -209,8 +209,8 @@ void main() {
             ivec2 sampleCoord = clamp(
                     currentCoord + ivec2(x, y), ivec2(0), currentSize - ivec2(1));
             PlagueWaterVolumeInterval sampleInterval = plagueDecodeWaterVolumeInterval(
-                    texelFetch(u_Input2, sampleCoord, 0));
-            vec4 sampleRaw = texelFetch(u_Input0, sampleCoord, 0);
+                    texelFetch(u_WaterVolumeInterval, sampleCoord, 0));
+            vec4 sampleRaw = texelFetch(u_WaterVolumeScatterRaw, sampleCoord, 0);
             float intervalAgreement = plagueWaterScatterIntervalAgreement(
                     currentInterval, sampleInterval,
                     PLAGUE_WATER_SPATIAL_ENTRY_TOLERANCE,

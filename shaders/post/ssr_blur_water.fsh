@@ -28,14 +28,14 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:water_reflection.glsl>
 
-uniform sampler2D u_Input0; // ssrWaterRaw
+uniform sampler2D u_SsrWaterRaw; // ssrWaterRaw
 #define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "World Reflections" {0="Off" 1="On"}
 #if PLAGUE_VOXEL_REFLECTIONS != 0
-uniform sampler2D u_Input4; // half-resolution current SSR + voxel fallback
+uniform sampler2D u_VoxelWaterReflection; // half-resolution current SSR + voxel fallback
 #endif
-uniform sampler2D u_Input1; // ssrWater.history
-uniform sampler2D u_Input2; // builtin.waterDepth: reversed-Z, 0.0 = no water
-uniform sampler2D u_Input3; // builtin.waterNormal: raw world normal + signed water flags
+uniform sampler2D u_SsrWater_history; // ssrWater.history
+uniform sampler2D u_WaterDepth; // builtin.waterDepth: reversed-Z, 0.0 = no water
+uniform sampler2D u_WaterNormal; // builtin.waterNormal: raw world normal + signed water flags
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -69,7 +69,7 @@ out vec4 fragColor;
 
 // Keep full-size SSR colour; geometry confidence must meet the producer's existing work cutoff.
 vec4 plagueWaterRaw(vec2 uv) {
-    vec4 screen = texture(u_Input0, uv);
+    vec4 screen = texture(u_SsrWaterRaw, uv);
 #if PLAGUE_VOXEL_REFLECTIONS != 0
     if (u_WaterState.x > 0.5) { screen.a = abs(screen.a); return screen; }
     // The producer stops tracing above 0.5. Reuse its existing handoff curve so geometry reaches
@@ -77,7 +77,7 @@ vec4 plagueWaterRaw(vec2 uv) {
     float screenConfidence = screen.a > 0.0
             ? smoothstep(0.0, 0.5, screen.a) : abs(screen.a);
     if (screen.a >= 0.5) return vec4(screen.rgb, 1.0);
-    vec4 fallback = texture(u_Input4, uv);
+    vec4 fallback = texture(u_VoxelWaterReflection, uv);
     // A valid voxel hit writes alpha one, a miss zero: linear filtering premultiplies its RGB
     // by fractional coverage. Thresholding that coverage creates a seam at its filtered edge.
     float voxelCoverage = clamp(fallback.a, 0.0, 1.0);
@@ -102,12 +102,12 @@ vec4 plagueWaterRaw(vec2 uv) {
 // Depth alone cannot tell a lake from a waterfall pixel beside it, so this checks the normals too
 // and rejects donors on a different slope before they become a borrowed patch of sky.
 float plagueWaterSurfaceAgreement(vec2 uv, float centerDepth, vec3 centerNormal) {
-    float sampleDepth = texture(u_Input2, uv).r;
+    float sampleDepth = texture(u_WaterDepth, uv).r;
     if (sampleDepth <= 0.0) {
         return 0.0;
     }
 
-    vec4 sampleSurface = texture(u_Input3, uv);
+    vec4 sampleSurface = texture(u_WaterNormal, uv);
     vec3 sampleNormal;
     float sampleRoughness;
     float sampleFlags;
@@ -127,14 +127,14 @@ float plagueWaterSurfaceAgreement(vec2 uv, float centerDepth, vec3 centerNormal)
 void main() {
     // Early out for non-water pixels, most of the frame. Writes zero rather than discarding: this
     // target ping-pongs, and a discard would keep the value from two frames back.
-    float centerDepth = texture(u_Input2, texCoord).r;
+    float centerDepth = texture(u_WaterDepth, texCoord).r;
     if (centerDepth <= 0.0) {
         fragColor = vec4(0.0);
         return;
     }
 
-    vec2 texelSize = 1.0 / vec2(textureSize(u_Input0, 0));
-    vec4 centerSurface = texture(u_Input3, texCoord);
+    vec2 texelSize = 1.0 / vec2(textureSize(u_SsrWaterRaw, 0));
+    vec4 centerSurface = texture(u_WaterNormal, texCoord);
     vec3 centerNormal;
     float centerRoughness;
     float centerFlags;
@@ -205,7 +205,7 @@ void main() {
                 && previousUv.y >= 0.0 && previousUv.y <= 1.0;
     }
     if (validHistory) {
-        float prevDepth = texture(u_Input2, previousUv).r;
+        float prevDepth = texture(u_WaterDepth, previousUv).r;
         // No water at the reprojected pixel means history there is a hard zero, from the early
         // out above. Blending it would drag a real reflection toward black.
         validHistory = prevDepth > 0.0
@@ -234,7 +234,7 @@ void main() {
             }
         }
         if (haveBounds) {
-            vec4 history = clamp(texture(u_Input1, previousUv), lo, hi);
+            vec4 history = clamp(texture(u_SsrWater_history, previousUv), lo, hi);
             float historyWeight = mix(0.35, 0.58, normalizedRoughness);
             resolved = mix(resolved, history, historyWeight);
         }

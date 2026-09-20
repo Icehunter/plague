@@ -10,11 +10,11 @@
 // Only the visibility is averaged. The light beside it is already smooth and already carries the
 // block's texture, so it has nothing to gain and detail to lose.
 
-uniform sampler2D u_Input0; // voxelLocalVisibility, r = this frame's visibility
-uniform sampler2D u_Input1; // voxelLocalVisAccum.history, r = what previous frames settled on
-uniform sampler2D u_Input2; // builtin.gMotion
-uniform sampler2D u_Input3; // builtin.depth
-uniform sampler2D u_Input4; // builtin.gNormal
+uniform sampler2D u_VoxelLocalVisibility; // voxelLocalVisibility, r = this frame's visibility
+uniform sampler2D u_VoxelLocalVisAccum_history; // voxelLocalVisAccum.history, r = what previous frames settled on
+uniform sampler2D u_GMotion; // builtin.gMotion
+uniform sampler2D u_Depth; // builtin.depth
+uniform sampler2D u_GNormal; // builtin.gNormal
 
 in vec2 texCoord;
 out vec4 fragColor;
@@ -58,7 +58,7 @@ const float PLAGUE_LOCAL_ACCUM_DEPTH_REJECT = 0.02;
 const float PLAGUE_LOCAL_ACCUM_NORMAL_REJECT = 0.9;
 
 void main() {
-    float current = texture(u_Input0, texCoord).r;
+    float current = texture(u_VoxelLocalVisibility, texCoord).r;
     // Green carries how many frames this pixel has gathered. A fresh pixel starts at one, which is
     // the whole point: the first frame is taken outright, the second is averaged with it, the third
     // is a third, and so on until the count reaches its cap. A flat blend instead makes every new
@@ -66,30 +66,30 @@ void main() {
     // settle after the view moves.
     fragColor = vec4(current, 1.0, 0.0, 1.0);
 
-    float depth = texture(u_Input3, texCoord).r;
-    vec3 n = texture(u_Input4, texCoord).xyz;
+    float depth = texture(u_Depth, texCoord).r;
+    vec3 n = texture(u_GNormal, texCoord).xyz;
     if (depth <= 0.0 || dot(n, n) <= 1e-6) {
         return;
     }
 
-    vec2 previousUv = texCoord - texture(u_Input2, texCoord).rg;
+    vec2 previousUv = texCoord - texture(u_GMotion, texCoord).rg;
     if (any(lessThan(previousUv, vec2(0.0))) || any(greaterThan(previousUv, vec2(1.0)))) {
         return;
     }
     // Whatever was at that spot last frame has to be the same surface, or this blends one surface's
     // shadow onto another and drags it along as the view moves.
-    float previousDepth = texture(u_Input3, previousUv).r;
+    float previousDepth = texture(u_Depth, previousUv).r;
     if (previousDepth <= 0.0
             || abs(depth - previousDepth) > PLAGUE_LOCAL_ACCUM_DEPTH_REJECT * max(depth, 1e-4)) {
         return;
     }
-    vec3 previousN = texture(u_Input4, previousUv).xyz;
+    vec3 previousN = texture(u_GNormal, previousUv).xyz;
     if (dot(previousN, previousN) <= 1e-6
             || dot(normalize(n), normalize(previousN)) < PLAGUE_LOCAL_ACCUM_NORMAL_REJECT) {
         return;
     }
 
-    vec3 previous = texture(u_Input1, previousUv).rgb;
+    vec3 previous = texture(u_VoxelLocalVisAccum_history, previousUv).rgb;
     float history = previous.r;
     float gathered = previous.g;
     // Blue carries the running average of the gap between a frame and the settled answer.

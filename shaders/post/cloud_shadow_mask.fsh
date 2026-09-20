@@ -22,7 +22,7 @@
 #moj_import <fornax_runtime:atmosphere.glsl>
 #moj_import <fornax_runtime:sky.glsl>
 
-uniform sampler2D u_Input0; // builtin.depth (reversed-Z: 0.0 sky, >0.0 geometry)
+uniform sampler2D u_Depth; // builtin.depth (reversed-Z: 0.0 sky, >0.0 geometry)
 
 // The ALU stand-in for the cloud volumes, same as the resolve used: a fullscreen pipeline cannot
 // bind a sampler3D.
@@ -48,7 +48,7 @@ void main() {
     float shadow = 1.0;
 
 #if CLOUD_SHADOWS && CLOUDS_VOLUMETRIC
-    float depth = texture(u_Input0, texCoord).r;
+    float depth = texture(u_Depth, texCoord).r;
     vec3 s = u_SunDirection.xyz;
     vec3 sunDir = dot(s, s) > 1e-6 ? normalize(s) : normalize(vec3(0.3, 0.9, 0.2));
 

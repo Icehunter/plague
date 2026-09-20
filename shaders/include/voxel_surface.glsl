@@ -8,9 +8,9 @@
 
 #define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="Experimental"}
 #if PLAGUE_LOCAL_LIGHTING != 0
-uniform usamplerBuffer u_Input17;
-uint plagueLocalSourceWord(int word) { return texelFetch(u_Input17,word).r; }
-int plagueLocalSourceSize() { return textureSize(u_Input17); }
+uniform usamplerBuffer u_VoxelLocalRadiance;
+uint plagueLocalSourceWord(int word) { return texelFetch(u_VoxelLocalRadiance,word).r; }
+int plagueLocalSourceSize() { return textureSize(u_VoxelLocalRadiance); }
 #moj_import <fornax_runtime:voxel_local_jitter.glsl>
 #moj_import <fornax_runtime:voxel_local_light.glsl>
 #endif
@@ -33,7 +33,7 @@ bool plagueVoxelSurfaceAt(vec3 point, vec3 faceNormal, uint colour, int entry, v
     surface.geometricNormal = faceNormal;
     surface.ao = 1.0;
     vec4 material = vec4(0,0,0,1); // what the engine sends with no material map; alpha 255 means nobody wrote it
-    uint flags = texelFetch(u_Input5,entry*16).r;
+    uint flags = texelFetch(u_VoxelPalette,entry*16).r;
     // Low four bits count boxes, bit31 marks crossed planes. Test only those: the cutout and
     // extinction bits would send a cube with overlays to read its own dark inside.
     vec3 lightPoint = ((flags & 0x8000000fu) == 0u) ? point + faceNormal * PLAGUE_COVERAGE_EPSILON
@@ -44,8 +44,8 @@ bool plagueVoxelSurfaceAt(vec3 point, vec3 faceNormal, uint colour, int entry, v
         vec4 texel = textureLod(u_Input9,uv,0.0);
         // Same tint multiply as terrain.fsh, in linear space. On encoded RGB it shifts leaf hue.
         surface.albedo = plagueSrgbToLinear(texel.rgb) * plagueSrgbToLinear(tintColour);
-        material = textureLod(u_Input13,uv,0.0);
-        vec3 nTex = textureLod(u_Input12,uv,0.0).rgb;
+        material = textureLod(u_MaterialAtlas,uv,0.0);
+        vec3 nTex = textureLod(u_NormalAtlas,uv,0.0).rgb;
         // labPBR's exact neutral byte128, same decode as parallax_terrain.glsl.
         vec2 xy = all(lessThan(nTex,vec3(0.003))) ? vec2(0.0)
                 : (nTex.xy * (255.0/127.0) - (128.0/127.0)) * clamp(u_BumpStrength,0.0,2.0);
@@ -58,10 +58,10 @@ bool plagueVoxelSurfaceAt(vec3 point, vec3 faceNormal, uint colour, int entry, v
     }
     surface.material = plagueDecodeMaterial(material.r,material.g,material.b);
     // Palette word15 holds the block's own glow. Block light falling on a surface is not glow.
-    float intrinsic = float(texelFetch(u_Input5,entry*16+15).r & 255u)/255.0;
+    float intrinsic = float(texelFetch(u_VoxelPalette,entry*16+15).r & 255u)/255.0;
     // Word 0's low four bits are the shape's box count. Zero is a full cube, which really does
     // glow over its whole face; anything else is a mounted shape with a part that does not.
-    bool cutout = (texelFetch(u_Input5,entry*16).r & 15u) != 0u;
+    bool cutout = (texelFetch(u_VoxelPalette,entry*16).r & 15u) != 0u;
     surface.emission = plagueSourceLuminance(surface.albedo, intrinsic, material.a,
             u_AuthoredEmission, cutout);
     return true;

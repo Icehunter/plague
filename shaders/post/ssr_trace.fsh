@@ -23,12 +23,12 @@
 // pass is scene-referred linear HDR. One shared inverse, not a second hand-maintained copy.
 #moj_import <fornax_runtime:tonemap.glsl>
 
-uniform sampler2D u_Input0; // builtin.gNormal
-uniform sampler2D u_Input1; // builtin.depth
-uniform sampler2D u_Input2; // builtin.gMaterial: r = smoothness, g = F0, b = porosity/SSS
-uniform sampler2D u_Input3; // builtin.gMotion: reprojects the hit into last frame
-uniform sampler2D u_Input4; // sceneHistory.history: last frame's finished image
-uniform sampler2D u_Input5; // hiz: full mip chain, read with explicit levels
+uniform sampler2D u_GNormal; // builtin.gNormal
+uniform sampler2D u_Depth; // builtin.depth
+uniform sampler2D u_GMaterial; // builtin.gMaterial: r = smoothness, g = F0, b = porosity/SSS
+uniform sampler2D u_GMotion; // builtin.gMotion: reprojects the hit into last frame
+uniform sampler2D u_SceneHistory_history; // sceneHistory.history: last frame's finished image
+uniform sampler2D u_Hiz; // hiz: full mip chain, read with explicit levels
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -65,13 +65,13 @@ vec2 rayJitter(vec2 fragCoord) {
 }
 
 void main() {
-    float depth = texture(u_Input1, texCoord).r;
+    float depth = texture(u_Depth, texCoord).r;
     if (depth <= 0.0) {          // reversed-Z: 0.0 is the cleared far plane, i.e. sky
         fragColor = vec4(0.0);
         return;
     }
 
-    vec3 n = texture(u_Input0, texCoord).xyz;
+    vec3 n = texture(u_GNormal, texCoord).xyz;
     if (dot(n, n) < 1e-6) {
         fragColor = vec4(0.0);
         return;
@@ -81,7 +81,7 @@ void main() {
     // gMaterial already carries wetness: terrain.fsh applies puddles before writing the G-buffer,
     // so this is the wetted smoothness with no re-derivation needed, and it cannot disagree with
     // what the blur and the resolve see.
-    float smoothness = texture(u_Input2, texCoord).r;
+    float smoothness = texture(u_GMaterial, texCoord).r;
 
     // Surfaces the resolve will never show a reflection on skip the march entirely. Kept in step
     // with the resolve's own smoothnessFade lower bound.
@@ -129,7 +129,7 @@ void main() {
     vec3 ssDir = projectToScreen(origin + rayDir * rayLen) - ssOrigin;
 
     // Start ~2 texels along the ray so the first cell test cannot self-hit.
-    ivec2 fullSize = textureSize(u_Input1, 0);
+    ivec2 fullSize = textureSize(u_Depth, 0);
     float s = 2.0 / max(abs(ssDir.x) * float(fullSize.x), abs(ssDir.y) * float(fullSize.y));
 
     int level = 0;
@@ -146,10 +146,10 @@ void main() {
             break;
         }
 
-        ivec2 levelSize = textureSize(u_Input5, level);
+        ivec2 levelSize = textureSize(u_Hiz, level);
         // min() guards p.xy == 1.0 exactly: an out-of-bounds texelFetch is undefined, not clamped.
         ivec2 cell = min(ivec2(p.xy * vec2(levelSize)), levelSize - 1);
-        float tileClosest = texelFetch(u_Input5, cell, level).r;
+        float tileClosest = texelFetch(u_Hiz, cell, level).r;
 
         if (p.z > tileClosest) {
             // Reversed-Z: larger is nearer, so the ray is in front of EVERYTHING in this tile.
@@ -189,7 +189,7 @@ void main() {
 
     // Backface rejection: a hit whose normal points along the ray struck the surface's far side
     // (e.g. a roof's sunlit top standing in for its unrendered underside).
-    vec3 hn = texture(u_Input0, hit.xy).xyz;
+    vec3 hn = texture(u_GNormal, hit.xy).xyz;
     if (dot(hn, hn) > 1e-6 && dot(normalize(hn), rayDir) > 0.0) {
         fragColor = vec4(0.0);
         return;
@@ -197,7 +197,7 @@ void main() {
 
     // Colour comes from last frame's finished image, reprojected: this frame's scene colour isn't
     // available yet (the resolve that produces it consumes this pass's output).
-    vec2 historyUv = hit.xy - texture(u_Input3, hit.xy).rg;
+    vec2 historyUv = hit.xy - texture(u_GMotion, hit.xy).rg;
     if (historyUv.x < 0.0 || historyUv.x > 1.0 || historyUv.y < 0.0 || historyUv.y > 1.0) {
         fragColor = vec4(0.0);
         return;
@@ -209,7 +209,7 @@ void main() {
     // at u_Exposure 1.65); tools/verify_ssr.py pins the round-trip error and rejects that regression.
     // Still approximate: the operator's luminance-coupled extras have no closed-form inverse, so
     // reflections of very bright sources come back slightly dimmer than the thing they reflect.
-    vec3 displayColor = texture(u_Input4, historyUv).rgb;
+    vec3 displayColor = texture(u_SceneHistory_history, historyUv).rgb;
     vec3 color = plagueUntonemapApprox(displayColor);
 
     // Confidence: the edge ramp is steep and late so reflections stay full strength across most of

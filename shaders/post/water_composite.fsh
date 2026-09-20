@@ -34,35 +34,35 @@
 // its own header for why it stays separate from plagueCelestialDiscs.
 #moj_import <fornax_runtime:water_underwater_discs.glsl>
 
-uniform sampler2D u_Input0; // builtin.waterNormal: xyz = wave normal, a = signed flags (see terrain.fsh)
-uniform sampler2D u_Input1; // builtin.waterDepth, reversed-Z, 0.0 = no water
-uniform sampler2D u_Input2; // ssrWater: rgb = reflection, a = confidence
-uniform sampler2D u_Input3; // builtin.depth, OPAQUE scene depth, for the occlusion re-test
-uniform sampler2D u_Input4; // builtin.noise
+uniform sampler2D u_WaterNormal; // builtin.waterNormal: xyz = wave normal, a = signed flags (see terrain.fsh)
+uniform sampler2D u_WaterDepth; // builtin.waterDepth, reversed-Z, 0.0 = no water
+uniform sampler2D u_SsrWater; // ssrWater: rgb = reflection, a = confidence
+uniform sampler2D u_Depth; // builtin.depth, OPAQUE scene depth, for the occlusion re-test
+uniform sampler2D u_Noise; // builtin.noise
 // Screen-space active-light / true-sun / true-moon occlusion (glint_occlusion.fsh). The separate
 // underwater lanes prevent a sunset handoff from borrowing the active moon's visibility.
-uniform sampler2D u_Input5; // glintOcclusion
+uniform sampler2D u_GlintOcclusion; // glintOcclusion
 // Shoreline foam pattern (tools/generate_foam.py): a bubble-film web with darker holes, not a
 // generic noise wash, since noise can't produce that cell structure.
-uniform sampler2D u_Input6; // foamTexture
+uniform sampler2D u_FoamTexture; // foamTexture
 // Foam pattern's own normal map. GREEN POINTS DOWN — flipped at the read site before decoding.
-uniform sampler2D u_Input7; // foamNormalTexture
+uniform sampler2D u_FoamNormalTexture; // foamNormalTexture
 // Foam relief height field (POM), built from the same source as the pattern/normal so all three
 // agree by construction.
-uniform sampler2D u_Input8; // foamHeightTexture
-uniform sampler2D u_Input9; // waterEnvironment, filtered Plague sky radiance
-uniform sampler2D u_Input10; // moonAlbedo, equirectangular, near side centred
-uniform sampler2D u_Input11; // moonNormal, tangent-space relief for the same projection
-uniform sampler2D u_Input12; // cloudFront: live tier's first-hit cloud distance (0.0 = empty ray)
-uniform sampler2D u_Input13; // atmoSkyView, the marched dome (atmo_lut.glsl)
-uniform sampler2D u_Input14; // atmoAerial, in-scatter and transmittance per screen froxel
+uniform sampler2D u_FoamHeightTexture; // foamHeightTexture
+uniform sampler2D u_WaterEnvironment; // waterEnvironment, filtered Plague sky radiance
+uniform sampler2D u_MoonAlbedo; // moonAlbedo, equirectangular, near side centred
+uniform sampler2D u_MoonNormal; // moonNormal, tangent-space relief for the same projection
+uniform sampler2D u_CloudFront; // cloudFront: live tier's first-hit cloud distance (0.0 = empty ray)
+uniform sampler2D u_AtmoSkyView; // atmoSkyView, the marched dome (atmo_lut.glsl)
+uniform sampler2D u_AtmoAerial; // atmoAerial, in-scatter and transmittance per screen froxel
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
-    return texture(u_Input13, uv);
+    return texture(u_AtmoSkyView, uv);
 }
 
 vec4 plagueAtmoFetchAerial(vec2 uv) {
-    return texture(u_Input14, uv);
+    return texture(u_AtmoAerial, uv);
 }
 
 layout(std140) uniform u_PassParams {
@@ -196,7 +196,7 @@ void main() {
             || debugView == DBG_UW_GLINT_5;
     const vec4 UW_GLINT_QUERY_NOT_WATER = vec4(-1.0, -1.0, -1.0, 1.0);
 
-    vec4 waterSample = texture(u_Input0, texCoord);
+    vec4 waterSample = texture(u_WaterNormal, texCoord);
     vec3 waveNormal;
     float waterRoughness;
     float signedWaterFlags;
@@ -209,7 +209,7 @@ void main() {
         }
         discard; // cleared texel: no water on this pixel
     }
-    float waterDepth = texture(u_Input1, texCoord).r;
+    float waterDepth = texture(u_WaterDepth, texCoord).r;
     if (waterDepth <= 0.0) {
         if (uwGlintQueryActive) {
             fragColor = UW_GLINT_QUERY_NOT_WATER;
@@ -222,7 +222,7 @@ void main() {
     // will happily write water behind a wall or under a floor. Reversed-Z, so opaque wins ties:
     // `>=` not `>`, matching underwater_refraction.fsh's own tie-break, since a solid block resting
     // in water produces a real depth tie that must read as opaque, not let sky/sun through it.
-    float opaqueDepth = texture(u_Input3, texCoord).r;
+    float opaqueDepth = texture(u_Depth, texCoord).r;
     if (opaqueDepth >= waterDepth) {
         if (uwGlintQueryActive) {
             fragColor = vec4(-2.0, -2.0, -2.0, 1.0); // was water, but occluded this frame
@@ -243,7 +243,7 @@ void main() {
     //
     // Guarded on CLOUDS_VOLUMETRIC because the three tier copies are all gated on it: with clouds
     // off nothing writes cloudFront, and its contents are whatever the allocation left there.
-    float cloudFrontDistance = texture(u_Input12, texCoord).r;
+    float cloudFrontDistance = texture(u_CloudFront, texCoord).r;
     if (cloudFrontDistance > 0.0
             && cloudFrontDistance < length(worldPosAt(texCoord, waterDepth))) {
         if (uwGlintQueryActive) {
@@ -273,7 +273,7 @@ void main() {
     float fluidWaveClock = plagueWaveAnimatedTime(
             u_SkyState.w / 20.0, u_WaveStrength, u_WaveSpeed);
     meshWaveLift = plagueWaveSurfaceDisplacement(
-            u_Input4, worldPos + u_CameraAbs.xyz, fluidWaveClock, 0.0, u_WaveStrength).y;
+            u_Noise, worldPos + u_CameraAbs.xyz, fluidWaveClock, 0.0, u_WaveStrength).y;
 #endif
     float fluidSurfaceHeight = fract(worldPos.y + u_CameraAbs.y - meshWaveLift);
     float fullFluidLevel = smoothstep(0.83, 0.875, fluidSurfaceHeight);
@@ -287,7 +287,7 @@ void main() {
     // — neither puts raindrops on water.
     float localRain = u_SkyState.x * (signedWaterFlags > 0.0 ? 1.0 : 0.0);
     vec2 impactGradient = plaguePuddleImpactGradient(
-            u_Input4, splashXZ, u_SkyState.w / 20.0, localRain, u_SplashDensity);
+            u_Noise, splashXZ, u_SkyState.w / 20.0, localRain, u_SplashDensity);
     // Faded with distance: the ring is ~8cm wide, subpixel within a couple chunks, and would only
     // alias without this.
     float impactFade = smoothstep(56.0, 20.0, length(worldPos));
@@ -313,7 +313,7 @@ void main() {
     // Reflective only. Shaded draws the whole surface without a mirror: zero confidence here
     // leaves body, fog, glint and foam to shade it, so water keeps its waves and its sun track.
 #if SSR_WATER_MODE > 1 && SSR_QUALITY != 0
-    vec4 reflSample = texture(u_Input2, texCoord);
+    vec4 reflSample = texture(u_SsrWater, texCoord);
 #else
     vec4 reflSample = vec4(0.0);
 #endif
@@ -379,7 +379,7 @@ void main() {
     // glitter keeps the active-light lane; underwater celestial lobes select their own direction.
     // Unguarded: glint_occlusion is a depth raymarch, not a reflection, and runs wherever this pass
     // does. The sun track belongs to the surface, so it survives every tier above Vanilla.
-    vec3 glintVisibility = texture(u_Input5, texCoord).rgb;
+    vec3 glintVisibility = texture(u_GlintOcclusion, texCoord).rgb;
     float glintShadowVis = glintVisibility.r;
     float uwSunShadowVis = glintVisibility.g;
     float uwMoonShadowVis = glintVisibility.b;
@@ -400,7 +400,7 @@ void main() {
     // meaningless there (every ray sits behind everything) and paints a half-dark ghost of what
     // the ray passed behind.
     vec3 environmentFallback = max(
-            textureLod(u_Input9, environmentUv, environmentLod).rgb, vec3(0.0));
+            textureLod(u_WaterEnvironment, environmentUv, environmentLod).rgb, vec3(0.0));
 
     // Rays that see no sky contribute nothing rather than contributing black: indoors and in caves
     // the fallback has to vanish, not darken the water.
@@ -522,10 +522,10 @@ void main() {
         // Shifts the base UV by parallax before the scrolling taps read it, so animation is
         // untouched and only the lookup point moves. Skipped at depth 0.
         if (u_FoamPomDepth > 0.0) {
-            foamUv = plagueFoamParallax(u_Input8, foamUv, viewDir, u_FoamPomDepth * u_FoamTextureScale);
+            foamUv = plagueFoamParallax(u_FoamHeightTexture, foamUv, viewDir, u_FoamPomDepth * u_FoamTextureScale);
         }
-        vec3 foamTexA = texture(u_Input6, foamUv + vec2(u_SkyState.w * 0.004, 0.0)).rgb;
-        vec3 foamTexB = texture(u_Input6, foamUv * 2.3 - vec2(0.0, u_SkyState.w * 0.006)).rgb;
+        vec3 foamTexA = texture(u_FoamTexture, foamUv + vec2(u_SkyState.w * 0.004, 0.0)).rgb;
+        vec3 foamTexB = texture(u_FoamTexture, foamUv * 2.3 - vec2(0.0, u_SkyState.w * 0.006)).rgb;
         float foamLumaA = dot(foamTexA, vec3(0.2126, 0.7152, 0.0722));
         float foamLumaB = dot(foamTexB, vec3(0.2126, 0.7152, 0.0722));
         float foamPatternA = clamp((foamLumaA - FOAM_TEX_LUMA_MIN)
@@ -569,7 +569,7 @@ void main() {
 
         // Normal map is tangent-space Z-up on a world-XZ planar UV, so tangent axes remap to world
         // space: tangent X -> world X, tangent Y -> world Z, tangent Z -> world Y.
-        vec3 foamNormalTexel = texture(u_Input7, foamUv + vec2(u_SkyState.w * 0.004, 0.0)).rgb;
+        vec3 foamNormalTexel = texture(u_FoamNormalTexture, foamUv + vec2(u_SkyState.w * 0.004, 0.0)).rgb;
         foamNormalTexel.g = 1.0 - foamNormalTexel.g; // inverted relative to OpenGL (asset's own README)
         vec3 foamNormal = normalize(foamNormalTexel * 2.0 - 1.0);
         vec3 foamWorldNormal = normalize(vec3(foamNormal.x, foamNormal.z, foamNormal.y));
@@ -649,7 +649,7 @@ void main() {
             float uwMoonDiscGlow = smoothstep(-0.03, 0.08, -trueSunDir.y)
                                   * (1.0 - lighting.sunVisibility);
             uwDirectionalSky += plagueUnderwaterCelestialDiscs(uwExitDir, trueSunDir,
-                    u_SkyCelestial.w, u_WorldClock.x, u_WorldClock.y, u_Input10, u_Input11,
+                    u_SkyCelestial.w, u_WorldClock.x, u_WorldClock.y, u_MoonAlbedo, u_MoonNormal,
                     uwDiscSoftness, 1.0 - rainFactor, uwMoonDiscGlow);
         }
         vec3 uwSkyFill = mix(plagueWaterFogColor(lighting), uwDirectionalSky, 0.68);
@@ -688,9 +688,9 @@ void main() {
                        + 0.28 * pow(uwMoonAlignment, 384.0);
             vec2 uwGlintUv = (worldPos.xz + u_CameraAbs.xz) * 0.19;
             float uwGlintTime = u_SkyState.w / 20.0;
-            float uwMicroA = texture(u_Input4,
+            float uwMicroA = texture(u_Noise,
                     uwGlintUv + vec2(0.017, -0.011) * uwGlintTime).r;
-            float uwMicroB = texture(u_Input4,
+            float uwMicroB = texture(u_Noise,
                     uwGlintUv * 1.83 + vec2(-0.013, 0.019) * uwGlintTime).r;
             float uwMicroCoverage = smoothstep(0.48, 0.88, mix(uwMicroA, uwMicroB, 0.43));
             float uwMicroGlint = mix(0.32, 1.10, uwMicroCoverage) * (1.0 - uwFresnel);

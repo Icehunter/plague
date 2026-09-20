@@ -7,7 +7,7 @@
 // golems and chest parts therefore always accepted stale AO and left dark wisps. Keep the stable
 // current-frame spatial filter; temporal AO requires real previous depth and object motion.
 
-uniform sampler2D u_Input0; // ssaoRaw
+uniform sampler2D u_SsaoRaw; // ssaoRaw
 
 #define SSAO_BLUR_RADIUS 2
 
@@ -15,7 +15,7 @@ in vec2 texCoord;
 out float fragColor;
 
 void main() {
-    vec2 texelSize = 1.0 / vec2(textureSize(u_Input0, 0));
+    vec2 texelSize = 1.0 / vec2(textureSize(u_SsaoRaw, 0));
 
     // Bilinear pairs [-2,-1] and [0,1], plus [2], reproduce the radius-two box.
     // ssaoRaw must use linear clamp sampling or these nine taps change the kernel.
@@ -24,7 +24,7 @@ void main() {
     float sum = 0.0;
     for (int x = 0; x < 3; x++) {
         for (int y = 0; y < 3; y++) {
-            sum += texture(u_Input0, texCoord + vec2(offsets[x], offsets[y]) * texelSize).r
+            sum += texture(u_SsaoRaw, texCoord + vec2(offsets[x], offsets[y]) * texelSize).r
                     * weights[x] * weights[y];
         }
     }

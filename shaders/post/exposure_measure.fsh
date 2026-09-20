@@ -12,8 +12,8 @@
 // sentinel 0.0 stays unambiguous — a linear-light scene at luma 1.0 (log2 == 0.0) is a common
 // operating point, and exp2(avgLogLuma) is always > 0.
 
-uniform sampler2D u_Input0; // sceneHdrRefracted: the base signal that establishes auto exposure
-uniform sampler2D u_Input1; // exposure.history (previous frame's smoothed avg LINEAR luma; 0.0 =
+uniform sampler2D u_SceneHdrRefracted; // sceneHdrRefracted: the base signal that establishes auto exposure
+uniform sampler2D u_Exposure_history; // exposure.history (previous frame's smoothed avg LINEAR luma; 0.0 =
                             // no data yet / frame-1 sentinel, unambiguous since real luma is > 0)
 
 layout(std140) uniform u_PassParams {
@@ -38,7 +38,7 @@ void main() {
     for (int y = 0; y < GRID; y++) {
         for (int x = 0; x < GRID; x++) {
             vec2 uv = (vec2(float(x), float(y)) + 0.5) / float(GRID);
-            vec3 c = texture(u_Input0, uv).rgb;
+            vec3 c = texture(u_SceneHdrRefracted, uv).rgb;
             float luma = dot(c, vec3(0.2126, 0.7152, 0.0722)); // Rec. 709 luma coefficients
             // Clamp away from zero before log2 so black pixels don't drag the average to -inf; the
             // 1e-4 floor caps the darkest measurable scene luminance.
@@ -52,7 +52,7 @@ void main() {
     // Direction decides the rate (darker scene -> slower, rising exposure; brighter -> faster,
     // falling exposure), compared on the measured luma so this stays independent of tonemap.fsh's
     // own exposure formula.
-    float prev = texture(u_Input1, texCoord).r;
+    float prev = texture(u_Exposure_history, texCoord).r;
     float speed = (avgLuma < prev) ? u_ExposureAdaptSpeedDarken : u_ExposureAdaptSpeedBrighten;
     float retention = clamp(1.0 - speed, 0.0, 0.999);
     float blended = (prev <= 0.0) ? avgLuma : mix(avgLuma, prev, retention);

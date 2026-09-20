@@ -12,11 +12,11 @@
 // ~near/distance, so a relative threshold holds the same tolerance at 5 blocks and at 200.
 //
 // No <fornax:globals.glsl> import: this pass only needs texel size and depth, both already carried
-// in u_PassParams/u_Input1, so it stays free of ssr_trace.fsh's thickness-window machinery.
+// in u_PassParams/u_Depth, so it stays free of ssr_trace.fsh's thickness-window machinery.
 
-uniform sampler2D u_Input0; // ssrHalf: rgb = reflected colour, a = hit confidence, at half scale
-uniform sampler2D u_Input1; // builtin.depth (full res)
-uniform sampler2D u_Input2; // builtin.gMaterial: r = smoothness
+uniform sampler2D u_SsrHalf; // ssrHalf: rgb = reflected colour, a = hit confidence, at half scale
+uniform sampler2D u_Depth; // builtin.depth (full res)
+uniform sampler2D u_GMaterial; // builtin.gMaterial: r = smoothness
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -33,19 +33,19 @@ in vec2 texCoord;
 out vec4 fragColor;
 
 void main() {
-    float centerDepth = texture(u_Input1, texCoord).r;
+    float centerDepth = texture(u_Depth, texCoord).r;
 
     // Sky, and below the smoothness floor the resolve's weight zeroes out anyway: both provably
     // invisible downstream. Writes zero rather than discarding, since `ssr` ping-pongs between two
     // physical textures and a discarded pixel would retain the value from TWO frames ago.
-    if (centerDepth <= 0.0 || texture(u_Input2, texCoord).r < SSR_MIN_SMOOTHNESS) {
+    if (centerDepth <= 0.0 || texture(u_GMaterial, texCoord).r < SSR_MIN_SMOOTHNESS) {
         fragColor = vec4(0.0);
         return;
     }
 
     // -0.5 puts the sample point in texel-centre coordinates, so floor()/fract() give the covering
     // 2x2's lower-left and the bilinear fractions directly.
-    vec2 halfSize = vec2(textureSize(u_Input0, 0));
+    vec2 halfSize = vec2(textureSize(u_SsrHalf, 0));
     vec2 h = texCoord * halfSize - 0.5;
     ivec2 base = ivec2(floor(h));
     vec2 f = h - floor(h);
@@ -58,12 +58,12 @@ void main() {
     for (int i = 0; i < 4; i++) {
         ivec2 offset = ivec2(i & 1, i >> 1);
         ivec2 tap = clamp(base + offset, ivec2(0), ivec2(halfSize) - 1);
-        vec4 c = texelFetch(u_Input0, tap, 0);
+        vec4 c = texelFetch(u_SsrHalf, tap, 0);
 
         // Sampled at the half-res texel's own centre UV (where ssr_trace_fast ran); lands on the
         // boundary between the two full-res texels it covers, a sub-texel ambiguity bounded by the
         // quantisation this pass exists to undo.
-        float tapDepth = texture(u_Input1, (vec2(tap) + 0.5) / halfSize).r;
+        float tapDepth = texture(u_Depth, (vec2(tap) + 0.5) / halfSize).r;
         float error = abs(tapDepth - centerDepth);
 
         vec2 bilinear = mix(1.0 - f, f, vec2(offset));

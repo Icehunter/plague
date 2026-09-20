@@ -21,10 +21,10 @@
 
 uniform sampler2D u_Input0; // ssrRaw: this frame's traced reflection
 uniform sampler2D u_Input1; // ssr.history: last frame's accumulated reflection
-uniform sampler2D u_Input2; // builtin.gMotion
-uniform sampler2D u_Input3; // builtin.depth
-uniform sampler2D u_Input4; // builtin.gMaterial: r = smoothness, g = F0, b = porosity/SSS
-uniform sampler2D u_Input5; // builtin.gNormal
+uniform sampler2D u_GMotion; // builtin.gMotion
+uniform sampler2D u_Depth; // builtin.depth
+uniform sampler2D u_GMaterial; // builtin.gMaterial: r = smoothness, g = F0, b = porosity/SSS
+uniform sampler2D u_GNormal; // builtin.gNormal
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -86,11 +86,11 @@ float specularLobeWeight(vec3 centerNormal, vec3 sampleNormal, float centerRough
 }
 
 void main() {
-    float centerDepth = texture(u_Input3, texCoord).r;
+    float centerDepth = texture(u_Depth, texCoord).r;
 
     // gMaterial already carries wetness (baked in by terrain.fsh), so centre and taps read the same
     // number the trace keyed off, with no chance of drift.
-    float smoothness = texture(u_Input4, texCoord).r;
+    float smoothness = texture(u_GMaterial, texCoord).r;
 
     // Early-out for sky and below-smoothness-floor pixels: gbuffer_resolve.fsh never reads ssr for
     // either case, so blurring them was previously pure waste (this pass was the single most
@@ -113,12 +113,12 @@ void main() {
         blurred = compressRange(texture(u_Input0, texCoord));
     } else {
         vec2 sourceSize = vec2(textureSize(u_Input0, 0));
-        vec2 fullSize = vec2(textureSize(u_Input3, 0));
+        vec2 fullSize = vec2(textureSize(u_Depth, 0));
         vec2 texelSize = 1.0 / sourceSize;
         float sourceToFullScale = min(sourceSize.x / max(fullSize.x, 1.0),
                                       sourceSize.y / max(fullSize.y, 1.0));
         float tapSpacingSourceTexels = SSR_BLUR_TAP_SPACING_FULL_RES * sourceToFullScale;
-        vec3 cn = texture(u_Input5, texCoord).xyz;
+        vec3 cn = texture(u_GNormal, texCoord).xyz;
         vec3 centerNormal = dot(cn, cn) > 1e-6 ? normalize(cn) : vec3(0.0, 1.0, 0.0);
         float centerRoughness = (1.0 - smoothness) * (1.0 - smoothness);
 
@@ -133,7 +133,7 @@ void main() {
             for (int x = -radius; x <= radius; x++) {
                 vec2 uv = texCoord + vec2(float(x), float(y)) * texelSize
                                      * tapSpacingSourceTexels;
-                float tapDepth = texture(u_Input3, uv).r;
+                float tapDepth = texture(u_Depth, uv).r;
                 // Hard depth gate first: the lobe weight alone doesn't always reject a
                 // far-side-of-silhouette tap.
                 if (abs(tapDepth - centerDepth) > SSR_DISOCCLUSION_DEPTH_THRESHOLD) {
@@ -142,12 +142,12 @@ void main() {
                 vec4 tapSample = texture(u_Input0, uv);
                 alphaSum += clamp(tapSample.a, 0.0, 1.0);
                 alphaTaps += 1.0;
-                vec3 sn = texture(u_Input5, uv).xyz;
+                vec3 sn = texture(u_GNormal, uv).xyz;
                 if (dot(sn, sn) < 1e-6) {
                     continue;
                 }
                 vec3 tapNormal = normalize(sn);
-                float tapSmoothness = texture(u_Input4, uv).r;
+                float tapSmoothness = texture(u_GMaterial, uv).r;
                 float tapRoughness = (1.0 - tapSmoothness) * (1.0 - tapSmoothness);
                 float w = specularLobeWeight(centerNormal, tapNormal, centerRoughness, tapRoughness, 1.5);
                 if (w <= 0.0) {
@@ -165,11 +165,11 @@ void main() {
         }
     }
 
-    vec2 previousUv = texCoord - texture(u_Input2, texCoord).rg;
+    vec2 previousUv = texCoord - texture(u_GMotion, texCoord).rg;
     bool validHistory = previousUv.x >= 0.0 && previousUv.x <= 1.0
             && previousUv.y >= 0.0 && previousUv.y <= 1.0;
     if (validHistory) {
-        float depthAtReprojected = texture(u_Input3, previousUv).r;
+        float depthAtReprojected = texture(u_Depth, previousUv).r;
         if (abs(centerDepth - depthAtReprojected) > SSR_DISOCCLUSION_DEPTH_THRESHOLD) {
             validHistory = false;
         }

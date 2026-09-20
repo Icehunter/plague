@@ -5,9 +5,9 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:water_volume.glsl>
 
-uniform sampler2D u_Input0; // builtin.depth      : opaque reversed-Z
-uniform sampler2D u_Input1; // builtin.waterDepth : water-surface reversed-Z
-uniform sampler2D u_Input2; // builtin.waterNormal: xyz normal, a signed water flags
+uniform sampler2D u_Depth; // builtin.depth      : opaque reversed-Z
+uniform sampler2D u_WaterDepth; // builtin.waterDepth : water-surface reversed-Z
+uniform sampler2D u_WaterNormal; // builtin.waterNormal: xyz normal, a signed water flags
 
 // This root does not import underwater.glsl, so it declares the compile options it evaluates.
 #define PLAGUE_UNDERWATER 1 //[0 1] compile "Underwater Effects" {0="Off" 1="On"}
@@ -77,11 +77,11 @@ void main() {
     // texelFetch, not a filtered sample: at half resolution a filtered read between four
     // full-resolution texels can synthesize a nonexistent water/opaque state.
     float opaqueDepth = texelFetch(
-            u_Input0, plagueWaterIntervalSourceCoord(u_Input0), 0).r;
+            u_Depth, plagueWaterIntervalSourceCoord(u_Depth), 0).r;
     float waterDepth = texelFetch(
-            u_Input1, plagueWaterIntervalSourceCoord(u_Input1), 0).r;
+            u_WaterDepth, plagueWaterIntervalSourceCoord(u_WaterDepth), 0).r;
     vec4 waterNormalSample = texelFetch(
-            u_Input2, plagueWaterIntervalSourceCoord(u_Input2), 0);
+            u_WaterNormal, plagueWaterIntervalSourceCoord(u_WaterNormal), 0);
     if (!plagueWaterIntervalFinite(opaqueDepth) || !plagueWaterIntervalFinite(waterDepth)
             || any(isnan(waterNormalSample)) || any(isinf(waterNormalSample))
             || !plagueWaterIntervalFinite(u_WaterState.x)

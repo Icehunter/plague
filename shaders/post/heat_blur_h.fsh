@@ -6,7 +6,7 @@
 
 #moj_import <fornax:globals.glsl>
 
-uniform sampler2D u_Input0; // sceneHdrRefracted, full resolution
+uniform sampler2D u_SceneHdrRefracted; // sceneHdrRefracted, full resolution
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -24,13 +24,13 @@ const float PLAGUE_HEAT_BLUR_RADIUS_PX = 6.0;
 void main() {
     // Uniform branch: skips the sampling work entirely outside the Nether.
     if (u_WorldBounds.w != 2.0) {
-        fragColor = vec4(texture(u_Input0, texCoord).rgb, 1.0);
+        fragColor = vec4(texture(u_SceneHdrRefracted, texCoord).rgb, 1.0);
         return;
     }
 
-    float radiusPx = PLAGUE_HEAT_BLUR_RADIUS_PX * (float(textureSize(u_Input0, 0).y) / 1080.0);
+    float radiusPx = PLAGUE_HEAT_BLUR_RADIUS_PX * (float(textureSize(u_SceneHdrRefracted, 0).y) / 1080.0);
     float sigma = max(radiusPx, 1.0) / 2.0;
-    float texelX = 1.0 / float(textureSize(u_Input0, 0).x);
+    float texelX = 1.0 / float(textureSize(u_SceneHdrRefracted, 0).x);
 
     const int TAPS = 4;
     vec3 sum = vec3(0.0);
@@ -39,7 +39,7 @@ void main() {
         float offsetPx = float(i) * (radiusPx / float(TAPS));
         float w = exp(-0.5 * (offsetPx / sigma) * (offsetPx / sigma));
         vec2 tapUv = clamp(texCoord + vec2(offsetPx * texelX, 0.0), vec2(0.0), vec2(1.0));
-        vec3 tap = texture(u_Input0, tapUv).rgb;
+        vec3 tap = texture(u_SceneHdrRefracted, tapUv).rgb;
         // A NaN/Inf tap would poison the sum through every add below it.
         if (!any(isnan(tap)) && !any(isinf(tap))) {
             sum += max(tap, vec3(0.0)) * w;

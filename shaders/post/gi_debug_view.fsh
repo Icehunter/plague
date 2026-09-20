@@ -16,9 +16,9 @@
 #moj_import <fornax_runtime:light_options.glsl>
 #moj_import <fornax_runtime:tonemap.glsl>
 
-uniform sampler2D u_Input0; // giBounceRaw
-uniform sampler2D u_Input1; // builtin.gAlbedo
-uniform sampler2D u_Input2; // builtin.depth
+uniform sampler2D u_GiBounce; // giBounceRaw
+uniform sampler2D u_GAlbedo; // builtin.gAlbedo
+uniform sampler2D u_Depth; // builtin.depth
 
 in vec2 texCoord;
 out vec4 fragColor;
@@ -26,10 +26,10 @@ out vec4 fragColor;
 void main() {
     // Sky has no surface to light, so it is left to whatever drew it rather than multiplied to
     // black by an albedo that was never written.
-    if (texture(u_Input2, texCoord).r <= 0.0) {
+    if (texture(u_Depth, texCoord).r <= 0.0) {
         discard;
     }
-    vec3 light = texture(u_Input0, texCoord).rgb;
-    vec3 receiver = texture(u_Input1, texCoord).rgb;
+    vec3 light = texture(u_GiBounce, texCoord).rgb;
+    vec3 receiver = texture(u_GAlbedo, texCoord).rgb;
     fragColor = vec4(plagueTonemapAndGrade(light * receiver * u_Exposure), 1.0);
 }

@@ -18,8 +18,8 @@
 #moj_import <fornax_runtime:underwater.glsl>
 
 uniform sampler2D u_Input0; // clouds (premultiplied rgba16f, at the chosen cloud size)
-uniform sampler2D u_Input1; // builtin.depth (reversed-Z: 0.0 sky, >0.0 geometry)
-uniform sampler2D u_Input2; // builtin.waterDepth (reversed-Z, 0.0 = no surface), for the eye-in-water veil
+uniform sampler2D u_Depth; // builtin.depth (reversed-Z: 0.0 sky, >0.0 geometry)
+uniform sampler2D u_WaterDepth; // builtin.waterDepth (reversed-Z, 0.0 = no surface), for the eye-in-water veil
 uniform sampler2D u_Input3; // first density-bearing cloud distance (r32f; 0.0 means empty ray)
 
 #moj_import <fornax_runtime:water_options.glsl>
@@ -48,7 +48,7 @@ void main() {
             1.0 + 3.0 * fraction.y + 3.0 * square.y - 3.0 * cube.y,
             cube.y) / 6.0;
 
-    float destinationDepth = texture(u_Input1, texCoord).r;
+    float destinationDepth = texture(u_Depth, texCoord).r;
     bool destinationGeometry = destinationDepth > 0.0;
     float destinationTerrainDistance = 0.0;
     if (destinationGeometry) {
@@ -65,7 +65,7 @@ void main() {
     //
     // Reconstructed exactly as the terrain distance above is, from the same reversed-Z convention;
     // 0.0 is this target's "no surface" sentinel, not a near plane.
-    float waterSurfaceDepth = texture(u_Input2, texCoord).r;
+    float waterSurfaceDepth = texture(u_WaterDepth, texCoord).r;
     float destinationWaterDistance = 0.0;
     if (waterSurfaceDepth > 0.0) {
         vec4 waterH = u_InvProjModelView

@@ -11,17 +11,17 @@
 #moj_import <fornax_runtime:water_options.glsl>
 #define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Wave Motion" {0="Off" 1="Standard"}
 
-uniform sampler2D u_Input0;       // waterVolumeInterval
-uniform sampler2DShadow u_Input1; // sunShadowMap
-uniform sampler2D u_Input2;       // builtin.noise
+uniform sampler2D u_WaterVolumeInterval;       // waterVolumeInterval
+uniform sampler2DShadow u_SunShadowMap; // sunShadowMap
+uniform sampler2D u_Noise;       // builtin.noise
 
-uniform sampler2D u_Input3; // sunShadowMapRaw
-uniform sampler2D u_Input4; // rtTerrainShadowDepth
-uniform sampler2D u_Input5; // sunEntityShadowMapRaw
-#define SHADOW_COMPARISON_MAP u_Input1
-#define SHADOW_RAW_MAP u_Input3
-#define RT_TERRAIN_SHADOW_DEPTH u_Input4
-#define ENTITY_SHADOW_RAW_MAP u_Input5
+uniform sampler2D u_SunShadowMapRaw; // sunShadowMapRaw
+uniform sampler2D u_RtTerrainShadowDepth; // rtTerrainShadowDepth
+uniform sampler2D u_SunEntityShadowMapRaw; // sunEntityShadowMapRaw
+#define SHADOW_COMPARISON_MAP u_SunShadowMap
+#define SHADOW_RAW_MAP u_SunShadowMapRaw
+#define RT_TERRAIN_SHADOW_DEPTH u_RtTerrainShadowDepth
+#define ENTITY_SHADOW_RAW_MAP u_SunEntityShadowMapRaw
 #moj_import <fornax_runtime:shadow_handoff.glsl>
 #moj_import <fornax_runtime:water_volume_source.glsl>
 
@@ -153,10 +153,10 @@ void main() {
     fragColor = debugActive ? vec4(1.0, 0.0, 1.0, 1.0) : vec4(0.0);
 
 #if PLAGUE_UNDERWATER && WATER_SCATTERING_QUALITY != 0
-    ivec2 intervalSize = textureSize(u_Input0, 0);
+    ivec2 intervalSize = textureSize(u_WaterVolumeInterval, 0);
     ivec2 intervalCoord = clamp(
             ivec2(gl_FragCoord.xy), ivec2(0), intervalSize - ivec2(1));
-    vec4 encodedInterval = texelFetch(u_Input0, intervalCoord, 0);
+    vec4 encodedInterval = texelFetch(u_WaterVolumeInterval, intervalCoord, 0);
     PlagueWaterVolumeInterval interval = plagueDecodeWaterVolumeInterval(encodedInterval);
     if (debugView == PLAGUE_DEBUG_WATER_SHAFT_INTERVAL) {
         fragColor = vec4(plagueWaterShaftIntervalDebug(
@@ -178,7 +178,7 @@ void main() {
     vec3 scatter;
     vec3 diagnostics;
     if (!plagueWaterIntegrate(interval, texCoord, gl_FragCoord.xy, u_PassTexelSize,
-            u_Input2, u_Input1, scatter, diagnostics)) {
+            u_Noise, u_SunShadowMap, scatter, diagnostics)) {
         return;
     }
     if (debugView == PLAGUE_DEBUG_WATER_SHAFT_REFRACTIVE_FOCUS) {

@@ -10,16 +10,16 @@
 #define PLAGUE_ATMO_READS_SKYVIEW
 #moj_import <fornax_runtime:atmo_lut.glsl>
 
-uniform sampler2D u_Input0; // builtin.noise: the cloud field's erosion lattice
-uniform sampler2D u_Input1; // atmoSkyView, the marched dome (atmo_lut.glsl)
+uniform sampler2D u_Noise; // builtin.noise: the cloud field's erosion lattice
+uniform sampler2D u_AtmoSkyView; // atmoSkyView, the marched dome (atmo_lut.glsl)
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
-    return texture(u_Input1, uv);
+    return texture(u_AtmoSkyView, uv);
 }
 
 // The noise hook, per the contract at the top of clouds.glsl: defined over this pass's own input
 // slot, after the sampler's declaration and before the import.
-#define PLAGUE_CLOUD_NOISE(uv) texture(u_Input0, uv)
+#define PLAGUE_CLOUD_NOISE(uv) texture(u_Noise, uv)
 // This pass's cloud imposter (plagueCloudDensityCoarse, below) cannot bind a real sampler3D:
 // Vulkan's fullscreen-pipeline shader-reflection step refuses any non-2D/Cube sampler outright, so
 // only the compute-based direct-view march samples the real 3D volumes. This uses the same ALU

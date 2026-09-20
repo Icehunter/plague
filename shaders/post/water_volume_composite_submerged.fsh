@@ -5,14 +5,14 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:water_volume.glsl>
 
-uniform sampler2D u_Input0; // sceneHdrRefracted, dependency-only base-scene edge
-uniform sampler2D u_Input1; // waterVolumeScatter
-uniform sampler2D u_Input2; // waterVolumeInterval
-uniform sampler2D u_Input3; // builtin.depth
-uniform sampler2D u_Input4; // builtin.waterDepth
-uniform sampler2D u_Input5; // builtin.waterNormal
-uniform sampler2DShadow u_Input6; // sunShadowMap
-uniform sampler2D u_Input7; // builtin.noise
+uniform sampler2D u_SceneHdrRefracted; // sceneHdrRefracted, dependency-only base-scene edge
+uniform sampler2D u_WaterVolumeScatter; // waterVolumeScatter
+uniform sampler2D u_WaterVolumeInterval; // waterVolumeInterval
+uniform sampler2D u_Depth; // builtin.depth
+uniform sampler2D u_WaterDepth; // builtin.waterDepth
+uniform sampler2D u_WaterNormal; // builtin.waterNormal
+uniform sampler2DShadow u_SunShadowMap; // sunShadowMap
+uniform sampler2D u_Noise; // builtin.noise
 
 #define PLAGUE_UNDERWATER 1 //[0 1] compile "Underwater Effects" {0="Off" 1="On"}
 #define WATER_SCATTERING_QUALITY 1 //[0 1 2] compile "Underwater Light Shafts" {0="Off" 1="High" 2="Epic"}
@@ -27,13 +27,13 @@ uniform sampler2D u_Input7; // builtin.noise
 #moj_import <fornax_runtime:water_waves.glsl>
 #define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Wave Motion" {0="Off" 1="Standard"}
 #define WATER_ABSORPTION_TINT 1 //[0 1] compile "Underwater Tint" {0="Off" 1="On"}
-uniform sampler2D u_Input8; // sunShadowMapRaw
-uniform sampler2D u_Input9; // rtTerrainShadowDepth
-uniform sampler2D u_Input10; // sunEntityShadowMapRaw
-#define SHADOW_COMPARISON_MAP u_Input6
-#define SHADOW_RAW_MAP u_Input8
-#define RT_TERRAIN_SHADOW_DEPTH u_Input9
-#define ENTITY_SHADOW_RAW_MAP u_Input10
+uniform sampler2D u_SunShadowMapRaw; // sunShadowMapRaw
+uniform sampler2D u_RtTerrainShadowDepth; // rtTerrainShadowDepth
+uniform sampler2D u_SunEntityShadowMapRaw; // sunEntityShadowMapRaw
+#define SHADOW_COMPARISON_MAP u_SunShadowMap
+#define SHADOW_RAW_MAP u_SunShadowMapRaw
+#define RT_TERRAIN_SHADOW_DEPTH u_RtTerrainShadowDepth
+#define ENTITY_SHADOW_RAW_MAP u_SunEntityShadowMapRaw
 #moj_import <fornax_runtime:shadow_handoff.glsl>
 #moj_import <fornax_runtime:water_volume_source.glsl>
 
@@ -92,18 +92,18 @@ bool plagueWaterSubmergedFullInterval(
         return false;
     }
 
-    ivec2 opaqueSize = textureSize(u_Input3, 0);
-    ivec2 waterSize = textureSize(u_Input4, 0);
-    ivec2 normalSize = textureSize(u_Input5, 0);
+    ivec2 opaqueSize = textureSize(u_Depth, 0);
+    ivec2 waterSize = textureSize(u_WaterDepth, 0);
+    ivec2 normalSize = textureSize(u_WaterNormal, 0);
     ivec2 opaqueCoord = clamp(
             ivec2(gl_FragCoord.xy), ivec2(0), opaqueSize - ivec2(1));
     ivec2 waterCoord = clamp(
             ivec2(gl_FragCoord.xy), ivec2(0), waterSize - ivec2(1));
     ivec2 normalCoord = clamp(
             ivec2(gl_FragCoord.xy), ivec2(0), normalSize - ivec2(1));
-    float opaqueDepth = texelFetch(u_Input3, opaqueCoord, 0).r;
-    float waterDepth = texelFetch(u_Input4, waterCoord, 0).r;
-    vec4 waterNormalSample = texelFetch(u_Input5, normalCoord, 0);
+    float opaqueDepth = texelFetch(u_Depth, opaqueCoord, 0).r;
+    float waterDepth = texelFetch(u_WaterDepth, waterCoord, 0).r;
+    vec4 waterNormalSample = texelFetch(u_WaterNormal, normalCoord, 0);
     if (!plagueWaterVolumeFinite(opaqueDepth) || !plagueWaterVolumeFinite(waterDepth)
             || !plagueWaterVolumeFinite(waterNormalSample)) {
         return false;
@@ -158,9 +158,9 @@ bool plagueWaterSubmergedUpsample(
     // PLAGUE_WATER_RECONSTRUCTION_REVISION_TOLERANCE, and
     // PLAGUE_WATER_RECONSTRUCTION_WEIGHT_EPSILON.
     scatter = vec3(0.0);
-    ivec2 halfSize = textureSize(u_Input2, 0);
+    ivec2 halfSize = textureSize(u_WaterVolumeInterval, 0);
     if (any(lessThanEqual(halfSize, ivec2(0)))
-            || any(notEqual(textureSize(u_Input1, 0), halfSize))) {
+            || any(notEqual(textureSize(u_WaterVolumeScatter, 0), halfSize))) {
         return false;
     }
 
@@ -182,8 +182,8 @@ bool plagueWaterSubmergedUpsample(
             ivec2 sampleCoord = clamp(baseTexel + ivec2(x, y), ivec2(0),
                     halfSize - ivec2(1));
             PlagueWaterVolumeInterval sampleInterval = plagueDecodeWaterVolumeInterval(
-                    texelFetch(u_Input2, sampleCoord, 0));
-            vec4 sampleScatter = texelFetch(u_Input1, sampleCoord, 0);
+                    texelFetch(u_WaterVolumeInterval, sampleCoord, 0));
+            vec4 sampleScatter = texelFetch(u_WaterVolumeScatter, sampleCoord, 0);
             float intervalAgreement = plagueWaterVolumeReconstructionAgreement(
                     fullInterval, sampleInterval, u_WaterShaftDistance);
             if (intervalAgreement <= 0.0
@@ -223,10 +223,10 @@ void main() {
     if (!plagueWaterSubmergedUpsample(fullInterval, scatter)) {
         // A thin surface may be absent from every half-resolution donor. Integrate its own valid
         // interval instead of treating missing samples as evidence of zero illumination.
-        vec2 halfSize = vec2(textureSize(u_Input2, 0));
+        vec2 halfSize = vec2(textureSize(u_WaterVolumeInterval, 0));
         vec3 diagnostics;
         if (!plagueWaterIntegrate(fullInterval, texCoord, texCoord * halfSize,
-                vec2(1.0) / halfSize, u_Input7, u_Input6, scatter, diagnostics)) {
+                vec2(1.0) / halfSize, u_Noise, u_SunShadowMap, scatter, diagnostics)) {
             return;
         }
     }

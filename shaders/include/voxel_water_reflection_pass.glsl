@@ -5,24 +5,24 @@
 // The stand-in sprite's alpha keeps leaves; see-through texels fall through to the background.
 #define PLAGUE_VOXEL_ALPHA_CUTOUTS
 #define PLAGUE_VOXEL_TEXTURED_FACES
-uniform sampler2D u_Input0; // water normal
-uniform sampler2D u_Input1; // water depth
-uniform sampler2D u_Input2; // opaque depth
+uniform sampler2D u_WaterNormal; // water normal
+uniform sampler2D u_WaterDepth; // water depth
+uniform sampler2D u_Depth; // opaque depth
 #moj_import <fornax_runtime:voxel_coverage.glsl>
-uniform sampler2D u_Input7; // current SSR
-uniform sampler2DShadow u_Input8; // sun shadow map
-uniform sampler2D u_Input12; // normal atlas
-uniform sampler2D u_Input13; // material atlas
-uniform sampler2D u_Input14; // atmospheric transmittance
-uniform sampler2D u_Input15; // atmospheric multiscatter
-uniform sampler2D u_Input16; // atmospheric sky view
-uniform sampler2D u_Input18; // sunShadowMapRaw
-uniform sampler2D u_Input19; // rtTerrainShadowDepth
-uniform sampler2D u_Input20; // sunEntityShadowMapRaw
-#define SHADOW_COMPARISON_MAP u_Input8
-#define SHADOW_RAW_MAP u_Input18
-#define RT_TERRAIN_SHADOW_DEPTH u_Input19
-#define ENTITY_SHADOW_RAW_MAP u_Input20
+uniform sampler2D u_SsrWaterRaw; // current SSR
+uniform sampler2DShadow u_SunShadowMap; // sun shadow map
+uniform sampler2D u_NormalAtlas; // normal atlas
+uniform sampler2D u_MaterialAtlas; // material atlas
+uniform sampler2D u_AtmoTransmittance; // atmospheric transmittance
+uniform sampler2D u_AtmoMultiScatter; // atmospheric multiscatter
+uniform sampler2D u_AtmoSkyView; // atmospheric sky view
+uniform sampler2D u_SunShadowMapRaw; // sunShadowMapRaw
+uniform sampler2D u_RtTerrainShadowDepth; // rtTerrainShadowDepth
+uniform sampler2D u_SunEntityShadowMapRaw; // sunEntityShadowMapRaw
+#define SHADOW_COMPARISON_MAP u_SunShadowMap
+#define SHADOW_RAW_MAP u_SunShadowMapRaw
+#define RT_TERRAIN_SHADOW_DEPTH u_RtTerrainShadowDepth
+#define ENTITY_SHADOW_RAW_MAP u_SunEntityShadowMapRaw
 #moj_import <fornax_runtime:shadow_options.glsl>
 #moj_import <fornax_runtime:shadow_handoff.glsl>
 #moj_import <fornax_runtime:voxel_reflection_fog.glsl>
@@ -37,7 +37,7 @@ in vec2 texCoord;
 out vec4 fragColor;
 
 bool plagueVoxelFallbackNeeded(vec2 uv) {
-    ivec2 size = textureSize(u_Input7, 0);
+    ivec2 size = textureSize(u_SsrWaterRaw, 0);
     vec2 center = uv * vec2(size);
     // A half-size texel covers 4x4 full-size pixels. Testing its centre alone would drop the
     // fallback for the other weak rays in that block.
@@ -48,10 +48,10 @@ bool plagueVoxelFallbackNeeded(vec2 uv) {
     for (int y = first.y; y <= last.y; ++y) {
         for (int x = first.x; x <= last.x; ++x) {
             ivec2 pixel = ivec2(x, y);
-            if (texelFetch(u_Input7, pixel, 0).a > 0.5) continue;
-            float depth = texelFetch(u_Input1, pixel, 0).r;
-            if (depth > 0.0 && texelFetch(u_Input2, pixel, 0).r < depth
-                    && abs(texelFetch(u_Input0, pixel, 0).a) >= 0.5) return true;
+            if (texelFetch(u_SsrWaterRaw, pixel, 0).a > 0.5) continue;
+            float depth = texelFetch(u_WaterDepth, pixel, 0).r;
+            if (depth > 0.0 && texelFetch(u_Depth, pixel, 0).r < depth
+                    && abs(texelFetch(u_WaterNormal, pixel, 0).a) >= 0.5) return true;
         }
     }
     return false;
@@ -62,9 +62,9 @@ void main() {
 #if PLAGUE_VOXEL_REFLECTIONS != 0
     if (u_WaterState.x > 0.5) return;
     vec3 normal; float roughness,flags;
-    plagueDecodeWaterReflectionSurface(texture(u_Input0,texCoord),normal,roughness,flags);
-    float depth = texture(u_Input1,texCoord).r;
-    if (abs(flags)<0.5 || depth<=0.0 || texture(u_Input2,texCoord).r>=depth) return;
+    plagueDecodeWaterReflectionSurface(texture(u_WaterNormal,texCoord),normal,roughness,flags);
+    float depth = texture(u_WaterDepth,texCoord).r;
+    if (abs(flags)<0.5 || depth<=0.0 || texture(u_Depth,texCoord).r>=depth) return;
     if (!plagueVoxelFallbackNeeded(texCoord)) return;
     vec4 h = u_InvProjModelView*vec4(texCoord*2.0-1.0,depth,1.0);
     vec3 origin = h.xyz/h.w;

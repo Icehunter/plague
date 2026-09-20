@@ -12,11 +12,11 @@
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:heat_options.glsl>
 
-uniform sampler2D u_Input0; // sceneHdrTemporal
-uniform sampler2D u_Input1; // builtin.depth
-uniform sampler2D u_Input2; // builtin.gNormal
-uniform sampler2D u_Input3; // builtin.gAo (g = emission, same lane gbuffer_resolve.fsh reads)
-uniform sampler2D u_Input4; // builtin.noise
+uniform sampler2D u_SceneHdrTemporal; // sceneHdrTemporal
+uniform sampler2D u_Depth; // builtin.depth
+uniform sampler2D u_GNormal; // builtin.gNormal
+uniform sampler2D u_GAo; // builtin.gAo (g = emission, same lane gbuffer_resolve.fsh reads)
+uniform sampler2D u_Noise; // builtin.noise
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -38,9 +38,9 @@ vec3 plagueHeatWorldPosAt(vec2 uv, float depth) {
 }
 
 void main() {
-    vec4 original = texture(u_Input0, texCoord);
+    vec4 original = texture(u_SceneHdrTemporal, texCoord);
 
-    float depth = texture(u_Input1, texCoord).r;
+    float depth = texture(u_Depth, texCoord).r;
     if (depth <= 0.0 || u_HeatShimmer <= 0.0) {
         fragColor = original;
         return;
@@ -57,10 +57,10 @@ void main() {
     }
 
     // Ground-facing only: heat rises from a floor, not sideways off a wall or down from a ceiling.
-    vec3 normal = texture(u_Input2, texCoord).xyz * 2.0 - 1.0;
+    vec3 normal = texture(u_GNormal, texCoord).xyz * 2.0 - 1.0;
     float emissiveHeat = 0.0;
     if (u_HeatShimmerEmissive > 0.5 && normal.y >= 0.7) {
-        float emission = texture(u_Input3, texCoord).g;
+        float emission = texture(u_GAo, texCoord).g;
         emissiveHeat = smoothstep(0.05, 0.6, emission);
     }
 
@@ -73,7 +73,7 @@ void main() {
     // Scrolled upward on the wind clock: heat rises.
     float time = u_SkyState.w * 0.05;
     vec2 driftUv = texCoord * 40.0 + vec2(0.0, -time * 1.6);
-    float drift = texture(u_Input4, driftUv).r * 2.0 - 1.0;
+    float drift = texture(u_Noise, driftUv).r * 2.0 - 1.0;
 
     // The travelling ripple people mean by "heat distortion": two sine terms at different
     // frequency and speed so it reads as organic air movement, not one mechanical wave.
@@ -86,5 +86,5 @@ void main() {
     vec2 warpedUv = clamp(texCoord + pixelOffset * u_PassTexelSize,
                           u_PassTexelSize * 1.5, vec2(1.0) - u_PassTexelSize * 1.5);
 
-    fragColor = vec4(texture(u_Input0, warpedUv).rgb, original.a);
+    fragColor = vec4(texture(u_SceneHdrTemporal, warpedUv).rgb, original.a);
 }

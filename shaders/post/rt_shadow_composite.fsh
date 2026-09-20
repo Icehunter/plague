@@ -3,19 +3,19 @@
 #moj_import <fornax_runtime:shadow_options.glsl>
 #moj_import <fornax_runtime:shadow_debug.glsl>
 
-uniform sampler2D u_Input0; // builtin.depth
-uniform sampler2D u_Input1; // builtin.gNormal
+uniform sampler2D u_Depth; // builtin.depth
+uniform sampler2D u_GNormal; // builtin.gNormal
 // The complete raster map remains the fallback for every receiving point.
-uniform sampler2DShadow u_Input2; // complete sunShadowMap
-#define SUN_SHADOW_MAP u_Input2
-uniform sampler2D u_Input5; // sunShadowMapRaw (existing reserved binding)
-uniform sampler2D u_Input8; // rtTerrainShadowDepth
-uniform sampler2D u_Input9; // sunEntityShadowMapRaw
-uniform sampler2D u_Input10; // builtin.gMotion, debug views only
-#define SHADOW_COMPARISON_MAP u_Input2
-#define SHADOW_RAW_MAP u_Input5
-#define RT_TERRAIN_SHADOW_DEPTH u_Input8
-#define ENTITY_SHADOW_RAW_MAP u_Input9
+uniform sampler2DShadow u_SunShadowMap; // complete sunShadowMap
+#define SUN_SHADOW_MAP u_SunShadowMap
+uniform sampler2D u_SunShadowMapRaw; // sunShadowMapRaw (existing reserved binding)
+uniform sampler2D u_RtTerrainShadowDepth; // rtTerrainShadowDepth
+uniform sampler2D u_SunEntityShadowMapRaw; // sunEntityShadowMapRaw
+uniform sampler2D u_GMotion; // builtin.gMotion, debug views only
+#define SHADOW_COMPARISON_MAP u_SunShadowMap
+#define SHADOW_RAW_MAP u_SunShadowMapRaw
+#define RT_TERRAIN_SHADOW_DEPTH u_RtTerrainShadowDepth
+#define ENTITY_SHADOW_RAW_MAP u_SunEntityShadowMapRaw
 float plagueRtSelectedSum = 0.0;
 #define PLAGUE_SHADOW_RECORD_COVERAGE(coverage) plagueRtSelectedSum += (coverage)
 #moj_import <fornax_runtime:shadow_handoff.glsl>
@@ -54,7 +54,7 @@ void main() {
         // Keep the same brightness boost this debug view already used, before handing off as
         // RGBA16F. Returning early, before the depth check, also keeps motion visible on sky
         // pixels and frees up resolve's motion input.
-        fragColor = vec4(abs(texture(u_Input10, texCoord).rg) * 40.0, 0.0, 1.0);
+        fragColor = vec4(abs(texture(u_GMotion, texCoord).rg) * 40.0, 0.0, 1.0);
         return;
     }
     if (debugView == DBG_SHADOW_MAP_VIEW) {
@@ -64,10 +64,10 @@ void main() {
         return;
     }
 #endif
-    float depth = texture(u_Input0, texCoord).r;
+    float depth = texture(u_Depth, texCoord).r;
     vec4 worldH = u_InvProjModelView * vec4(texCoord * 2.0 - 1.0, depth, 1.0);
     vec3 worldPos = worldH.xyz / (abs(worldH.w) > 1e-6 ? worldH.w : 1.0);
-    vec3 shadingNormal = texture(u_Input1, texCoord).rgb;
+    vec3 shadingNormal = texture(u_GNormal, texCoord).rgb;
     // Match the lighting pass's surface plane and offset, including the entity fallback normal.
     // The plane is worked out before any early return, so a sky pixel at the edge can't break it
     // for its neighbors.

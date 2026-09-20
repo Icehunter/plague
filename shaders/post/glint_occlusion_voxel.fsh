@@ -3,14 +3,14 @@
 #moj_import <fornax_runtime:water_reflection.glsl>
 
 #define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "World Reflections" {0="Off" 1="On"}
-uniform sampler2D u_Input0; // water normal
-uniform sampler2D u_Input1; // water depth
-uniform sampler2D u_Input2; // opaque depth
+uniform sampler2D u_WaterNormal; // water normal
+uniform sampler2D u_WaterDepth; // water depth
+uniform sampler2D u_Depth; // opaque depth
 #define PLAGUE_VOXEL_ALPHA_CUTOUTS
 #define PLAGUE_VOXEL_TEXTURED_FACES
 // Reuse the trace's four buffer slots: this pass has no SSR or shadow input at slots 7 and 8.
-#define u_Input9 u_Input7
-#define u_Input10 u_Input8
+#define u_Input9 u_BlockAtlas
+#define u_Input10 u_VoxelFaceTexture
 #moj_import <fornax_runtime:voxel_coverage.glsl>
 #undef u_Input9
 #undef u_Input10
@@ -42,9 +42,9 @@ void main() {
 #if PLAGUE_VOXEL_REFLECTIONS != 0
     if (u_WaterState.x > 0.5) return;
     vec3 normal; float roughness, flags;
-    plagueDecodeWaterReflectionSurface(texture(u_Input0, texCoord), normal, roughness, flags);
-    float depth = texture(u_Input1, texCoord).r;
-    if (abs(flags) < 0.5 || depth <= 0.0 || texture(u_Input2, texCoord).r >= depth) return;
+    plagueDecodeWaterReflectionSurface(texture(u_WaterNormal, texCoord), normal, roughness, flags);
+    float depth = texture(u_WaterDepth, texCoord).r;
+    if (abs(flags) < 0.5 || depth <= 0.0 || texture(u_Depth, texCoord).r >= depth) return;
     vec4 h = u_InvProjModelView * vec4(texCoord * 2.0 - 1.0, depth, 1.0);
     fragColor.r = plagueVoxelGlitterMask(h.xyz / h.w, normal, u_SunDirection.xyz);
 #endif
