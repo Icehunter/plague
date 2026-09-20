@@ -23,9 +23,10 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 // Bindings follow the pass's declaration order, inputs then outputs: 0 globals, 1 packOptions
 // (both engine-injected), 2 the bounce hits, 3 the sun hits, 4 the atlas, 5 last frame's result,
 // 6 motion, 7 depth, 8 the sky table, 9 the bounce rays, 10 the light list, 11 the light hits,
-// 12 the surface normal, 13 the transmittance table, 14 last frame's direction, then the two
-// outputs, 15 the light and 16 its direction. Inputs are APPENDED, never inserted: an inserted one
-// re-points every binding after it with no error anywhere.
+// 12 the surface normal, 13 the transmittance table, 14 last frame's direction, 15 last frame's
+// light from the glowing blocks, then the three outputs, 16 the bounce, 17 its direction and 18
+// that light. Inputs are APPENDED, never inserted: an inserted one re-points every binding after it
+// with no error anywhere, and the outputs sit behind them all.
 layout(std430, set = 0, binding = 2) readonly buffer GiRayHits {
     uint words[];
 } hits;
@@ -53,13 +54,19 @@ layout(set = 0, binding = 12) uniform sampler2D u_SurfaceNormal;
 // error anywhere.
 layout(rgba16f, set = 0, binding = 13) uniform readonly image2D u_Transmittance;
 layout(rgba16f, set = 0, binding = 14) uniform readonly image2D u_DirHistory;
+layout(rgba16f, set = 0, binding = 15) uniform readonly image2D u_DirectHistory;
 
 // The chooser lives in the include and the list lives here, so this is how it reads one.
 uint plagueGiLightWord(uint index) {
     return lightList.words[index];
 }
-layout(rgba16f, set = 0, binding = 15) uniform writeonly image2D u_OutBounce;
-layout(rgba16f, set = 0, binding = 16) uniform writeonly image2D u_OutDir;
+layout(rgba16f, set = 0, binding = 16) uniform writeonly image2D u_OutBounce;
+layout(rgba16f, set = 0, binding = 17) uniform writeonly image2D u_OutDir;
+// Light straight from the glowing blocks. Averaged over frames like the bounce, since its ray goes
+// at a point on the lamp's surface rather than its middle and that average is what makes the soft
+// edge. Kept out of the two spreading steps beside it: those exist to hide the bounce's one random
+// ray, and the soft edge here is the answer rather than noise around it.
+layout(rgba16f, set = 0, binding = 18) uniform writeonly image2D u_OutDirect;
 
 // Word offsets inside one 8-word hit record. Appending to the record is safe; inserting moves
 // every later field with nothing to report it.
@@ -137,8 +144,9 @@ vec3 plagueGiBearing(vec3 dirA, vec3 a, vec3 dirB, vec3 b) {
 // Where this cell's surface sat last frame, and whether that spot is still the same surface. The
 // light and the direction it comes from must keep or drop together: one averaged over frames the
 // other was not is a bearing that belongs to a different picture.
-bool plagueGiReproject(vec2 uv, float depth, out ivec2 previousCell) {
+bool plagueGiReproject(vec2 uv, float depth, out ivec2 previousCell, out vec2 previousPlace) {
     previousCell = ivec2(0);
+    previousPlace = vec2(0.0);
     vec2 motion = texture(u_Motion, uv).rg;
     vec2 previousUv = uv - motion;
     if (!(previousUv.x >= 0.0 && previousUv.x <= 1.0
@@ -161,24 +169,52 @@ bool plagueGiReproject(vec2 uv, float depth, out ivec2 previousCell) {
     }
     previousCell = ivec2(clamp(previousUv * float(PLAGUE_GI_SIDE), vec2(0.0),
             vec2(float(PLAGUE_GI_SIDE) - 1.0)));
+    previousPlace = previousUv * float(PLAGUE_GI_SIDE) - 0.5;
     return true;
 }
 
+// How much of each frame's new answer survives the blend for the light from the glowing blocks.
+// Eight frames. One yes-or-no a frame needs a longer memory than the bounce's three to make a
+// smooth edge out of, and eight draws walked across the lamp cover it well; longer and the light
+// drags behind a moving view.
+const float PLAGUE_GI_DIRECT_BLEND = 0.125;
+
+// Last frame's value at a place BETWEEN texels, mixed from the four around it.
+//
+// A storage image carries no filter, so rounding to the nearest is the only other option, and the
+// texel a cell lands on then jumps as the view creeps. Either side of a shadow edge the two texels
+// differ enough that the blend swings with the jump, which stands on the wall as a bar that does
+// not move while the camera does.
+vec3 plagueGiDirectHistory(vec2 place) {
+    ivec2 corner = ivec2(floor(place));
+    vec2 part = place - vec2(corner);
+    ivec2 low = clamp(corner, ivec2(0), ivec2(int(PLAGUE_GI_SIDE) - 1));
+    ivec2 high = clamp(corner + 1, ivec2(0), ivec2(int(PLAGUE_GI_SIDE) - 1));
+    return mix(mix(imageLoad(u_DirectHistory, low).rgb,
+                   imageLoad(u_DirectHistory, ivec2(high.x, low.y)).rgb, part.x),
+               mix(imageLoad(u_DirectHistory, ivec2(low.x, high.y)).rgb,
+                   imageLoad(u_DirectHistory, high).rgb, part.x), part.y);
+}
+
 /**
- * This frame's light and the bearing it came from, each blended with last frame's.
+ * This frame's bounce, the bearing it came from, and the light from the glowing blocks, each
+ * blended with last frame's.
  *
  * The bearing is one vector doing two jobs: which way, and how much the arrivals agree. Adding the
  * contributions as vectors is what produces both at once, since light from every side cancels to a
  * short vector while light from one lamp stays long.
  */
-void plagueGiStore(ivec2 cell, vec3 current, vec3 bearing, vec2 uv, float depth) {
+void plagueGiStore(ivec2 cell, vec3 current, vec3 direct, vec3 bearing, vec2 uv, float depth) {
     ivec2 previousCell;
-    if (plagueGiReproject(uv, depth, previousCell)) {
+    vec2 previousPlace;
+    if (plagueGiReproject(uv, depth, previousCell, previousPlace)) {
         current = mix(imageLoad(u_History, previousCell).rgb, current, PLAGUE_GI_BLEND);
         bearing = mix(imageLoad(u_DirHistory, previousCell).rgb, bearing, PLAGUE_GI_BLEND);
+        direct = mix(plagueGiDirectHistory(previousPlace), direct, PLAGUE_GI_DIRECT_BLEND);
     }
     imageStore(u_OutBounce, cell, vec4(current, 1.0));
     imageStore(u_OutDir, cell, vec4(bearing, 1.0));
+    imageStore(u_OutDirect, cell, vec4(direct, 1.0));
 }
 
 /**
@@ -246,6 +282,9 @@ void main() {
     if (int(tier) == FORNAX_RAY_TIER_NONE) {
         imageStore(u_OutBounce, cell, vec4(1.0, 0.0, 0.0, 1.0));
         imageStore(u_OutDir, cell, vec4(0.0, 0.0, 0.0, 1.0));
+        // Every cell writes this every frame. A storage image left alone keeps whatever the last
+        // frame put there, and a red marker beside a stale light reads as the light still working.
+        imageStore(u_OutDirect, cell, vec4(0.0, 0.0, 0.0, 1.0));
         return;
     }
 
@@ -267,12 +306,12 @@ void main() {
 
     if (distance < 0.0) {
         vec3 sky = plagueAtmoSkyView(bounceDir, sunDir, plagueAtmoCameraRadius()).rgb;
-        plagueGiStore(cell, sky + direct,
+        plagueGiStore(cell, sky, direct,
                 plagueGiBearing(bounceDir, sky, directBearing, direct), uv, depth);
         return;
     }
     if ((flags & PLAGUE_GI_FLAG_UV_KNOWN) == 0u) {
-        plagueGiStore(cell, direct, directBearing, uv, depth);
+        plagueGiStore(cell, vec3(0.0), direct, directBearing, uv, depth);
         return;
     }
 
@@ -317,6 +356,6 @@ void main() {
     // which every cell does every frame. Counting it again where a bounce happens to land on one
     // lights it twice, and a bounce meets a small bright block by luck: one lucky sample among
     // many dark ones is what speckle is made of.
-    plagueGiStore(cell, carried + direct,
+    plagueGiStore(cell, carried, direct,
             plagueGiBearing(bounceDir, carried, directBearing, direct), uv, depth);
 }

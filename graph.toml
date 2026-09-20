@@ -244,6 +244,22 @@ height = 256
 storage = true
 filter = "linear"
 
+# Light straight from the glowing blocks, kept apart from the bounce beside it.
+#
+# Averaged over frames but never blurred across neighbours. The ray goes at a point on the lamp's
+# surface, a different one each frame, so the average IS the fraction of the lamp a cell can see and
+# the soft edge comes out of it. Spreading it sideways as well would smear that edge over the room.
+#
+# Ungated on purpose: the resolve names it whether the bounce is on or not, and a gated target read
+# by an ungated pass is refused at load.
+[targets.giDirect]
+format = "rgba16f"
+width = 256
+height = 256
+storage = true
+history = true
+filter = "linear"
+
 # Which way the light in giBounce arrives from, as one vector: its direction is the average bearing
 # of everything that reached the cell, its LENGTH is how much those agree. Light from one lamp comes
 # out near 1, light from everywhere at once near 0. The resolve needs both to re-apply a pixel's own
@@ -865,8 +881,8 @@ dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "giRayHits", "giShadowHits", "builtin.blockAtlas",
           "giBounceRaw.history", "builtin.gMotion", "builtin.depth", "atmoSkyView", "giRayRequests",
           "analyticLightList", "giLightHits", "builtin.gNormal", "atmoTransmittance",
-          "giBounceDirRaw.history"]
-outputs = ["giBounceRaw", "giBounceDirRaw"]
+          "giBounceDirRaw.history", "giDirect.history"]
+outputs = ["giBounceRaw", "giBounceDirRaw", "giDirect"]
 
 [[pass]]
 name = "gi_blur"
@@ -901,7 +917,7 @@ shader = "shaders/post/gbuffer_resolve.fsh"
 # rtShadowComposite (u_Input18) holds direct and wide ambient shadow from one combined pass;
 # both use the world-position RT/raster handoff through the shared shadow filter.
 # u_Input19 stays reserved (bound to builtin.depth), so no input numbers shift.
-inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "builtin.depth", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial", "rtShadowComposite", "builtin.depth", "giBounce", "giBounceDir"]
+inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "builtin.depth", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial", "rtShadowComposite", "builtin.depth", "giBounce", "giBounceDir", "giDirect"]
 outputs = ["sceneHdrUnfogged"]
 
 # resolve_hdr is the name Fornax expects for the pass that reads render distance, debug view and

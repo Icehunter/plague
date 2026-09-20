@@ -80,6 +80,7 @@ uniform sampler2D u_VoxelLocalDirect;
 // later sampler with no error anywhere.
 #define GI_BOUNCE u_GiBounce
 #define GI_BOUNCE_DIR u_GiBounceDir
+#define GI_DIRECT u_GiDirect
 uniform sampler2D u_AtmoSkyView; // atmoSkyView, the marched dome (atmo_lut.glsl)
 #define ATMO_SKY_VIEW u_AtmoSkyView
 
@@ -98,6 +99,7 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 uniform sampler2D u_RtShadowComposite; // rtShadowComposite
 uniform sampler2D u_GiBounce; // giBounce
 uniform sampler2D u_GiBounceDir; // giBounceDir, which way that light arrives and how much it agrees
+uniform sampler2D u_GiDirect; // giDirect, light straight from the glowing blocks, never smoothed
 #define RT_SHADOW_COMPOSITE u_RtShadowComposite
 // u_Input19 stays reserved (bound to builtin.depth) so no input numbers shift.
 // Must follow NOISE_TEX: PLAGUE_CLOUD_NOISE expands inline where clouds.glsl calls it, so an
@@ -308,7 +310,7 @@ vec3 plagueGiShape(vec3 light, vec3 bearing, vec4 cellNormal, vec3 pixelNormal) 
 // Four cells around this pixel, each weighted by how close its own depth is to the pixel's. A cell
 // sitting on another surface carries another surface's light, and weighting by depth is what stops
 // it crossing the corner. Falls back to the nearest cell where every neighbour is rejected.
-vec3 plagueGiUpsample(vec2 uv, float depth, vec3 pixelNormal) {
+vec3 plagueGiUpsample(sampler2D grid, vec2 uv, float depth, vec3 pixelNormal) {
     const float side = 256.0;
     vec2 texel = uv * side - 0.5;
     vec2 base = floor(texel);
@@ -325,7 +327,7 @@ vec3 plagueGiUpsample(vec2 uv, float depth, vec3 pixelNormal) {
             float bilinear = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
             // Shaped per cell, before the mix: each one arrived from its own bearing, and
             // averaging the bearings first would aim the whole tap at a direction none of them saw.
-            total += plagueGiShape(texture(GI_BOUNCE, cell).rgb, texture(GI_BOUNCE_DIR, cell).rgb,
+            total += plagueGiShape(texture(grid, cell).rgb, texture(GI_BOUNCE_DIR, cell).rgb,
                                    texture(G_NORMAL, cell), pixelNormal) * bilinear;
             weight += bilinear;
         }
@@ -333,7 +335,7 @@ vec3 plagueGiUpsample(vec2 uv, float depth, vec3 pixelNormal) {
     if (weight > 0.0) {
         return total / weight;
     }
-    return plagueGiShape(texture(GI_BOUNCE, uv).rgb, texture(GI_BOUNCE_DIR, uv).rgb,
+    return plagueGiShape(texture(grid, uv).rgb, texture(GI_BOUNCE_DIR, uv).rgb,
                          texture(G_NORMAL, uv), pixelNormal);
 }
 #endif
@@ -1001,7 +1003,10 @@ int debugView = int(u_Param3 + 0.5);
     localBlockLight = 0.0;
     // The grid holds light ARRIVING at the surface. A matte surface sends back its own colour
     // times that, so the albedo belongs here rather than in the grid.
-    localRadiance += albedo * plagueGiUpsample(texCoord, depth, normal);
+    // Two grids, read the same way. Both are averaged over frames; only the bounce is also spread
+    // across neighbours, so a grate keeps the shadow it casts.
+    localRadiance += albedo * (plagueGiUpsample(GI_BOUNCE, texCoord, depth, normal)
+            + plagueGiUpsample(GI_DIRECT, texCoord, depth, normal));
 #endif
 #if PLAGUE_LOCAL_LIGHTING != 0
     localRadiance=texture(CLOUD_SHADOW_MASK,texCoord).rgb;
