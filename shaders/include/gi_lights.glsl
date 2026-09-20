@@ -8,7 +8,7 @@
 // what keeps them agreeing. Choose differently in the two and the shading is a real light shadowed
 // by a ray aimed at a different one, with nothing to report it.
 
-const uint PLAGUE_GI_SIDE = 256u;
+const uint PLAGUE_GI_SIDE = 512u;
 // The engine's own cap on the list. Reading past a shorter list would read whatever follows it.
 const uint PLAGUE_GI_MAX_LIGHTS = 256u;
 const uint PLAGUE_GI_LIGHT_WORDS = 6u;

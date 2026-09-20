@@ -26,7 +26,7 @@ layout(std430, set = 0, binding = 4) buffer GiShadowRequests {
     vec4 words[];
 } shadow;
 
-const uint PLAGUE_GI_SIDE = 256u;
+const uint PLAGUE_GI_SIDE = 512u;
 const uint PLAGUE_GI_HIT_WORDS = 9u;
 const uint PLAGUE_GI_WORD_DISTANCE = 0u;
 const uint PLAGUE_GI_WORD_NORMAL = 4u;

@@ -19,7 +19,7 @@
 //
 // The caller declares the images and supplies PLAGUE_GI_BLUR_STEP, the gap between taps in cells.
 
-const int PLAGUE_GI_SIDE = 256;
+const int PLAGUE_GI_SIDE = 512;
 // Two cells either side of the middle. Wider than this in one pass reaches across a whole small
 // room before the second pass has widened anything.
 const int PLAGUE_GI_BLUR_RADIUS = 2;

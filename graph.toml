@@ -182,35 +182,35 @@ filter = "linear"
 # ray count is declared once on the trace pass below and a scaled target would not match it.
 
 
-# Eight floats a ray, 65536 rays: the layout the engine's ray_query pass reads and writes.
+# Eight floats a ray, 262144 rays: the layout the engine's ray_query pass reads and writes.
 [targets.giRayRequests]
 kind = "buffer"
 stride_bytes = 32
-count = 65536
+count = 262144
 enabled_if = "PLAGUE_GI != 0"
 
 [targets.giRayHits]
 kind = "buffer"
 stride_bytes = 36
-count = 65536
+count = 262144
 enabled_if = "PLAGUE_GI != 0"
 
 [targets.giShadowRequests]
 kind = "buffer"
 stride_bytes = 32
-count = 65536
+count = 262144
 enabled_if = "PLAGUE_GI != 0"
 
 [targets.giShadowHits]
 kind = "buffer"
 stride_bytes = 36
-count = 65536
+count = 262144
 enabled_if = "PLAGUE_GI != 0"
 
 [targets.giBounceRaw]
 format = "rgba16f"
-width = 256
-height = 256
+width = 512
+height = 512
 storage = true
 # history = true IS the ping-pong: the resolve reads its own previous frame to average the noise
 # one ray per cell leaves behind.
@@ -228,19 +228,19 @@ kind = "buffer"
 [targets.giLightRequests]
 kind = "buffer"
 stride_bytes = 32
-count = 65536
+count = 262144
 enabled_if = "PLAGUE_GI != 0"
 
 [targets.giLightHits]
 kind = "buffer"
 stride_bytes = 36
-count = 65536
+count = 262144
 enabled_if = "PLAGUE_GI != 0"
 
 [targets.giBounce]
 format = "rgba16f"
-width = 256
-height = 256
+width = 512
+height = 512
 storage = true
 filter = "linear"
 
@@ -254,8 +254,8 @@ filter = "linear"
 # by an ungated pass is refused at load.
 [targets.giDirect]
 format = "rgba16f"
-width = 256
-height = 256
+width = 512
+height = 512
 storage = true
 history = true
 filter = "linear"
@@ -266,31 +266,31 @@ filter = "linear"
 # normal to a grid far coarser than the screen.
 [targets.giBounceDirRaw]
 format = "rgba16f"
-width = 256
-height = 256
+width = 512
+height = 512
 storage = true
 history = true
 filter = "linear"
 
 [targets.giBounceDir]
 format = "rgba16f"
-width = 256
-height = 256
+width = 512
+height = 512
 storage = true
 filter = "linear"
 
 # Between the two spreading steps. Nothing outside gi_blur_wide reads these.
 [targets.giBounceMid]
 format = "rgba16f"
-width = 256
-height = 256
+width = 512
+height = 512
 storage = true
 filter = "linear"
 
 [targets.giBounceDirMid]
 format = "rgba16f"
-width = 256
-height = 256
+width = 512
+height = 512
 storage = true
 filter = "linear"
 
@@ -783,7 +783,7 @@ shader = "shaders/compute/gi_seed_rays.comp"
 enabled_if = "PLAGUE_GI != 0"
 # No local_size: a buffer-only output has no extent to derive a dispatch from, so the count is
 # literal and the group size comes from the shader's own layout.
-dispatch = [256, 1, 1]
+dispatch = [1024, 1, 1]
 inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal"]
 outputs = ["giRayRequests"]
 
@@ -802,14 +802,14 @@ outputs = ["giRayHits"]
 # a hit has no albedo to read, so an answer from any other tier tells this pass nothing it can use.
 min_tier = "hardware_mesh"
 kind = "closest_hit"
-rays = 65536
+rays = 262144
 
 [[pass]]
 name = "gi_shadow_seed"
 type = "compute"
 shader = "shaders/compute/gi_shadow_seed.comp"
 enabled_if = "PLAGUE_GI != 0"
-dispatch = [256, 1, 1]
+dispatch = [1024, 1, 1]
 inputs = ["globals", "packOptions", "giRayRequests", "giRayHits"]
 outputs = ["giShadowRequests"]
 
@@ -824,7 +824,7 @@ outputs = ["giShadowHits"]
 
 [pass.ray_query]
 kind = "visibility"
-rays = 65536
+rays = 262144
 
 [[pass]]
 # Known to the engine by name: it sizes analyticLightList and dispatches the scan behind these.
@@ -854,7 +854,7 @@ name = "gi_light_seed"
 type = "compute"
 shader = "shaders/compute/gi_light_seed.comp"
 enabled_if = "PLAGUE_GI != 0"
-dispatch = [256, 1, 1]
+dispatch = [1024, 1, 1]
 inputs = ["globals", "packOptions", "analyticLightList", "builtin.depth", "builtin.gNormal"]
 outputs = ["giLightRequests"]
 
@@ -869,7 +869,7 @@ outputs = ["giLightHits"]
 
 [pass.ray_query]
 kind = "visibility"
-rays = 65536
+rays = 262144
 
 [[pass]]
 name = "gi_resolve"

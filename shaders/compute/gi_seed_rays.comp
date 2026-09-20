@@ -23,7 +23,7 @@ layout(std430, set = 0, binding = 4) buffer GiRayRequests {
     vec4 words[];
 } requests;
 
-const uint PLAGUE_GI_SIDE = 256u;
+const uint PLAGUE_GI_SIDE = 512u;
 // A bounce reaching past this adds almost nothing at one sample per cell, and every extra block is
 // traversal the whole grid pays for.
 const float PLAGUE_GI_REACH_BLOCKS = 48.0;

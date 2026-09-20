@@ -311,7 +311,7 @@ vec3 plagueGiShape(vec3 light, vec3 bearing, vec4 cellNormal, vec3 pixelNormal) 
 // sitting on another surface carries another surface's light, and weighting by depth is what stops
 // it crossing the corner. Falls back to the nearest cell where every neighbour is rejected.
 vec3 plagueGiUpsample(sampler2D grid, vec2 uv, float depth, vec3 pixelNormal) {
-    const float side = 256.0;
+    const float side = 512.0;
     vec2 texel = uv * side - 0.5;
     vec2 base = floor(texel);
     vec2 f = texel - base;
