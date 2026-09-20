@@ -597,20 +597,12 @@ void main() {
     // only; the block lane is unscaled (glowstone/lanterns are tuned to read correctly unscaled).
     // The emitter-luminance curve (emission.glsl) applies to the block lane only, here in the
     // geometry stage, because gAo.g is one channel and the two lanes must stay separable before max.
-    // ALPHA_CUTOUT is the cutout sub-draw exactly, so this is the block's own shape class rather
-    // than a guess about which block it is.
-#ifdef ALPHA_CUTOUT
-    const bool plagueEmitterCutout = true;
-#else
-    const bool plagueEmitterCutout = false;
-#endif
     float emission = plagueSourceLuminance(plagueSrgbToLinear(rawAlbedo), v_LightEmission,
-            materialSample.a, u_AuthoredEmission * (v_CoalClass > 0.5 ? 0.0 : 1.0),
-            plagueEmitterCutout);
+            materialSample.a, u_AuthoredEmission * (v_CoalClass > 0.5 ? 0.0 : 1.0));
 #if PLAGUE_SOURCE_RADIANCE > 0
     // Diagnostic candidate only: the material rule has neither an identity exclusion nor baked shade.
     float sourceEmission = plagueSourceLuminance(sourceAlbedoLinear, v_LightEmission,
-            materialSample.a, u_AuthoredEmission, plagueEmitterCutout);
+            materialSample.a, u_AuthoredEmission);
 #endif
 
     // --- Puddles -----------------------------------------------------------------------------

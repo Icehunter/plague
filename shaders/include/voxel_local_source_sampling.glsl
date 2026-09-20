@@ -18,6 +18,7 @@ struct PlagueLocalSourceFace {
     ivec2 materialEnd;
     vec3 linearTint;
     float intrinsic;
+    // Whether the face alpha-tests. A rejected texel is real zero emission, not a missing sample.
     bool cutout;
     bool missingMap;
 };
@@ -84,7 +85,7 @@ vec3 plagueLocalSourceSample(PlagueLocalSourceFace mapping, vec2 st) {
     }
     vec3 linearAlbedo = plagueSrgbToLinear(albedo.rgb)*mapping.linearTint;
     float luminance = plagueSourceLuminance(linearAlbedo, mapping.intrinsic,
-            materialAlpha, u_AuthoredEmission, mapping.cutout);
+            materialAlpha, u_AuthoredEmission);
     return plagueEmittedRadiance(linearAlbedo, luminance);
 }
 

@@ -9,26 +9,6 @@
 
 #moj_import <fornax_runtime:local_light_mode.glsl>
 
-// How fast a glowing block's own brightness falls away from its brightest texels.
-//
-// A pack that ships no emission map leaves the shader guessing which texels glow, and the only
-// signal left is how bright they are in the texture. That guess is generous: a campfire's pale logs
-// read as most of the way to its flame, so the whole block glows. Tighter settings pull the dim
-// texels down and leave the bright ones, without changing how bright the block is.
-//
-// Compile-time, because this is read in a geometry stage, where a runtime option has no uniform
-// block to arrive in and its name would be left undefined.
-//
-// Applies to CUTOUT blocks only. A solid cube that glows, a glowstone or a sea lantern, really does
-// glow over its whole face, and tightening it there would be wrong. A torch, a lantern or a
-// campfire is a cutout draw: a bright part mounted on something that is not meant to glow at all.
-// The draw class is the signal, not the block, so nothing here knows or cares which block it is.
-//
-// Even is the identity, which is the point: the curve underneath was fitted, and this rides on top.
-#ifndef PLAGUE_EMITTER_FALLOFF
-#define PLAGUE_EMITTER_FALLOFF 1 //[1 2 3 4] compile "Glow Falloff" {1="Even" 2="Softer" 3="Tighter" 4="Tightest"}
-#endif
-
 // Engine-driven lane only: reconstructs per-texel shape from a block's flat emission level (never
 // applied to the authored per-texel lane, which already has real artist-drawn shape).
 
@@ -40,7 +20,7 @@ const float PLAGUE_EMITTER_LUM_MAX_BIAS = 0.75;
 // instead and need not share this value.
 const float PLAGUE_EMITTER_LUM_STABILITY_FLOOR = 1e-4;
 
-float plagueEmitterLuminance(vec3 albedoLinear, bool cutout) {
+float plagueEmitterLuminance(vec3 albedoLinear) {
     vec3 a = max(albedoLinear, vec3(0.0));
     float avg = (a.x + a.y + a.z) / 3.0;
     float mx = max(a.x, max(a.y, a.z));
@@ -52,26 +32,17 @@ float plagueEmitterLuminance(vec3 albedoLinear, bool cutout) {
     float safeMx = max(mx, PLAGUE_EMITTER_LUM_STABILITY_FLOOR);
     float compressed = mix(shapeFromMax, sqrt(safeMx), mx);
 
-    // Glow Falloff rides on top of the fitted curve rather than replacing it: at Even this is the
-    // identity and the fit stands. Tighter, dim texels drop away faster than bright ones, which is
-    // what separates a flame from the pale wood it sits on when a pack authors no emission map.
-    float shaped = clamp(compressed, 0.0, 1.0);
-#if PLAGUE_EMITTER_FALLOFF > 1
-    if (cutout) {
-        shaped = pow(shaped, float(PLAGUE_EMITTER_FALLOFF));
-    }
-#endif
-    return shaped;
+    return clamp(compressed, 0.0, 1.0);
 }
 
 // Material alpha byte 255 is the atlas's unauthored sentinel; authored bytes 0..254 span 0..1.
 // Preserve the existing terrain/voxel max of independent intrinsic and authored emission lanes.
 float plagueSourceLuminance(vec3 albedoLinear, float intrinsicEmission, float materialAlpha,
-        float authoredScale, bool cutout) {
+        float authoredScale) {
     bool unauthored = materialAlpha >= (254.5 / 255.0);
     float intrinsicShape = unauthored ? 1.0 : materialAlpha;
     float authored = unauthored ? 0.0 : min(materialAlpha * (255.0 / 254.0), 1.0);
-    return max(plagueEmitterLuminance(albedoLinear, cutout) * intrinsicEmission * intrinsicShape,
+    return max(plagueEmitterLuminance(albedoLinear) * intrinsicEmission * intrinsicShape,
             authored * authoredScale);
 }
 
