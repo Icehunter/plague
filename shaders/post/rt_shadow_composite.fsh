@@ -77,7 +77,7 @@ void main() {
     if (dot(planeNormal, shadingNormal) < 0.0) planeNormal = -planeNormal;
     if (depth <= 0.0) return;
 #ifdef PLAGUE_DEBUG_VIEWS
-    if (debugView == DBG_SHADOW_QUERY_3) {
+    if (debugView == DBG_SHADOW_DEPTH_COMPARE) {
         // Match resolve's fallback for the shading normal and for a missing light direction,
         // but not its geometric bias.
         vec3 normal = dot(shadingNormal, shadingNormal) > 1e-6

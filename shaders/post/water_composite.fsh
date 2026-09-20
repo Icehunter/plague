@@ -178,22 +178,22 @@ vec2 plagueFoamParallax(sampler2D heightTex, vec2 uv, vec3 viewDirWorld, float h
 // 35 is true-sun alignment / moon alignment / interface Fresnel; 37 is the matching two glint
 // lobes / configured strength. RGB only, A pinned to 1.0 since this pass blends. Confirm against
 // the live GBufferDebugView enum before reusing.
-#define DBG_UW_GLINT_1 35
-#define DBG_UW_GLINT_2 36
-#define DBG_UW_GLINT_3 37
-#define DBG_UW_GLINT_4 38
+#define DBG_UW_GLINT_ALIGNMENT 35
+#define DBG_UW_GLINT_EYE_FILTER 36
+#define DBG_UW_GLINT_LOBES 37
+#define DBG_UW_GLINT_CONTRIBUTION 38
 // Orientation readback (waveNormal.y, NdotV, worldPos.y), read outside the underwater gate so a
 // dry-camera reading returns a real value instead of falling through to the ordinary composite.
-#define DBG_UW_GLINT_5 39
+#define DBG_UW_GLINT_ORIENTATION 39
 
 void main() {
     int debugView = int(u_Param3 + 0.5);
     // Sentinel value, not silent fallthrough: this pass discards non-water pixels, so a misplaced
     // debug crosshair must read back something unmistakable rather than whatever sceneHdrComposited
     // already held.
-    bool uwGlintQueryActive = debugView == DBG_UW_GLINT_1 || debugView == DBG_UW_GLINT_2
-            || debugView == DBG_UW_GLINT_3 || debugView == DBG_UW_GLINT_4
-            || debugView == DBG_UW_GLINT_5;
+    bool uwGlintQueryActive = debugView == DBG_UW_GLINT_ALIGNMENT || debugView == DBG_UW_GLINT_EYE_FILTER
+            || debugView == DBG_UW_GLINT_LOBES || debugView == DBG_UW_GLINT_CONTRIBUTION
+            || debugView == DBG_UW_GLINT_ORIENTATION;
     const vec4 UW_GLINT_QUERY_NOT_WATER = vec4(-1.0, -1.0, -1.0, 1.0);
 
     vec4 waterSample = texture(u_WaterNormal, texCoord);
@@ -302,10 +302,10 @@ void main() {
     float NdotV = clamp(dot(waveNormal, viewDir), 0.0, 1.0);
     float fresnel = plagueDielectricFresnel(NdotV, 1.0, 1.333);
 
-    // See DBG_UW_GLINT_5's own #define comment for why this reads here, unconditionally, rather
+    // See DBG_UW_GLINT_ORIENTATION's own #define comment for why this reads here, unconditionally, rather
     // than inside the underwater branch below: waveNormal, NdotV and worldPos are all real by this
     // point in BOTH the wet and dry case, and that is the entire point of the ordinal.
-    if (debugView == DBG_UW_GLINT_5) {
+    if (debugView == DBG_UW_GLINT_ORIENTATION) {
         fragColor = vec4(waveNormal.y, NdotV, worldPos.y, 1.0);
         return;
     }
@@ -707,19 +707,19 @@ void main() {
         // Overrides the air-side alpha computed above: it described the wrong side of the interface.
         opacity = mix(0.74, 0.98, uwFresnel);
 
-        if (debugView == DBG_UW_GLINT_1) {
+        if (debugView == DBG_UW_GLINT_ALIGNMENT) {
             fragColor = vec4(uwSunAlignment, uwMoonAlignment, uwFresnel, 1.0);
             return;
         }
-        if (debugView == DBG_UW_GLINT_2) {
+        if (debugView == DBG_UW_GLINT_EYE_FILTER) {
             fragColor = vec4(uwEyeFilter, 1.0);
             return;
         }
-        if (debugView == DBG_UW_GLINT_3) {
+        if (debugView == DBG_UW_GLINT_LOBES) {
             fragColor = vec4(uwSunGlint, uwMoonGlint, u_UnderwaterSunGlitterStrength, 1.0);
             return;
         }
-        if (debugView == DBG_UW_GLINT_4) {
+        if (debugView == DBG_UW_GLINT_CONTRIBUTION) {
             fragColor = vec4(uwGlintContribution, 1.0);
             return;
         }

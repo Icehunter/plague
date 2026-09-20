@@ -4,7 +4,7 @@
 //#define PLAGUE_DEBUG_VIEWS //[] compile "Test View: Motion and Shadow Map"
 // Engine GBufferDebugView shaderId ABI. Both passes receive the same live u_Param3.
 #define DBG_MOTION 4
-#define DBG_SHADOW_QUERY_3 33
+#define DBG_SHADOW_DEPTH_COMPARE 33
 #define DBG_SHADOW_MAP_VIEW 40
 
 // Keep the projection query's diagnostic bias in one place. Both QUERY_2's

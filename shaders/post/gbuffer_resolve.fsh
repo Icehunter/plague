@@ -148,8 +148,8 @@ uniform sampler2D u_GiBounceDir; // giBounceDir, which way that light arrives an
 
 // Number carrier, deep branch (see DBG_ENV_SPEC_RATIO): these three do not exist until the SHADOWS
 // block computes visibility()/ndotl/worldPos/sunDir. Aim the crosshair at the fragment in question.
-#define DBG_SHADOW_QUERY_1 31
-#define DBG_SHADOW_QUERY_2 32
+#define DBG_SHADOW_SUN_AND_NDOTL 31
+#define DBG_SHADOW_MAP_UV_AND_VISIBILITY 32
 
 // Full-screen view of the shadow map's own contents, not a crosshair readback: splits "write-side"
 // (caster absent from the map) from "read-side" (caster present, addressed wrong) in one look.
@@ -769,18 +769,18 @@ int debugView = int(u_Param3 + 0.5);
 
     // Projection diagnostics share the filter bias. QUERY_2 carries applied receiver visibility;
     // QUERY_3 reads the complete raster fallback depth, which is still useful with RT active.
-    if (debugView == DBG_SHADOW_QUERY_1) {
+    if (debugView == DBG_SHADOW_SUN_AND_NDOTL) {
         fragColor = vec4(sunDir, ndotl);
         return;
     }
-    if (debugView == DBG_SHADOW_QUERY_2 || debugView == DBG_SHADOW_QUERY_3) {
+    if (debugView == DBG_SHADOW_MAP_UV_AND_VISIBILITY || debugView == DBG_SHADOW_DEPTH_COMPARE) {
         vec3 dbgCoordinates = plagueShadowDebugCoordinates(worldPos, normal, sunDir);
         vec2 dbgShadowUv = dbgCoordinates.xy;
         float dbgRawDepth = dbgCoordinates.z;
         bool dbgInRange = dbgShadowUv.x > 0.0 && dbgShadowUv.x < 1.0
                 && dbgShadowUv.y > 0.0 && dbgShadowUv.y < 1.0
                 && dbgRawDepth > 0.0 && dbgRawDepth < 1.0;
-        if (debugView == DBG_SHADOW_QUERY_2) {
+        if (debugView == DBG_SHADOW_MAP_UV_AND_VISIBILITY) {
             fragColor = vec4(dbgShadowUv, dbgInRange ? 1.0 : 0.0, visibility);
             return;
         }
