@@ -477,6 +477,7 @@ elements = [
     "CUSTOM_LIGHT_COLORS",
     "u_BlockLightTemp",
     "u_ScreenBrightness",
+    "PLAGUE_LOCAL_LIGHTING",
     "<group:Sunlight|requires:CUSTOM_LIGHT_COLORS>",
     "u_LightPaletteNoonR", "u_LightPaletteNoonG", "u_LightPaletteNoonB",
     "<group:Sunset|requires:CUSTOM_LIGHT_COLORS>",
@@ -513,6 +514,14 @@ elements = [
     "u_ShadowDistance|requires:SHADOWS",
     "u_ShadowSoftness|requires:SHADOWS",
     "HIDE_VANILLA_BLOB_SHADOWS",
+]
+
+[screens.ray_tracing]
+title = "Ray Tracing"
+elements = [
+    "PLAGUE_GI",
+    "u_GiLightStrength|requires:PLAGUE_GI",
+    "PLAGUE_GI_VIEW|requires:PLAGUE_GI",
 ]
 
 [screens.occlusion]
@@ -787,14 +796,8 @@ elements = [
     "PLAGUE_VOXEL_PROFILE",
     "PLAGUE_SHORE_DEBUG",
 
-    "<group:Bounce Light>",
-    "PLAGUE_GI",
-    "u_GiLightStrength|requires:PLAGUE_GI",
-    "PLAGUE_GI_VIEW|requires:PLAGUE_GI",
-    "PLAGUE_LOCAL_DEBUG|requires:PLAGUE_LOCAL_LIGHTING",
-
     "<group:Local Lighting>",
-    "PLAGUE_LOCAL_LIGHTING",
+    "PLAGUE_LOCAL_DEBUG|requires:PLAGUE_LOCAL_LIGHTING",
     "PLAGUE_SOURCE_DIAGNOSTIC",
     "PLAGUE_SOURCE_RADIANCE",
 
@@ -809,7 +812,7 @@ elements = [
 ]
 
 [yacl]
-pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "occlusion", "reflections", "heat_shimmer", "end", "water", "materials", "snow", "parallax", "bloom", "tonemap", "outline", "debug"]
+pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "ray_tracing", "occlusion", "reflections", "heat_shimmer", "end", "water", "materials", "snow", "parallax", "bloom", "tonemap", "outline", "debug"]
 
 # Prose shown in each option's tooltip, above the mechanical Default/Range/Applies lines.
 [descriptions]

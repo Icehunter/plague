@@ -30,7 +30,7 @@
 #moj_import <fornax_runtime:end_sky.glsl>
 #moj_import <fornax_runtime:surface_lighting.glsl>
 
-#define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="Experimental"}
+#define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="On"}
 
 uniform sampler2D u_GNormal; // builtin.gNormal
 #define G_NORMAL u_GNormal
@@ -311,7 +311,10 @@ vec3 plagueGiShape(vec3 light, vec3 bearing, vec4 cellNormal, vec3 pixelNormal) 
 // sitting on another surface carries another surface's light, and weighting by depth is what stops
 // it crossing the corner. Falls back to the nearest cell where every neighbour is rejected.
 vec3 plagueGiUpsample(sampler2D grid, vec2 uv, float depth, vec3 pixelNormal) {
-    const float side = 512.0;
+    // Read off the bounce grid rather than a fixed number, so the direct grid this same function
+    // upsamples maps onto the one extent both were laid out against. Two components, not one: the
+    // grid follows the screen's own shape, not always a square.
+    vec2 side = vec2(textureSize(GI_BOUNCE, 0));
     vec2 texel = uv * side - 0.5;
     vec2 base = floor(texel);
     vec2 f = texel - base;
@@ -1001,12 +1004,13 @@ int debugView = int(u_Param3 + 0.5);
     // reads as lit. The bounce measures the same light against the geometry, and the two together
     // would light everything twice.
     localBlockLight = 0.0;
-    // The grid holds light ARRIVING at the surface. A matte surface sends back its own colour
-    // times that, so the albedo belongs here rather than in the grid.
+    // The grid holds light arriving at the surface. A matte surface sends back its own colour
+    // times that, so the albedo and the surface response belong here rather than in the grid.
     // Two grids, read the same way. Both are averaged over frames; only the bounce is also spread
-    // across neighbours, so a grate keeps the shadow it casts.
-    localRadiance += albedo * (plagueGiUpsample(GI_BOUNCE, texCoord, depth, normal)
-            + plagueGiUpsample(GI_DIRECT, texCoord, depth, normal));
+    // across neighbours, so a grate keeps the shadow it casts. Kept as named values rather than
+    // folded in here: the energy split below (kD) is not known yet at this point in the file.
+    vec3 giBounceIrradiance = plagueGiUpsample(GI_BOUNCE, texCoord, depth, normal);
+    vec3 giDirectIrradiance = plagueGiUpsample(GI_DIRECT, texCoord, depth, normal);
 #endif
 #if PLAGUE_LOCAL_LIGHTING != 0
     localRadiance=texture(CLOUD_SHADOW_MASK,texCoord).rgb;
@@ -1042,6 +1046,31 @@ int debugView = int(u_Param3 + 0.5);
     // What is not reflected is transmitted: a dielectric scatters it back out as diffuse, a
     // conductor absorbs it. Neither is a branch.
     vec3 kD = (1.0 - specularAlbedo) * (1.0 - mat.metalness);
+
+#if PLAGUE_GI != 0 && PLAGUE_LOCAL_LIGHTING == 0
+    // Diffuse from both grids, weighted the same way the sun's own diffuse is: a polished or
+    // metal surface must not take full diffuse from a lamp it also mirrors.
+    localRadiance += kD * albedo * (giBounceIrradiance + giDirectIrradiance);
+
+    // Specular answer for the direct grid only. The bounce grid is smeared in from every
+    // surrounding surface, so it carries no single bearing worth mirroring; the reflection
+    // passes already own that content. GI_BOUNCE_DIR's length is how much the arrivals folded
+    // into this pixel's cell agreed on a bearing, so a pixel where they disagree fades toward no
+    // specular rather than mirroring a direction nothing actually came from.
+    vec3 giDirectBearing = texture(GI_BOUNCE_DIR, texCoord).rgb;
+    float giDirectAgreement = length(giDirectBearing);
+    if (giDirectAgreement > 1e-4) {
+        vec3 giDirectDir = giDirectBearing / giDirectAgreement;
+        PlagueBrdf giBrdf = plagueEvaluateBrdf(mat, albedo, normal, viewDir, giDirectDir);
+        // plagueEvaluateBrdf's specular already carries N.L against giDirectDir (brdf.glsl).
+        // giDirectIrradiance already carries the cosine at this surface for the same bearing, so
+        // the N.L folded into giBrdf.specular is divided back out first; multiplying by
+        // irradiance without removing it would square the cosine.
+        float giNdotL = max(dot(normal, giDirectDir), 1e-4);
+        vec3 giSpecularShape = giBrdf.specular / giNdotL;
+        localRadiance += giSpecularShape * giDirectIrradiance * clamp(giDirectAgreement, 0.0, 1.0);
+    }
+#endif
 
     // Both BRDF terms already carry N.L, so only visibility and light colour apply here; adding
     // the cosine again would square it.

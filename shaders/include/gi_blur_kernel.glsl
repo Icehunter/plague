@@ -17,9 +17,23 @@
 // through the corner onto a surface no light reaches, which is the failure this whole pass set
 // exists to avoid.
 //
-// The caller declares the images and supplies PLAGUE_GI_BLUR_STEP, the gap between taps in cells.
+// The caller declares the images and names its step in CELLS. One for the first pass, so every
+// neighbour is mixed; the second widens from there.
 
-const int PLAGUE_GI_SIDE = 512;
+// How much further the WIDE pass reaches once the grid is finer.
+//
+// The grid spans the whole screen whatever its size, so a gap counted in cells covers half as much
+// screen once the grid is twice as fine. Only the second pass is scaled by it. The first must stay
+// at one cell: a filter whose smallest gap is two only ever lands on even neighbours, leaving the
+// odd cells and the even cells as two sets that never mix. They drift apart, and the interleave
+// stands on a wall as a checkerboard two cells across.
+//
+// Read off the grid's own width, not a fixed number: a finer grid needs a wider step to reach the
+// same screen distance, and the width is the only axis this step follows.
+int plagueGiBlurWideScale(ivec2 size) {
+    return size.x / 256;
+}
+
 // Two cells either side of the middle. Wider than this in one pass reaches across a whole small
 // room before the second pass has widened anything.
 const int PLAGUE_GI_BLUR_RADIUS = 2;
@@ -30,8 +44,8 @@ const float PLAGUE_GI_BLUR_DEPTH_REJECT = 0.02;
 // what stops the two passes together reading as a flat box.
 const float PLAGUE_GI_BLUR_TAP[5] = float[5](0.0625, 0.25, 0.375, 0.25, 0.0625);
 
-void plagueGiBlurCell(ivec2 cell, int step) {
-    vec2 uv = (vec2(cell) + 0.5) / float(PLAGUE_GI_SIDE);
+void plagueGiBlurCell(ivec2 cell, int step, ivec2 size) {
+    vec2 uv = (vec2(cell) + 0.5) / vec2(size);
     float depth = texture(u_Depth, uv).r;
 
     // Sky, which no surface receives. Passed through rather than filtered so the edge of the world
@@ -50,8 +64,8 @@ void plagueGiBlurCell(ivec2 cell, int step) {
     float weight = 0.0;
     for (int y = -PLAGUE_GI_BLUR_RADIUS; y <= PLAGUE_GI_BLUR_RADIUS; ++y) {
         for (int x = -PLAGUE_GI_BLUR_RADIUS; x <= PLAGUE_GI_BLUR_RADIUS; ++x) {
-            ivec2 tap = clamp(cell + ivec2(x, y) * step, ivec2(0), ivec2(PLAGUE_GI_SIDE - 1));
-            vec2 tapUv = (vec2(tap) + 0.5) / float(PLAGUE_GI_SIDE);
+            ivec2 tap = clamp(cell + ivec2(x, y) * step, ivec2(0), size - 1);
+            vec2 tapUv = (vec2(tap) + 0.5) / vec2(size);
             float tapDepth = texture(u_Depth, tapUv).r;
             if (tapDepth <= 0.0
                     || abs(depth - tapDepth) > PLAGUE_GI_BLUR_DEPTH_REJECT * max(depth, 1e-4)) {

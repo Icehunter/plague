@@ -25,6 +25,9 @@ layout(rgba16f, set = 0, binding = 6) uniform writeonly image2D u_OutDir;
 
 void main() {
     ivec2 cell = ivec2(gl_GlobalInvocationID.xy);
-    if (cell.x >= PLAGUE_GI_SIDE || cell.y >= PLAGUE_GI_SIDE) return;
-    plagueGiBlurCell(cell, 2);
+    // Read off the once-spread grid itself, matching the first pass rather than a number kept in
+    // step with graph.toml by hand.
+    ivec2 size = imageSize(u_Bounce);
+    if (cell.x >= size.x || cell.y >= size.y) return;
+    plagueGiBlurCell(cell, 2 * plagueGiBlurWideScale(size), size);
 }

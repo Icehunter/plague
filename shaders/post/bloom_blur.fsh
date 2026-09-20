@@ -2,8 +2,9 @@
 
 // Bloom blur, one pyramid level.
 //
-// No threshold: the whole image blooms, since the composite lerps toward an averaged blur rather
-// than adding highlights, so no pixel needs to be singled out as "bright enough".
+// No threshold: the whole image blooms. What separates glare from haze is done in the composite,
+// which keeps only the part of this blur that is brighter than the pixel it lands on, so no pixel
+// needs to be singled out as "bright enough" here.
 //
 // Kernel is the binomial recurrence, not a tabulated Gaussian: weights are exact integers, so a
 // normalised kernel cannot drift energy across the seven summed levels.

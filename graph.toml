@@ -252,12 +252,23 @@ filter = "linear"
 #
 # Ungated on purpose: the resolve names it whether the bounce is on or not, and a gated target read
 # by an ungated pass is refused at load.
-[targets.giDirect]
+[targets.giDirectRaw]
 format = "rgba16f"
 width = 512
 height = 512
 storage = true
 history = true
+filter = "linear"
+
+# The same light after one narrow pass over its neighbours. One yes-or-no a frame leaves a cell
+# holding one of a handful of answers, which reads as speckle however long the frame average runs.
+# One cell either side is about three pixels on screen: enough to settle that, far short of the
+# spreading the bounce beside it takes, which would smear the shadow back into a blob.
+[targets.giDirect]
+format = "rgba16f"
+width = 512
+height = 512
+storage = true
 filter = "linear"
 
 # Which way the light in giBounce arrives from, as one vector: its direction is the average bearing
@@ -784,7 +795,9 @@ enabled_if = "PLAGUE_GI != 0"
 # No local_size: a buffer-only output has no extent to derive a dispatch from, so the count is
 # literal and the group size comes from the shader's own layout.
 dispatch = [1024, 1, 1]
-inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal"]
+# giBounceRaw.history is read only for imageSize: its extent is the grid this pass lays its rays
+# out over, appended last so the requests output is the only binding it moves.
+inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal", "giBounceRaw.history"]
 outputs = ["giRayRequests"]
 
 [[pass]]
@@ -810,7 +823,9 @@ type = "compute"
 shader = "shaders/compute/gi_shadow_seed.comp"
 enabled_if = "PLAGUE_GI != 0"
 dispatch = [1024, 1, 1]
-inputs = ["globals", "packOptions", "giRayRequests", "giRayHits"]
+# giBounceRaw.history is read only for imageSize: its extent is the grid this pass lays its rays
+# out over, appended last so the shadow requests output is the only binding it moves.
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giBounceRaw.history"]
 outputs = ["giShadowRequests"]
 
 [[pass]]
@@ -855,7 +870,10 @@ type = "compute"
 shader = "shaders/compute/gi_light_seed.comp"
 enabled_if = "PLAGUE_GI != 0"
 dispatch = [1024, 1, 1]
-inputs = ["globals", "packOptions", "analyticLightList", "builtin.depth", "builtin.gNormal"]
+# giBounceRaw.history is read only for imageSize: its extent is the grid this pass lays its rays
+# out over, appended last so the light requests output is the only binding it moves.
+inputs = ["globals", "packOptions", "analyticLightList", "builtin.depth", "builtin.gNormal",
+          "giBounceRaw.history"]
 outputs = ["giLightRequests"]
 
 [[pass]]
@@ -881,8 +899,8 @@ dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "giRayHits", "giShadowHits", "builtin.blockAtlas",
           "giBounceRaw.history", "builtin.gMotion", "builtin.depth", "atmoSkyView", "giRayRequests",
           "analyticLightList", "giLightHits", "builtin.gNormal", "atmoTransmittance",
-          "giBounceDirRaw.history", "giDirect.history"]
-outputs = ["giBounceRaw", "giBounceDirRaw", "giDirect"]
+          "giBounceDirRaw.history", "giDirectRaw.history"]
+outputs = ["giBounceRaw", "giBounceDirRaw", "giDirectRaw"]
 
 [[pass]]
 name = "gi_blur"
@@ -891,8 +909,9 @@ shader = "shaders/compute/gi_blur.comp"
 enabled_if = "PLAGUE_GI != 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "giBounceRaw", "builtin.depth", "giBounceDirRaw"]
-outputs = ["giBounceMid", "giBounceDirMid"]
+inputs = ["globals", "packOptions", "giBounceRaw", "builtin.depth", "giBounceDirRaw",
+          "giDirectRaw"]
+outputs = ["giBounceMid", "giBounceDirMid", "giDirect"]
 
 [[pass]]
 # Second spreading step, taps two cells apart. Separate pass rather than a wider loop in the first:

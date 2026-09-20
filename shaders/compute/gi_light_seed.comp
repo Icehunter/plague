@@ -17,14 +17,17 @@
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-// Bindings: 0 globals, 1 packOptions (engine-injected), 2 the light list, 3 depth, 4 gNormal,
-// 5 the rays.
+// Bindings: 0 globals, 1 packOptions (engine-injected), 2 the light list, 3 depth, 4 gNormal, 5 the
+// grid (read only for its own extent), 6 the rays. This pass writes no image itself, so the grid is
+// bound purely to read imageSize off it: appended, never inserted, so the rays binding below is the
+// only one it moves.
 layout(std430, set = 0, binding = 2) readonly buffer AnalyticLightList {
     uint words[];
 } lights;
 layout(set = 0, binding = 3) uniform sampler2D u_Depth;
 layout(set = 0, binding = 4) uniform sampler2D u_GNormal;
-layout(std430, set = 0, binding = 5) buffer GiLightRequests {
+layout(rgba16f, set = 0, binding = 5) uniform readonly image2D u_GiGrid;
+layout(std430, set = 0, binding = 6) buffer GiLightRequests {
     vec4 words[];
 } rays;
 
@@ -39,23 +42,22 @@ uint plagueGiLightWord(uint index) {
 const float PLAGUE_GI_LIGHT_WALK = 48.0;
 
 /**
- * Where on the lamp's own surface this cell aims, this frame.
+ * Where on the lamp's own face this cell aims, this frame.
  *
  * A lamp is a block, not a point. Aiming at its middle gives an edge with no width at all, and the
- * real width is the lamp's own width times how far the receiver sits past the blocker, over how far
- * the blocker sits from the lamp. A block-wide lamp half a block behind a grate therefore spreads
+ * real width is the face's own width times how far the receiver sits past the blocker, over how far
+ * the blocker sits from the face. A block-wide lamp half a block behind a grate therefore spreads
  * its pattern over several blocks, and a crisp lattice on a far wall is not what a lamp in a cage
  * does.
  *
- * Only the faces turned toward the receiver send light that way. One of those is taken with odds of
- * how square it is to the receiver, which is its share of the area the receiver sees, and then a
- * point on it is taken evenly.
+ * One list entry is one flat face, so there is nothing to choose: the point is taken evenly over
+ * that face, however many cells wide the run is.
  *
- * Walked every frame, so a point that is averaged over frames sees the lamp spread out rather than
- * one spot on it. R2 in three parts: each step lands in the largest gap the earlier ones left.
- * Roberts, "The Unreasonable Effectiveness of Quasirandom Sequences", 2018.
+ * Walked every frame, so a point that is averaged over frames sees the face spread out rather than
+ * one spot on it. R2: each step lands in the largest gap the earlier ones left. Roberts, "The
+ * Unreasonable Effectiveness of Quasirandom Sequences", 2018.
  */
-vec3 plagueGiLightPoint(uint index, vec3 centre, vec3 receiver) {
+vec3 plagueGiLightPoint(uint index, PlagueGiLight light) {
     // Three-round integer mix. One round leaves the low bits of neighbouring cells correlated, and
     // correlated neighbours are a pattern rather than a dither.
     uint state = index * 747796405u + 2891336453u;
@@ -65,41 +67,28 @@ vec3 plagueGiLightPoint(uint index, vec3 centre, vec3 receiver) {
     state = a * 747796405u + 2891336453u;
     state ^= state >> 15; state *= 2246822519u;
     uint b = state ^ (state >> 16);
-    state = b * 747796405u + 2891336453u;
-    state ^= state >> 15; state *= 2246822519u;
-    uint c = state ^ (state >> 16);
-    vec3 base = vec3(float(a & 0xFFFFFFu), float(b & 0xFFFFFFu), float(c & 0xFFFFFFu)) / 16777216.0;
+    vec2 base = vec2(float(a & 0xFFFFFFu), float(b & 0xFFFFFFu)) / 16777216.0;
     float frame = mod(u_FrameState.x, PLAGUE_GI_LIGHT_WALK);
-    vec3 draw = fract(base + frame * vec3(0.8191725133961644, 0.6710436067037893,
-                                          0.5497004779019704));
+    vec2 draw = fract(base + frame * vec2(0.7548776662466927, 0.5698402909980532));
 
-    vec3 away = receiver - centre;
-    vec3 share = abs(away);
-    float total = share.x + share.y + share.z;
-    // The receiver sits on the lamp's own middle. No face of it faces there, so the middle is the
-    // only answer left, and the shade drops this cell anyway.
-    if (!(total > 1e-6)) {
-        return centre;
-    }
-    vec3 point = centre;
-    vec2 onFace = draw.yz - 0.5;
-    float pick = draw.x * total;
-    if (pick < share.x) {
-        point += vec3(sign(away.x) * 0.5, onFace);
-    } else if (pick < share.x + share.y) {
-        point += vec3(onFace.x, sign(away.y) * 0.5, onFace.y);
-    } else {
-        point += vec3(onFace, sign(away.z) * 0.5);
-    }
-    return point;
+    int face = plagueLocalRunFace(light.run);
+    vec2 span = plagueLocalRunSpan(light.run);
+    vec3 alongU, alongV;
+    plagueGiFaceAxes(face, alongU, alongV);
+    return plagueGiFaceCentre(light) + alongU * ((draw.x - 0.5) * span.x)
+                                     + alongV * ((draw.y - 0.5) * span.y);
 }
 
 void main() {
     uint index = gl_GlobalInvocationID.x;
-    if (index >= PLAGUE_GI_SIDE * PLAGUE_GI_SIDE) return;
+    ivec2 size = imageSize(u_GiGrid);
+    uvec2 gridSize = uvec2(size);
+    if (index >= gridSize.x * gridSize.y) return;
 
-    vec2 cell = vec2(float(index % PLAGUE_GI_SIDE), float(index / PLAGUE_GI_SIDE));
-    vec2 uv = (cell + 0.5) / float(PLAGUE_GI_SIDE);
+    // Row-major on the grid's WIDTH. gi_resolve decodes this same index with the width it reads off
+    // the same target, so the two must agree or a ray answers the wrong cell.
+    vec2 cell = vec2(float(index % gridSize.x), float(index / gridSize.x));
+    vec2 uv = (cell + 0.5) / vec2(size);
 
     float depth = texture(u_Depth, uv).r;
     vec3 n = texture(u_GNormal, uv).xyz;
@@ -134,7 +123,7 @@ void main() {
     // At a point on the lamp's surface, a different one each frame. The shade averages those over
     // frames, and what comes out is the fraction of the lamp this cell can see: a soft edge whose
     // width is set by the lamp's real size and where the blocker stands, not by a number.
-    vec3 toTarget = plagueGiLightPoint(index, pick.light.position, surface) - surface;
+    vec3 toTarget = plagueGiLightPoint(index, pick.light) - surface;
     float span = length(toTarget);
     if (!(span > 1e-3)) {
         rays.words[index * 2u] = vec4(0.0);

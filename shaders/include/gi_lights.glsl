@@ -8,20 +8,53 @@
 // what keeps them agreeing. Choose differently in the two and the shading is a real light shadowed
 // by a ray aimed at a different one, with nothing to report it.
 
-const uint PLAGUE_GI_SIDE = 512u;
+#moj_import <fornax_runtime:voxel_local_layout.glsl>
+#moj_import <fornax_runtime:light_rect_flux.glsl>
+
+// The grid's own cell count is read at runtime by each caller through imageSize/textureSize on a
+// target it already binds, not declared here: this include has no image or sampler of its own to
+// read it from.
 // The engine's own cap on the list. Reading past a shorter list would read whatever follows it.
 const uint PLAGUE_GI_MAX_LIGHTS = 256u;
 const uint PLAGUE_GI_LIGHT_WORDS = 6u;
-// A point stands in for a block-wide face, which only holds outside the block itself. Half a block
-// is that block's own half-width, so a cell touching the light does not divide by almost nothing.
-const float PLAGUE_GI_MIN_RANGE2 = 0.25;
 
 struct PlagueGiLight {
-    vec3 position;   // camera-relative blocks, the frame a ray request wants
+    vec3 position;   // camera-relative blocks, the middle of the run's own box
     vec3 colour;     // at most 1 in its strongest channel
     float radius;
     float emission;  // the strongest channel, so colour times this is the light itself
+    // Which way the face points and how many cells it covers, packed as voxel_local_layout packs
+    // it. One entry is one flat face, not a block.
+    uint run;
 };
+
+/** Which way a face points, in the direction-ID order the run word uses. */
+vec3 plagueGiFaceNormal(int face) {
+    return face < 2 ? vec3(0.0, face == 1 ? 1.0 : -1.0, 0.0)
+         : face < 4 ? vec3(0.0, 0.0, face == 3 ? 1.0 : -1.0)
+                    : vec3(face == 5 ? 1.0 : -1.0, 0.0, 0.0);
+}
+
+/** The two axes that run ALONG a face, in the order its spans are given. */
+void plagueGiFaceAxes(int face, out vec3 alongU, out vec3 alongV) {
+    alongU = face < 4 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    alongV = face < 2 ? vec3(0.0, 0.0, 1.0)
+           : face < 4 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0);
+}
+
+/**
+ * The middle of the face light actually leaves through.
+ *
+ * The list holds the middle of the run's box, which is half a block behind the face, and a shadow
+ * ray stops against that box. Light leaves the face, so brightness measures from there: half a
+ * block is a large part of the distance for anything standing close to a lamp.
+ *
+ * Half a block out holds for a block that fills its cell. A torch fills a small box inside one, and
+ * its face sits further in than this puts it.
+ */
+vec3 plagueGiFaceCentre(PlagueGiLight light) {
+    return light.position + plagueGiFaceNormal(plagueLocalRunFace(light.run)) * 0.5;
+}
 
 /** Closes the list's reach smoothly. Last quarter of the radius, matching the voxel path. */
 float plagueGiFalloff(float distance, float radius) {
@@ -48,6 +81,7 @@ PlagueGiLight plagueGiDecodeLight(uint w0, uint w1, uint w2, uint w3, uint w4, u
     // Low byte is the radius in blocks. The count above it says how many emitters were merged into
     // this entry, in 4.4 fixed point.
     light.radius = float(w4 & 0xFFu);
+    light.run = (w4 >> 16) & 0x7FFu;
     light.emission = uintBitsToFloat(w5);
     return light;
 }
@@ -104,18 +138,40 @@ PlagueGiPick plagueGiPickLight(vec3 surface, vec3 normal, uint count, uint cell)
                 plagueGiLightWord(base + 1u), plagueGiLightWord(base + 2u),
                 plagueGiLightWord(base + 3u), plagueGiLightWord(base + 4u),
                 plagueGiLightWord(base + 5u));
-        vec3 toLight = light.position - surface;
+        int face = plagueLocalRunFace(light.run);
+        vec3 faceNormal = plagueGiFaceNormal(face);
+        vec3 faceCentre = plagueGiFaceCentre(light);
+        vec3 toLight = faceCentre - surface;
         float range = length(toLight);
         if (!(range > 1e-4)) {
             continue;
         }
-        float falloff = plagueGiFalloff(range, light.radius);
-        float cosine = dot(normal, toLight) / range;
-        if (falloff <= 0.0 || cosine <= 0.0) {
+        // The receiver has to sit in front of the face's own plane: the block behind a face is
+        // solid, not glass, and a face sends nothing back through itself.
+        if (dot(faceNormal, surface - faceCentre) <= 0.0) {
             continue;
         }
-        float share = light.emission * cosine * falloff
-                / max(range * range, PLAGUE_GI_MIN_RANGE2);
+        // The face as a rectangle, not a point: its own width and height come from the run, laid
+        // out along the two axes the face reads its span in.
+        vec3 alongU, alongV;
+        plagueGiFaceAxes(face, alongU, alongV);
+        vec2 span = plagueLocalRunSpan(light.run);
+        vec3 halfU = alongU * span.x * 0.5;
+        vec3 halfV = alongV * span.y * 0.5;
+        vec3 flux = plagueLocalRectFlux(faceCentre - halfU - halfV, faceCentre + halfU - halfV,
+                faceCentre + halfU + halfV, faceCentre - halfU + halfV, surface);
+        // Which way round the corners were listed decides the sign; the receiver sits in front of
+        // the face, so the flux is made to point back toward it rather than away.
+        if (dot(flux, faceNormal) > 0.0) {
+            flux = -flux;
+        }
+        // The rectangle's own solid-angle integral already carries the cosine at both ends and
+        // the inverse-square spread; only the tail closing near the reach limit is separate.
+        float falloff = plagueGiFalloff(range, light.radius);
+        if (falloff <= 0.0) {
+            continue;
+        }
+        float share = light.emission * max(dot(flux, normal), 0.0) * falloff;
         if (!(share > 0.0)) {
             continue;
         }

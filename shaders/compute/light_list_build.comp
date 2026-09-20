@@ -81,17 +81,17 @@ void main() {
         total += max(le, vec3(0.0));
     }
 
-    // What the list carries is a point standing in for the run's face, and the number a point
-    // needs is the light it throws averaged over every direction. For a flat face that is its area
-    // over four, so one square block of face averages a quarter. The four quarters above are
-    // samples of that one face, so they average as well: a quarter of a quarter, one sixteenth.
-    // Times how many square blocks the run really covers.
-    vec3 intensity = total * (runSpan.x * runSpan.y / 16.0);
+    // What the list carries is the face's own radiance, not radiance times area: the reader
+    // rebuilds a rectangle from the run's width and height and the face normal, and an exact
+    // rectangle integral already accounts for the area itself. Carrying area here as well would
+    // count it twice. The four quarters above are samples of the one face, so they average to its
+    // radiance.
+    vec3 radiance = total / 4.0;
 
     // The strongest channel, so the colour beside it never leaves the 0 to 1 the packing holds and
-    // the two multiplied back together are the light itself. Dividing by brightness instead would
-    // push a deep red past 1 and clip away most of it.
-    float strength = max(intensity.r, max(intensity.g, intensity.b));
+    // the two multiplied back together are the face's radiance. Dividing by brightness instead
+    // would push a deep red past 1 and clip away most of it.
+    float strength = max(radiance.r, max(radiance.g, radiance.b));
     if (!(strength > 0.0)) {
         return;
     }
@@ -126,13 +126,16 @@ void main() {
         return;
     }
 
-    vec3 colour = clamp(intensity / strength, vec3(0.0), vec3(1.0));
+    vec3 colour = clamp(radiance / strength, vec3(0.0), vec3(1.0));
     uint packedColour = uint(colour.r * 1023.0 + 0.5)
             | (uint(colour.g * 1023.0 + 0.5) << 10)
             | (uint(colour.b * 1023.0 + 0.5) << 20);
     // The low byte is the radius in blocks. One run is one light here, so the count above it is
-    // one, in the 4.4 fixed point the layout names.
-    uint radiusCount = uint(PLAGUE_LOCAL_REACH) | (16u << 8);
+    // one, in the 4.4 fixed point the layout names. Above that sits the run word's own low eleven
+    // bits, which are the face and its two spans exactly as voxel_local_layout packs them, so a
+    // reader decodes them with that file's own helpers rather than a second spelling of the same
+    // layout.
+    uint radiusCount = uint(PLAGUE_LOCAL_REACH) | (16u << 8) | ((run & 0x7FFu) << 16);
 
     uint entry = 1u + slot * PLAGUE_GI_LIGHT_WORDS;
     lights.words[entry] = floatBitsToUint(local.x);

@@ -68,6 +68,13 @@ layout(rgba16f, set = 0, binding = 17) uniform writeonly image2D u_OutDir;
 // ray, and the soft edge here is the answer rather than noise around it.
 layout(rgba16f, set = 0, binding = 18) uniform writeonly image2D u_OutDirect;
 
+// The grid's own extent, read off the target this pass fills rather than kept in step with
+// graph.toml by hand. Every seed pass ties its row-major index to this same width, so a mismatch
+// between them answers a ray into the wrong cell with no error anywhere.
+ivec2 plagueGiGridSize() {
+    return imageSize(u_OutBounce);
+}
+
 // Word offsets inside one 8-word hit record. Appending to the record is safe; inserting moves
 // every later field with nothing to report it.
 const uint PLAGUE_GI_HIT_WORDS = 9u;
@@ -100,22 +107,31 @@ vec4 plagueAtmoFetchSkyView(vec2 uv) {
     return plagueAtmoBilinearMix(imageLoad(u_SkyView, i0), imageLoad(u_SkyView, ivec2(i1.x, i0.y)),
                                  imageLoad(u_SkyView, ivec2(i0.x, i1.y)), imageLoad(u_SkyView, i1), f);
 }
-// How much of each frame's new sample survives the blend. One ray per cell is far too noisy to
-// look at on its own, and averaging frames is what makes a shape out of it; higher and the noise
-// stays, lower and light drags behind a moving camera. About three frames of memory: a narrow
-// source spread leaves less noise to average away, so the memory can be shorter and the light
-// follows the camera instead of trailing it.
-const float PLAGUE_GI_BLEND = 0.3;
+// How much of each frame's new sample survives the blend. One ray per cell is far too noisy to look
+// at on its own, and averaging frames is what makes a shape out of it; higher and the noise stays,
+// lower and light drags behind a moving camera.
+//
+// Ten frames. The one ray a cell spends goes anywhere in the hemisphere, so in a room with daylight
+// through a doorway it either escapes to the sky or lands on a shaded wall: two answers that differ
+// by more than the spreading steps can hide. Those steps do not remove what is left, they gather it
+// into lumps their own width. The only thing that removes it is more draws, and frames are the
+// cheap place to find them.
+const float PLAGUE_GI_BLEND = 0.1;
 // Two surfaces this far apart in depth are not the same surface, so the older one is not history
 // for the newer: past this the sample starts again rather than smearing one onto the other.
 // As a FRACTION of the depth. Depth is reversed-Z and nonlinear, so a fixed gap means different
 // things near and far, and a threshold loose enough to work at range accepts two different
 // surfaces up close.
 const float PLAGUE_GI_DEPTH_REJECT = 0.02;
-// How far a cell's surface may travel across the grid before its history stops being worth
-// keeping. Reprojection already follows the surface, so this only catches motion fast enough that
-// the reprojected cell is a poor guess.
-const float PLAGUE_GI_MOTION_CELLS = 12.0;
+// How far a cell's surface may travel before its history stops being worth keeping, as a fraction
+// of the SCREEN. Reprojection already follows the surface, so this only catches motion fast enough
+// that the reprojected cell is a poor guess.
+//
+// Screen fraction rather than a count of cells. Counted in cells, a finer grid reports more of them
+// for the same turn of the head, so the same camera speed throws history away sooner and the
+// picture gets grainier the moment the grid is made finer. Held here, the grid's size and how long
+// a point remembers are independent.
+const float PLAGUE_GI_MOTION_SCREEN = 0.047;
 
 // Two surfaces this far apart in facing are not the same surface either. Depth alone passes a
 // wall and the floor it meets wherever they sit at a similar distance, and the corner then drags
@@ -164,12 +180,12 @@ bool plagueGiReproject(vec2 uv, float depth, out ivec2 previousCell, out vec2 pr
     }
     // Kept or dropped, never faded. A blend that rides camera speed makes the amount of noise a
     // function of how fast the view is moving, which reads as the picture breathing.
-    if (length(motion) * float(PLAGUE_GI_SIDE) > PLAGUE_GI_MOTION_CELLS) {
+    if (length(motion) > PLAGUE_GI_MOTION_SCREEN) {
         return false;
     }
-    previousCell = ivec2(clamp(previousUv * float(PLAGUE_GI_SIDE), vec2(0.0),
-            vec2(float(PLAGUE_GI_SIDE) - 1.0)));
-    previousPlace = previousUv * float(PLAGUE_GI_SIDE) - 0.5;
+    vec2 gridSize = vec2(plagueGiGridSize());
+    previousCell = ivec2(clamp(previousUv * gridSize, vec2(0.0), gridSize - 1.0));
+    previousPlace = previousUv * gridSize - 0.5;
     return true;
 }
 
@@ -179,22 +195,27 @@ bool plagueGiReproject(vec2 uv, float depth, out ivec2 previousCell, out vec2 pr
 // drags behind a moving view.
 const float PLAGUE_GI_DIRECT_BLEND = 0.125;
 
-// Last frame's value at a place BETWEEN texels, mixed from the four around it.
+// Last frame's value at a place BETWEEN texels, mixed from the four around it. The bounce, its
+// bearing and the lamp light all read this way, and must: a cell that keeps one and drops another
+// holds a bearing belonging to a different picture.
 //
 // A storage image carries no filter, so rounding to the nearest is the only other option, and the
 // texel a cell lands on then jumps as the view creeps. Either side of a shadow edge the two texels
 // differ enough that the blend swings with the jump, which stands on the wall as a bar that does
 // not move while the camera does.
-vec3 plagueGiDirectHistory(vec2 place) {
-    ivec2 corner = ivec2(floor(place));
-    vec2 part = place - vec2(corner);
-    ivec2 low = clamp(corner, ivec2(0), ivec2(int(PLAGUE_GI_SIDE) - 1));
-    ivec2 high = clamp(corner + 1, ivec2(0), ivec2(int(PLAGUE_GI_SIDE) - 1));
-    return mix(mix(imageLoad(u_DirectHistory, low).rgb,
-                   imageLoad(u_DirectHistory, ivec2(high.x, low.y)).rgb, part.x),
-               mix(imageLoad(u_DirectHistory, ivec2(low.x, high.y)).rgb,
-                   imageLoad(u_DirectHistory, high).rgb, part.x), part.y);
+//
+// Spelled as a macro because GLSL wants a storage image's format on its declaration and refuses it
+// on a function parameter, so the three images cannot share one function.
+ivec2 plagueGiHistoryCorner(vec2 place, int alongX, int alongY) {
+    return clamp(ivec2(floor(place)) + ivec2(alongX, alongY),
+            ivec2(0), plagueGiGridSize() - 1);
 }
+#define plagueGiHistoryAt(past, place) \
+    mix(mix(imageLoad(past, plagueGiHistoryCorner(place, 0, 0)).rgb, \
+            imageLoad(past, plagueGiHistoryCorner(place, 1, 0)).rgb, fract(place).x), \
+        mix(imageLoad(past, plagueGiHistoryCorner(place, 0, 1)).rgb, \
+            imageLoad(past, plagueGiHistoryCorner(place, 1, 1)).rgb, fract(place).x), \
+        fract(place).y)
 
 /**
  * This frame's bounce, the bearing it came from, and the light from the glowing blocks, each
@@ -208,9 +229,10 @@ void plagueGiStore(ivec2 cell, vec3 current, vec3 direct, vec3 bearing, vec2 uv,
     ivec2 previousCell;
     vec2 previousPlace;
     if (plagueGiReproject(uv, depth, previousCell, previousPlace)) {
-        current = mix(imageLoad(u_History, previousCell).rgb, current, PLAGUE_GI_BLEND);
-        bearing = mix(imageLoad(u_DirHistory, previousCell).rgb, bearing, PLAGUE_GI_BLEND);
-        direct = mix(plagueGiDirectHistory(previousPlace), direct, PLAGUE_GI_DIRECT_BLEND);
+        current = mix(plagueGiHistoryAt(u_History, previousPlace), current, PLAGUE_GI_BLEND);
+        bearing = mix(plagueGiHistoryAt(u_DirHistory, previousPlace), bearing, PLAGUE_GI_BLEND);
+        direct = mix(plagueGiHistoryAt(u_DirectHistory, previousPlace), direct,
+                PLAGUE_GI_DIRECT_BLEND);
     }
     imageStore(u_OutBounce, cell, vec4(current, 1.0));
     imageStore(u_OutDir, cell, vec4(bearing, 1.0));
@@ -254,7 +276,7 @@ vec3 plagueGiDirectLight(vec2 uv, uint index, float depth, out vec3 bearing) {
     if (!pick.valid) {
         return vec3(0.0);
     }
-    vec3 toLight = pick.light.position - surface;
+    vec3 toLight = plagueGiFaceCentre(pick.light) - surface;
     float reach = length(toLight);
     bearing = reach > 1e-4 ? toLight / reach : vec3(0.0);
     // Every candidate's colour and share, not the one the ray went to. The share already carries
@@ -266,25 +288,39 @@ vec3 plagueGiDirectLight(vec2 uv, uint index, float depth, out vec3 bearing) {
 
 void main() {
     uvec2 coord = gl_GlobalInvocationID.xy;
-    if (coord.x >= PLAGUE_GI_SIDE || coord.y >= PLAGUE_GI_SIDE) return;
-    vec2 uv = (vec2(coord) + 0.5) / float(PLAGUE_GI_SIDE);
+    uvec2 gridSize = uvec2(plagueGiGridSize());
+    if (coord.x >= gridSize.x || coord.y >= gridSize.y) return;
+    vec2 uv = (vec2(coord) + 0.5) / vec2(gridSize);
     float depth = texture(u_Depth, uv).r;
-    // Row-major, matching the order the seed pass writes its rays in.
-    uint index = coord.y * PLAGUE_GI_SIDE + coord.x;
+    // Row-major on the grid's WIDTH, the same one the seed passes read off the same target to lay
+    // their rays out. Either side using a different width answers a ray into the wrong cell.
+    uint index = coord.y * gridSize.x + coord.x;
     ivec2 cell = ivec2(coord);
     uint base = index * PLAGUE_GI_HIT_WORDS;
 
 
     // The tier first. A buffer nothing traced reads back all zeros, zero is a legal distance and a
     // negative distance is a legal answer, so no other word can tell an answer from untouched
-    // memory. Red marks the records nothing answered, which is what an unrun trace looks like.
+    // memory.
+    //
+    // Nothing answered means this cell has no news, which is neither darkness nor a fault. It is
+    // the whole picture while the shapes a ray runs against are still being built, and patches of
+    // it whenever ground near the player is remade. Last frame's answer is the best one left, so
+    // the cell holds it and waits. Writing a colour here instead lays that colour over the world on
+    // every load and flashes it across the picture as the player walks.
+    //
+    // A cell that never had an answer has nothing to hold, so it stays dark rather than bright.
     uint tier = hits.words[base + PLAGUE_GI_WORD_TIER];
     if (int(tier) == FORNAX_RAY_TIER_NONE) {
-        imageStore(u_OutBounce, cell, vec4(1.0, 0.0, 0.0, 1.0));
-        imageStore(u_OutDir, cell, vec4(0.0, 0.0, 0.0, 1.0));
-        // Every cell writes this every frame. A storage image left alone keeps whatever the last
-        // frame put there, and a red marker beside a stale light reads as the light still working.
-        imageStore(u_OutDirect, cell, vec4(0.0, 0.0, 0.0, 1.0));
+        ivec2 previousCell;
+        vec2 previousPlace;
+        bool kept = plagueGiReproject(uv, depth, previousCell, previousPlace);
+        imageStore(u_OutBounce, cell,
+                vec4(kept ? plagueGiHistoryAt(u_History, previousPlace) : vec3(0.0), 1.0));
+        imageStore(u_OutDir, cell,
+                vec4(kept ? plagueGiHistoryAt(u_DirHistory, previousPlace) : vec3(0.0), 1.0));
+        imageStore(u_OutDirect, cell,
+                vec4(kept ? plagueGiHistoryAt(u_DirectHistory, previousPlace) : vec3(0.0), 1.0));
         return;
     }
 

@@ -68,8 +68,7 @@ const float PLAGUE_UW_VIEW_RATE_Y = -0.91;
 const float PLAGUE_UW_VIEW_FREQ_Y = 0.83;
 const float PLAGUE_UW_VIEW_PHASE_Y = 1.57079632679;
 
-// mix() toward the blurred image, not an add: an additive composite of unthresholded, whole-image
-// bloom lays a milky veil over everything at any strength worth seeing.
+// How much of the glare that reaches a pixel from around it is laid on top.
 #define u_BloomStrength 0.45 //[0.0..0.5 step 0.01] runtime "Bloom Strength"
 
 // Measurement lives in exposure_measure.fsh; this arm turns its smoothed scene luminance into a
@@ -425,12 +424,23 @@ void main() {
     }
 
 #ifdef BLOOM_ENABLED
-    // Blended before exposure and the curve, in scene-referred linear light: bloom is light that
-    // scattered in the lens, so it belongs to the scene the curve is measuring. mix(), not +=.
+    // Laid on before exposure and the curve, in scene-referred linear light: glare is light that
+    // scattered on its way through the lens, so it belongs to the scene the curve is measuring.
+    //
+    // Only the part of the blurred picture that is BRIGHTER than what is already here. The pyramid
+    // blurs the whole frame, so adding it whole lays the dim parts of the scene back over
+    // themselves and everything silts up grey. Crossfading toward it clears that haze, but at the
+    // price of taking the same share out of every pixel: a lamp then loses nearly half its
+    // brightness and reads dimmer than the wall it is lighting.
+    //
+    // The difference is the answer to both. Where the surroundings are brighter than this point,
+    // that excess is light arriving from them and it is added. On a evenly lit wall the blur equals
+    // what is there and nothing is added, so no haze. On the lamp itself the blur is lower than its
+    // own peak, so nothing is taken away. Nothing anywhere is ever made darker.
     vec3 bloom = texture(u_BloomFinal, frameUv).rgb;
     bloom = max(bloom, vec3(0.0));
     if (!any(isnan(bloom))) {
-        hdr = mix(hdr, bloom, u_BloomStrength);
+        hdr += max(bloom - hdr, vec3(0.0)) * u_BloomStrength;
     }
 #endif
 

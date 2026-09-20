@@ -6,8 +6,8 @@
 // one group, gated at the render-graph level.
 //
 // Weighted AVERAGE, not a weighted sum: dividing by the summed weights keeps a uniformly-bright
-// pyramid combining back to the same brightness, so raising bloom strength never darkens the
-// frame as a side effect (the composite blends TOWARD this buffer rather than adding it).
+// pyramid combining back to the same brightness, so a flat wall reads the same here as it does in
+// the picture and the composite finds nothing to add over it.
 
 uniform sampler2D u_BloomDown4; // finest level  (least blurred, tightest core)
 uniform sampler2D u_BloomDown8;

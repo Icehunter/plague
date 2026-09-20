@@ -14,19 +14,21 @@
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-// Bindings: 0 globals, 1 packOptions (engine-injected), 2 the bounce rays, 3 their hits,
-// 4 the sun rays.
+// Bindings: 0 globals, 1 packOptions (engine-injected), 2 the bounce rays, 3 their hits, 4 the grid
+// (read only for its own extent), 5 the sun rays. This pass writes no image itself, so the grid is
+// bound purely to read imageSize off it: appended, never inserted, so the sun rays binding below is
+// the only one it moves.
 layout(std430, set = 0, binding = 2) readonly buffer GiRayRequests {
     vec4 words[];
 } bounce;
 layout(std430, set = 0, binding = 3) readonly buffer GiRayHits {
     uint words[];
 } hits;
-layout(std430, set = 0, binding = 4) buffer GiShadowRequests {
+layout(rgba16f, set = 0, binding = 4) uniform readonly image2D u_GiGrid;
+layout(std430, set = 0, binding = 5) buffer GiShadowRequests {
     vec4 words[];
 } shadow;
 
-const uint PLAGUE_GI_SIDE = 512u;
 const uint PLAGUE_GI_HIT_WORDS = 9u;
 const uint PLAGUE_GI_WORD_DISTANCE = 0u;
 const uint PLAGUE_GI_WORD_NORMAL = 4u;
@@ -37,7 +39,8 @@ const float PLAGUE_GI_SUN_REACH_BLOCKS = 96.0;
 
 void main() {
     uint index = gl_GlobalInvocationID.x;
-    if (index >= PLAGUE_GI_SIDE * PLAGUE_GI_SIDE) return;
+    uvec2 gridSize = uvec2(imageSize(u_GiGrid));
+    if (index >= gridSize.x * gridSize.y) return;
     uint base = index * PLAGUE_GI_HIT_WORDS;
 
     // A ray with no length asks for no trace, which is what an unanswered or missed bounce wants:

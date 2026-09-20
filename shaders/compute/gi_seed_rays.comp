@@ -14,16 +14,18 @@
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-// Bindings: 0 globals, 1 packOptions (engine-injected), 2 depth, 3 gNormal, 4 the requests.
-// Builtins are sampled, not storage images: a compute pass binds a texture target the same way a
-// fullscreen one does.
+// Bindings: 0 globals, 1 packOptions (engine-injected), 2 depth, 3 gNormal, 4 the grid (read only
+// for its own extent), 5 the requests. Builtins are sampled, not storage images: a compute pass
+// binds a texture target the same way a fullscreen one does. This pass writes no image itself, so
+// the grid is bound purely to read imageSize off it: appended, never inserted, so the requests
+// binding below is the only one it moves.
 layout(set = 0, binding = 2) uniform sampler2D u_Depth;
 layout(set = 0, binding = 3) uniform sampler2D u_GNormal;
-layout(std430, set = 0, binding = 4) buffer GiRayRequests {
+layout(rgba16f, set = 0, binding = 4) uniform readonly image2D u_GiGrid;
+layout(std430, set = 0, binding = 5) buffer GiRayRequests {
     vec4 words[];
 } requests;
 
-const uint PLAGUE_GI_SIDE = 512u;
 // A bounce reaching past this adds almost nothing at one sample per cell, and every extra block is
 // traversal the whole grid pays for.
 const float PLAGUE_GI_REACH_BLOCKS = 48.0;
@@ -36,10 +38,14 @@ float plagueGiHash(uint n) {
 
 void main() {
     uint index = gl_GlobalInvocationID.x;
-    if (index >= PLAGUE_GI_SIDE * PLAGUE_GI_SIDE) return;
+    ivec2 size = imageSize(u_GiGrid);
+    uvec2 gridSize = uvec2(size);
+    if (index >= gridSize.x * gridSize.y) return;
 
-    vec2 cell = vec2(float(index % PLAGUE_GI_SIDE), float(index / PLAGUE_GI_SIDE));
-    vec2 uv = (cell + 0.5) / float(PLAGUE_GI_SIDE);
+    // Row-major on the grid's WIDTH. gi_resolve decodes this same index with the width it reads off
+    // the same target, so the two must agree or a ray answers the wrong cell.
+    vec2 cell = vec2(float(index % gridSize.x), float(index / gridSize.x));
+    vec2 uv = (cell + 0.5) / vec2(size);
 
     float depth = texture(u_Depth, uv).r;
     vec3 n = texture(u_GNormal, uv).xyz;
