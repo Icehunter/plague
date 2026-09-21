@@ -193,18 +193,17 @@ void main() {
     vec4 prevClip = u_PrevProjectionMatrix * u_PrevModelViewMatrix
             * vec4(posNow + u_CameraDelta.xyz, 1.0);
 
-    bool validHistory = prevClip.w > 0.0; // behind the previous eye: no history of it exists
+    // Behind the previous eye: no history of it exists.
+    bool validHistory = u_LocalActorFluid.w < 0.5 && prevClip.w > 0.0;
     vec2 previousUv = texCoord;
     if (validHistory) {
-        // Jitter subtracted from both frames, as terrain.vsh does it; checked equal against
-        // terrain.vsh's form in tools/verify_ssr.py.
-        vec2 motion = ((texCoord * 2.0 - 1.0 - u_JitterOffset)
-                - (prevClip.xy / prevClip.w - u_PrevJitterOffset)) * 0.5;
-        previousUv = texCoord - motion;
+        // History is last frame's wobbled picture, so look that clip position up directly.
+        previousUv = prevClip.xy / prevClip.w * 0.5 + 0.5;
         validHistory = previousUv.x >= 0.0 && previousUv.x <= 1.0
                 && previousUv.y >= 0.0 && previousUv.y <= 1.0;
     }
     if (validHistory) {
+        // A guess from the current depth: it cannot tell this is the same surface as last frame.
         float prevDepth = texture(u_WaterDepth, previousUv).r;
         // No water at the reprojected pixel means history there is a hard zero, from the early
         // out above. Blending it would drag a real reflection toward black.

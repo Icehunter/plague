@@ -67,8 +67,8 @@ float plagueShadowDepthRangeBlocks() {
  * nothing, so contact stays sharp; the same caster fifty blocks up gives a wide soft band. That is
  * how a shadow behaves, and no setting can be right in both places at once.
  *
- * Zero means nothing was found casting here, so there is nothing to soften and the filter is
- * skipped. The search reads raw stored depths, not the comparison sampler: a comparison answers
+ * Zero means this search found nothing in its few taps; the raster path then checks the middle
+ * texel once. The search reads raw depths, not the comparison sampler: a comparison answers
  * lit or not, and this needs to know HOW FAR.
  */
 float plagueShadowPenumbraUv(vec2 shadowUv, float refDepth, float temporalNoise) {
@@ -128,8 +128,23 @@ float plagueSunVisibilityFiltered(vec3 receiver, vec2 shadowUv, float refDepth, 
     return visSum / float(2 * SHADOW_SAMPLES);
 }
 
-float sunVisibilityAt(vec3 worldPos, vec3 normal, vec3 sunDir, float rainFactorForShadow,
-                      float radiusScale) {
+struct PlagueShadowReceiver {
+    vec2 uv;
+    float depth;
+    float noise;
+    float penumbraUv;
+    float centerVisibility;
+    bool inBounds;
+};
+
+PlagueShadowReceiver plaguePrepareSunVisibility(vec3 worldPos, vec3 normal, vec3 sunDir) {
+    PlagueShadowReceiver prepared;
+    prepared.inBounds = false;
+    prepared.uv = vec2(0.0);
+    prepared.depth = 0.0;
+    prepared.noise = 0.0;
+    prepared.penumbraUv = 0.0;
+    prepared.centerVisibility = 1.0;
     // Offset along the normal before projecting. Depth bias alone cannot fix acne on surfaces
     // near-parallel to the light: the bias needed there runs to infinity, where a normal offset
     // stays bounded and scales with texel size.
@@ -151,7 +166,7 @@ float sunVisibilityAt(vec3 worldPos, vec3 normal, vec3 sunDir, float rainFactorF
     float rawDepth = lightNdc.z;
     if (shadowUv.x <= 0.0 || shadowUv.x >= 1.0 || shadowUv.y <= 0.0 || shadowUv.y >= 1.0
             || rawDepth <= 0.0 || rawDepth >= 1.0) {
-        return 1.0; // outside the map: unshadowed rather than guessing
+        return prepared; // outside the map: unshadowed rather than guessing
     }
     // The write side stores gl_Position.z unscaled, so no conversion sits between the two.
     float refDepth = rawDepth;
@@ -168,15 +183,36 @@ float sunVisibilityAt(vec3 worldPos, vec3 normal, vec3 sunDir, float rainFactorF
     // how big the Sun looks in the sky. Nothing casting here means nothing to soften, and there
     // is no setting to scale it, so a fence against a wall is crisp and the same fence far from
     // the wall is soft without anyone choosing that.
-    float penumbraUv = plagueShadowPenumbraUv(shadowUv, refDepth, temporalNoise)
-            * radiusScale;
-    // The fitted disk radii describe the filter's SHAPE at whatever width it is given, so the
-    // width divides out here and the profile they were fitted under is kept. A width of zero
-    // collapses every tap onto the middle texel, which is a hard edge and costs no branch.
-    float texelScale = penumbraUv / PLAGUE_SHADOW_DISK_RADIUS;
+    prepared.uv = shadowUv;
+    prepared.depth = refDepth;
+    prepared.noise = temporalNoise;
+    prepared.penumbraUv = plagueShadowPenumbraUv(shadowUv, refDepth, temporalNoise);
+    prepared.inBounds = true;
+#if !RT_SHADOWS
+    // A width of exactly zero puts every tap on the middle texel. The search can miss a blocker
+    // there, so check the depth instead of assuming light. The ray path keeps its per-tap counting.
+    if (prepared.penumbraUv == 0.0) {
+        prepared.centerVisibility = SUN_SHADOW_LOOKUP(worldPos, shadowUv, refDepth);
+    }
+#endif
+    return prepared;
+}
 
-    return plagueSunVisibilityFiltered(worldPos, shadowUv, refDepth, texelScale, temporalNoise,
-                                       rainFactorForShadow);
+float plagueSunVisibilityPrepared(vec3 worldPos, PlagueShadowReceiver prepared,
+                                  float rainFactorForShadow, float radiusScale) {
+    if (!prepared.inBounds) return 1.0;
+#if !RT_SHADOWS
+    if (prepared.penumbraUv == 0.0) return prepared.centerVisibility;
+#endif
+    float texelScale = (prepared.penumbraUv * radiusScale) / PLAGUE_SHADOW_DISK_RADIUS;
+    return plagueSunVisibilityFiltered(worldPos, prepared.uv, prepared.depth, texelScale,
+                                       prepared.noise, rainFactorForShadow);
+}
+
+float sunVisibilityAt(vec3 worldPos, vec3 normal, vec3 sunDir, float rainFactorForShadow,
+                      float radiusScale) {
+    PlagueShadowReceiver prepared = plaguePrepareSunVisibility(worldPos, normal, sunDir);
+    return plagueSunVisibilityPrepared(worldPos, prepared, rainFactorForShadow, radiusScale);
 }
 
 float sunVisibility(vec3 worldPos, vec3 normal, vec3 sunDir, float rainFactorForShadow) {

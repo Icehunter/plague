@@ -4,8 +4,9 @@
 enabled_if = "RT_SHADOWS"
 distance_option = "u_RtShadowDistance"
 blocks_per_unit = 16
-# Maximum filter support: softness 6 * disk radius 2.046826 * rain 3 * ambient 4,
-# plus one texel for the bilinear comparison. See shadow_filter.glsl and its verifier.
+# Ray cover budget: 6 * disk radius 2.046826 * rain 3 * ambient 4 + one bilinear texel.
+# It does not cap how wide a shadow gets: each tap checks ray depth and reads the raster map
+# where ray cover is missing. See shadow_filter.glsl and shadow_handoff.glsl.
 filter_guard_texels = 148.371472
 
 # --- Geometry -------------------------------------------------------------------------------------
@@ -208,6 +209,7 @@ count = 262144
 enabled_if = "PLAGUE_GI != 0"
 
 [targets.giBounceRaw]
+enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
 width = 512
 height = 512
@@ -250,9 +252,10 @@ filter = "linear"
 # surface, a different one each frame, so the average IS the fraction of the lamp a cell can see and
 # the soft edge comes out of it. Spreading it sideways as well would smear that edge over the room.
 #
-# Ungated on purpose: the resolve names it whether the bounce is on or not, and a gated target read
-# by an ungated pass is refused at load.
+# Only the GI passes read the raw history. The giDirect target below stays on either way, so the
+# world resolve reads plain black from it when the bounce is off.
 [targets.giDirectRaw]
+enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
 width = 512
 height = 512
@@ -276,6 +279,7 @@ filter = "linear"
 # out near 1, light from everywhere at once near 0. The resolve needs both to re-apply a pixel's own
 # normal to a grid far coarser than the screen.
 [targets.giBounceDirRaw]
+enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
 width = 512
 height = 512
@@ -292,6 +296,7 @@ filter = "linear"
 
 # Between the two spreading steps. Nothing outside gi_blur_wide reads these.
 [targets.giBounceMid]
+enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
 width = 512
 height = 512
@@ -299,6 +304,7 @@ storage = true
 filter = "linear"
 
 [targets.giBounceDirMid]
+enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
 width = 512
 height = 512

@@ -35,8 +35,8 @@ layout(std140) uniform u_PassParams {
 
 #define SSR_QUALITY 2 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
 
-// High because a single mirror ray is a sparse lobe estimate; the disocclusion test below is what
-// keeps this from ghosting.
+// High because one mirror ray per pixel is a thin guess. The depth check below is a guess too:
+// it cannot tell the pixel, or the thing it reflected, is the same one as last frame.
 const float SSR_TEMPORAL_BLEND = 0.85;
 const float SSR_DISOCCLUSION_DEPTH_THRESHOLD = 0.05;
 const float SSR_SHARPEN = 0.4;
@@ -165,10 +165,13 @@ void main() {
         }
     }
 
-    vec2 previousUv = texCoord - texture(u_GMotion, texCoord).rg;
-    bool validHistory = previousUv.x >= 0.0 && previousUv.x <= 1.0
+    // Motion leaves out both wobble offsets; history holds last frame's wobbled picture.
+    vec2 previousUv = texCoord - texture(u_GMotion, texCoord).rg
+            + 0.5 * (u_PrevJitterOffset - u_JitterOffset);
+    bool validHistory = u_LocalActorFluid.w < 0.5 && previousUv.x >= 0.0 && previousUv.x <= 1.0
             && previousUv.y >= 0.0 && previousUv.y <= 1.0;
     if (validHistory) {
+        // A guess from the current depth: it cannot tell this is the same surface as last frame.
         float depthAtReprojected = texture(u_Depth, previousUv).r;
         if (abs(centerDepth - depthAtReprojected) > SSR_DISOCCLUSION_DEPTH_THRESHOLD) {
             validHistory = false;

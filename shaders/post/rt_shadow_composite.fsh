@@ -117,7 +117,8 @@ void main() {
 #endif
     vec3 sunDir = normalize(u_SunDirection.xyz);
     float rainFactor = clamp(u_SkyState.x, 0.0, 1.0);
-    float direct = sunVisibility(worldPos, planeNormal, sunDir, rainFactor);
+    PlagueShadowReceiver shadowReceiver = plaguePrepareSunVisibility(worldPos, planeNormal, sunDir);
+    float direct = plagueSunVisibilityPrepared(worldPos, shadowReceiver, rainFactor, 1.0);
 #if RT_SHADOWS
     // Row major on the CURRENT screen width, the same width the seed pass reads off the same depth
     // target this frame. A window bigger than the ray buffer's own count leaves the far rows of
@@ -194,7 +195,7 @@ void main() {
     }
 #endif
     float rtSelected = plagueRtSelectedSum / float(2 * SHADOW_SAMPLES);
-    float ambient = sunVisibilityAt(worldPos, planeNormal, sunDir, rainFactor,
+    float ambient = plagueSunVisibilityPrepared(worldPos, shadowReceiver, rainFactor,
                                     PLAGUE_SHADOW_AMBIENT_BROADEN);
     fragColor = vec4(direct, ambient, plagueCausticSunVisibility(worldPos, sunDir),
                      rtSelected);

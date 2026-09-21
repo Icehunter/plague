@@ -16,7 +16,7 @@ feature that is off costs nothing because its passes are not in the graph at all
 
 ## The frame, in order
 
-`graph.toml` declares **109 passes** writing **135 targets**. They run in file order. Grouped by job:
+`graph.toml` declares **139 passes** writing **181 targets**. They run in file order. Grouped by job:
 
 ### 0. Atmosphere: 4 compute passes
 
@@ -107,6 +107,12 @@ mutually exclusive `enabled_if` guards, not one pass with a quality branch. The 
 file compiled as two passes at two sizes, because every size-dependent value comes from
 `textureSize()`.
 
+Reflection history reads last frame's picture, which was drawn with a small wobble. Opaque
+reflections add the wobble difference back into the motion vector; water works the pixel out
+straight from its own last-frame clip position. Both drop history when the engine asks for a
+reset. Matching the current depth is only a guess: it cannot tell that the pixel, or the thing
+it reflected, is the same one.
+
 ### 3. The deferred resolve: 2 passes
 
 `resolve` is where the frame is lit: it reads the G-buffer, samples the sky from the sky-view table,
@@ -121,7 +127,7 @@ in alpha (averaged over the direct filter taps). `resolve` reads input 18; input
 Its RT shadow coverage debug tints selected RT cyan and raster fallback gray; brightness follows
 applied visibility with a display-only floor so shadowed coverage remains visible.
 
-The graph's `[ray_traced_shadows]` table declares `SHADOWS && RT_SHADOWS`, runtime
+The graph's `[ray_traced_shadows]` table declares `RT_SHADOWS`, runtime
 `distance_option = "u_RtShadowDistance"`, and `blocks_per_unit = 16`. The control is an integer
 one-to-sixteen chunks, default two (32 blocks), measured horizontally from camera to receiving
 point. The engine caps effective RT distance at overall Shadow Distance and publishes its square
@@ -136,10 +142,11 @@ complete `sunShadowMapRaw`. Manual bilinear comparison preserves the comparison-
 it never multiplies two complete visibility fields or interpolates raw depths before comparison.
 
 The same handoff serves primary surfaces, caustics, water shafts, reflected surfaces and fog sample
-positions. Softness, Samples, rain widening, Strength and ambient darkening retain their existing
-places. The engine receives a conservative filter guard of 148.371472 texels: maximum softness 6,
-disk radius 2.046826, rain factor 3 and ambient multiplier 4, plus one bilinear texel. Every other
-consumer uses one bilinear tap and needs no larger guard. Cloud transmission remains separate.
+positions. Direct and ambient filtering share one projection of the receiver, one noise value and
+one blocker search. Without ray tracing, a soft width of exactly zero checks the middle texel once
+and both widths use that answer; with ray tracing each tap still counts its own cover. The engine's
+148.371472-texel budget bounds ray cover, not how wide a shadow may get: taps outside good ray
+cover read the raster map. Cloud light is separate.
 
 The complete raster map remains available for distant receivers and incomplete RT coverage. This
 implementation therefore adds tracing and mesh maintenance; it does not promise zero raster cost.
@@ -184,6 +191,7 @@ in graph order with compute write/read synchronization and has no temporal histo
 culling changes work, not march resolution, sample counts, lighting, density or winning ownership.
 Offline GPU parity and dispatch measurements do not establish live FPS or stability in motion.
 
+Under water the composite returns nothing at once, before it reads any source pixels.
 The composite step works out how far the land and water are at each screen pixel, then reconstructs
 cloud colour from sixteen source pixels with positive cubic B-spline weights. The separable kernel
 is the convolution of four unit-area boxes; it smooths the source sampling grid while preserving
@@ -275,6 +283,11 @@ After `scene_hdr_copy` snapshots the lit scene:
   column: where a ray enters and leaves the water, what it scatters along the way, and a history
   that keeps the result steady rather than noisy.
 - `water_composite` puts the surface together: reflection, refraction, foam, caustics, depth.
+
+The water reflection ray is cut down to the part that can land on screen before any scene depth
+is read. A ray that starts off screen and comes back in is kept, each step is longer than the one
+before it, the last point before the ray leaves is sampled, and the hit search stays inside that
+same range. Points behind the eye or outside the depth range are thrown out.
 
 ### 6. Temporal: 1 pass
 

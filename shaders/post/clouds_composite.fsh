@@ -27,6 +27,12 @@ in vec2 texCoord;
 out vec4 fragColor; // straight rgb+alpha; the pipeline's translucent blend composites it
 
 void main() {
+#if PLAGUE_UNDERWATER
+    // No clouds underwater at all, matching the resolve's sky arm: the underwater sky is a total
+    // override, so any cloud composited over it would be sky content escaping that override.
+    if (u_WaterState.x > 0.5) { fragColor = vec4(0.0); return; }
+#endif
+
     // A centred cubic cardinal B-spline is the convolution of four unit-area boxes.
     // Its four polynomial coefficients below are that convolution expanded on one cell;
     // positive weights sum to one and join with two continuous derivatives. No sharpness knob.
@@ -92,12 +98,6 @@ void main() {
 
     // Early-out keeps the divide below away from zero on the overwhelming majority of pixels.
     if (c.a <= 0.0) { fragColor = vec4(0.0); return; }
-
-#if PLAGUE_UNDERWATER
-    // No clouds underwater at all, matching the resolve's sky arm: the underwater sky is a total
-    // override, so any cloud composited over it would be sky content escaping that override.
-    if (u_WaterState.x > 0.5) { fragColor = vec4(0.0); return; }
-#endif
 
     fragColor = vec4(c.rgb / c.a, c.a);
 }

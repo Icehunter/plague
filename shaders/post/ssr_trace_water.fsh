@@ -7,6 +7,7 @@
 
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:water_reflection.glsl>
+#moj_import <fornax_runtime:reflection_clip.glsl>
 
 uniform sampler2D u_WaterNormal; // builtin.waterNormal: xyz = wave normal, a = signed flags (see terrain.fsh)
 uniform sampler2D u_WaterDepth; // builtin.waterDepth: reversed-Z, 0.0 = no water
@@ -44,7 +45,17 @@ vec3 worldPosAt(vec2 uv, float depth) {
 
 vec3 projectToScreen(vec3 pos) {
     vec4 clip = u_ProjectionMatrix * u_ModelViewMatrix * vec4(pos, 1.0);
+    if (clip.w <= 0.0 || clip.z < 0.0 || clip.z > clip.w) return vec3(-1.0);
     return vec3((clip.xy / clip.w) * 0.5 + 0.5, clip.z / clip.w);
+}
+
+// Only for points inside the cut range. Rounding can push an end point just outside a clip
+// plane; pull it back in without shortening the range the hit search works on.
+vec3 projectClippedToScreen(vec3 pos) {
+    vec4 clip = u_ProjectionMatrix * u_ModelViewMatrix * vec4(pos, 1.0);
+    if (clip.w <= 0.0) return vec3(-1.0);
+    return clamp(vec3((clip.xy / clip.w) * 0.5 + 0.5, clip.z / clip.w),
+            vec3(0.0), vec3(1.0));
 }
 
 // "Hash without Sine" hash12, (c) 2014 David Hoskins, MIT licence.
@@ -64,7 +75,7 @@ float hash12(vec2 p) {
 // do the same math again on a value the caller already has.
 float behindAt(vec3 screen, vec3 rayWorldPos, out vec3 scenePos) {
     scenePos = vec3(0.0);
-    if (screen.x <= 0.0 || screen.x >= 1.0 || screen.y <= 0.0 || screen.y >= 1.0) {
+    if (screen.x < 0.0 || screen.x > 1.0 || screen.y < 0.0 || screen.y > 1.0) {
         return -1e9;
     }
     float sceneDepth = texture(u_Depth, screen.xy).r;
@@ -104,7 +115,14 @@ void main() {
     // and too big to reflect anything close up.
     vec3 rayPos = origin + waveNormal * (0.025 * length(origin) + 0.05);
 
-    vec3 step = 0.5 * mirror;
+    // Steps grow by a fixed factor and keep their full reach; only the range they cover is cut.
+    // The pushed-out start can sit off screen and come back into view later.
+    mat4 viewProjection = u_ProjectionMatrix * u_ModelViewMatrix;
+    vec2 rayInterval = vec2(0.0, 1e30); // a big finite number, never a real distance
+    bool intersectsScreen = plagueClipReflectionRay(viewProjection * vec4(rayPos, 1.0),
+            viewProjection * vec4(mirror, 0.0), rayInterval);
+    float stepLength = 0.5;
+    float coarseDistance = 0.0;
     vec3 travelled = vec3(0.0);
     vec3 lastAdvance = vec3(0.0);
     bool hit = false;
@@ -123,12 +141,20 @@ void main() {
     vec3 backfaceScreen = vec3(0.0);
 
     for (int i = 0; i < WATER_MARCH_SAMPLES; i++) {
-        step *= 1.4;                                   // geometric growth: near detail, far reach
-        lastAdvance = step * (0.95 + 0.1 * dither);    // dither the COARSE advance only
-        travelled += lastAdvance;
+        if (!intersectsScreen || coarseDistance >= rayInterval.y) break;
+        float previousDistance = coarseDistance;
+        stepLength *= 1.4; // geometric growth: near detail, far reach
+        coarseDistance += stepLength * (0.95 + 0.1 * dither);
+        if (coarseDistance <= rayInterval.x) continue;
+        // Take the last point inside the range before stopping. Clamping only the step position
+        // would leave the hit search's near end behind the eye or off screen.
+        float frontDistance = max(previousDistance, rayInterval.x);
+        float backDistance = min(coarseDistance, rayInterval.y);
+        travelled = mirror * backDistance;
+        lastAdvance = mirror * (backDistance - frontDistance);
 
         vec3 samplePos = rayPos + travelled;
-        vec3 screen = projectToScreen(samplePos);
+        vec3 screen = projectClippedToScreen(samplePos);
         vec3 scenePos;
         float behind = behindAt(screen, samplePos, scenePos);
 
@@ -143,7 +169,7 @@ void main() {
         for (int r = 0; r < WATER_MARCH_REFINEMENTS; r++) {
             vec3 mid = 0.5 * (front + back);
             vec3 midWorld = rayPos + mid;
-            vec3 midScreen = projectToScreen(midWorld);
+            vec3 midScreen = projectClippedToScreen(midWorld);
             vec3 midScene;
             if (behindAt(midScreen, midWorld, midScene) > 0.0) {
                 back = mid;
@@ -153,7 +179,7 @@ void main() {
         }
 
         vec3 finalWorld = rayPos + back;
-        vec3 finalScreen = projectToScreen(finalWorld);
+        vec3 finalScreen = projectClippedToScreen(finalWorld);
         vec3 finalScene;
         float finalBehind = behindAt(finalScreen, finalWorld, finalScene);
 
