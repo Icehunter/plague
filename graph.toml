@@ -1,7 +1,7 @@
 # Plague render graph. Passes execute in declaration order.
 
 [ray_traced_shadows]
-enabled_if = "SHADOWS && RT_SHADOWS"
+enabled_if = "RT_SHADOWS"
 distance_option = "u_RtShadowDistance"
 blocks_per_unit = 16
 # Maximum filter support: softness 6 * disk radius 2.046826 * rain 3 * ambient 4,
@@ -781,7 +781,7 @@ filter = "nearest"
 name = "resolve_hdr_rt_shadow"
 type = "fullscreen"
 shader = "shaders/post/rt_shadow_composite.fsh"
-enabled_if = "SHADOWS"
+enabled_if = "SHADOWS || RT_SHADOWS"
 inputs = ["builtin.depth", "builtin.gNormal", "sunShadowMap", "builtin.depth", "builtin.depth", "sunShadowMapRaw", "builtin.depth", "builtin.depth", "rtTerrainShadowDepth", "sunEntityShadowMapRaw", "builtin.gMotion"]
 outputs = ["rtShadowComposite"]
 

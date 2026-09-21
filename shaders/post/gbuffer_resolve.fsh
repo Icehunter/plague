@@ -373,7 +373,7 @@ int debugView = int(u_Param3 + 0.5);
         if (debugView == DBG_MATERIAL) { fragColor = vec4(texture(G_BUF, vec3(texCoord, 1.0)).rgb, 1.0); return; }
 #ifdef PLAGUE_DEBUG_VIEWS
         if (debugView == DBG_MOTION) {
-#ifdef SHADOWS
+#if defined(SHADOWS) || RT_SHADOWS
             fragColor = texelFetch(RT_SHADOW_COMPOSITE, ivec2(gl_FragCoord.xy), 0);
 #else
             // The shadow prepass is left out of this build; the original motion input still works.
@@ -388,7 +388,7 @@ int debugView = int(u_Param3 + 0.5);
             // Cyan is RT-selected coverage; gray is full-raster fallback. Brightness carries
             // the applied direct visibility. The display-only 1/4 floor keeps shadowed coverage
             // visible; it does not enter lighting or either shadow query readback.
-#ifdef SHADOWS
+#if defined(SHADOWS) || RT_SHADOWS
             vec4 appliedShadow = texture(RT_SHADOW_COMPOSITE, texCoord);
             float debugBrightness = mix(0.25, 1.0, appliedShadow.r);
             vec3 coverageColor = mix(vec3(1.0), vec3(0.0, 1.0, 1.0), appliedShadow.a);
@@ -399,7 +399,7 @@ int debugView = int(u_Param3 + 0.5);
             return;
         }
         if (debugView == DBG_SHADOW_MAP_VIEW) {
-#ifdef SHADOWS
+#if defined(SHADOWS) || RT_SHADOWS
 #ifdef PLAGUE_DEBUG_VIEWS
             // The prepass decodes the value before writing it as RGBA16F, so this view keeps
             // full precision.
@@ -752,7 +752,10 @@ int debugView = int(u_Param3 + 0.5);
                && uwFragWorldY < u_WaterState.z));
 #endif
 
-#ifdef SHADOWS
+// Reachable with the raster map off, as long as the traced tier is on: RT_SHADOW_COMPOSITE
+// already carries a full-light answer for every texel the trace could not reach when the raster
+// map is off, so this block needs no separate off-map branch of its own.
+#if defined(SHADOWS) || RT_SHADOWS
     // Queried always, not behind ndotl > 0.0: that gate is harmless for the diffuse term (N.L
     // zeroes it anyway) but wrong for specular, fill light, cloud shadow and water glitter, which
     // would all read a self-shadowed slope as fully lit.
@@ -1151,7 +1154,7 @@ int debugView = int(u_Param3 + 0.5);
     // the dielectric world differently from the traced image metals mirror, diverging as it moves.
     float envShadowDim = 0.0;
     float shadowFade = 1.0;
-#ifdef SHADOWS
+#if defined(SHADOWS) || RT_SHADOWS
     const float PLAGUE_AMBIENT_SHADOW_MAX = 0.75;
     float shadowOcclusion = smoothstep(0.2, 0.9, 1.0 - ambientVisibility)
             * shadowSkyGate * casterStrength * PLAGUE_AMBIENT_SHADOW_MAX;
@@ -1520,7 +1523,7 @@ int debugView = int(u_Param3 + 0.5);
     // The reflection is not fogged twice: `ssr` traced last frame's finished sceneHdr, which
     // already carries the reflected surface's own fog. No correction for the extra path length:
     // the error is near zero wherever a screen-space reflection is readable.
-#if PLAGUE_UNDERWATER && defined(SHADOWS) && WATER_CAUSTICS
+#if PLAGUE_UNDERWATER && (defined(SHADOWS) || RT_SHADOWS) && WATER_CAUSTICS
     // Added to the scene in linear before fog, so distance veils it like everything else. Anchored
     // to what the sun delivers here (shadow map plus the depth gate), sized so bright lines land
     // 3-5x the sand they dance on.

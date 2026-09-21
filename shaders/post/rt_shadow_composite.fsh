@@ -30,7 +30,9 @@ layout(std140) uniform u_PassParams {
 };
 in vec2 texCoord;
 out vec4 fragColor;
-#ifdef SHADOWS
+// The map read inside this include stays correct with the raster map off: that map is then a
+// placeholder cleared to "no occluder anywhere", so a read of it is a full-light answer.
+#if defined(SHADOWS) || RT_SHADOWS
 #moj_import <fornax_runtime:shadow_filter.glsl>
 #endif
 
@@ -47,7 +49,10 @@ float plagueCausticSunVisibility(vec3 receiver, vec3 sunDir) {
 
 void main() {
     fragColor = vec4(1.0, 1.0, 1.0, 0.0);
-#ifdef SHADOWS
+// Reachable with the raster map off, as long as the traced tier is on: the lookups below already
+// choose the traced answer where one exists and fall back to the raster map otherwise, and that
+// map reads as full light on its own when nothing draws into it.
+#if defined(SHADOWS) || RT_SHADOWS
 #ifdef PLAGUE_DEBUG_VIEWS
     int debugView = int(u_Param3 + 0.5);
     if (debugView == DBG_MOTION) {

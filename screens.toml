@@ -507,8 +507,6 @@ elements = [
 title = "Shadows"
 elements = [
     "SHADOWS",
-    "RT_SHADOWS|requires:SHADOWS",
-    "u_RtShadowDistance|requires:RT_SHADOWS",
     "SHADOW_RESOLUTION|requires:SHADOWS",
     "SHADOW_SAMPLES|requires:SHADOWS",
     "u_ShadowDistance|requires:SHADOWS",
@@ -522,6 +520,8 @@ elements = [
     "PLAGUE_GI",
     "u_GiLightStrength|requires:PLAGUE_GI",
     "PLAGUE_GI_VIEW|requires:PLAGUE_GI",
+    "RT_SHADOWS",
+    "u_RtShadowDistance|requires:RT_SHADOWS",
 ]
 
 [screens.occlusion]
@@ -1887,11 +1887,11 @@ edge, higher spreads them all. Changing Shadow Resolution does not change this l
 
 RT_SHADOWS = """
 Uses a more realistic method for sun and moon shadows on nearby surfaces, when your graphics \
-card supports it.
+card supports it. Works on its own, with Shadows on or off.
 
-Distant blockers can still cast shadows onto those surfaces. Farther surfaces, and surfaces \
-where this isn't available, fall back to plain shadows. Shadow Softness, Shadow Quality and \
-Shadow Strength apply to both."""
+Distant blockers can still cast shadows onto those surfaces. A surface this can't reach falls \
+back to plain shadows when Shadows is on, and to full light when Shadows is off. Shadow Softness \
+applies to both."""
 
 u_RtShadowDistance = """
 Horizontal distance from you to surfaces that get Ray Traced Shadows, in chunks (16 blocks \
