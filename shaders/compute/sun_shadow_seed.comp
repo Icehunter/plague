@@ -1,0 +1,127 @@
+#version 450
+
+// One ray a screen pixel, aimed at the sun's own centre, so the composite pass gets a hard answer
+// with no disc sampling and no jitter to soften it. A lattice or a set of separate rails keeps its
+// outline only if the answer that reaches the frame still belongs to one pixel; the light-space
+// shadow map this pack already fills cannot hold a shape that thin, and this pass gives every pixel
+// its own question instead of sharing one texel between several of them.
+
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:geometric_normal.glsl>
+#moj_import <fornax_runtime:shadow_options.glsl>
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Bindings: 0 globals, 1 packOptions (engine-injected), 2 depth, 3 the surface normal, 4 the rays.
+// Appended only, never inserted, so a later input keeps every earlier slot's index.
+layout(set = 0, binding = 2) uniform sampler2D u_Depth;
+layout(set = 0, binding = 3) uniform sampler2D u_GNormal;
+layout(std430, set = 0, binding = 4) buffer SunShadowRequests {
+    vec4 words[];
+} rays;
+
+// Writes a ray with a zero reach: the trace treats that as nothing to ask.
+void plagueSunShadowSkip(uint index) {
+    rays.words[index * 2u] = vec4(0.0);
+    rays.words[index * 2u + 1u] = vec4(0.0, 1.0, 0.0, 0.0);
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    // The buffer's own length first: the pixel count is read at runtime and a window bigger than
+    // the buffer's declared count must never be written past, whatever the pixel count says.
+    if (index * 2u + 1u >= uint(rays.words.length())) return;
+
+    ivec2 screen = textureSize(u_Depth, 0);
+    uvec2 screenSize = uvec2(max(screen, ivec2(0)));
+    uint pixelCount = screenSize.x * screenSize.y;
+    // A window smaller than the dispatch leaves some threads with no pixel of their own. Their
+    // slot still exists in the buffer, so it is cleared here rather than left holding whatever an
+    // earlier, larger window wrote into it.
+    if (index >= pixelCount) {
+        plagueSunShadowSkip(index);
+        return;
+    }
+
+    // Row major on the CURRENT screen width. The composite pass decodes this same index with the
+    // width it reads off the same depth target this frame, so the two must agree or a ray answers
+    // the wrong pixel.
+    vec2 cell = vec2(float(index % screenSize.x), float(index / screenSize.x));
+    vec2 uv = (cell + 0.5) / vec2(screenSize);
+
+    float depth = texture(u_Depth, uv).r;
+    vec4 packedNormal = texture(u_GNormal, uv);
+    // Sky, or a pixel the G-buffer never wrote a normal for.
+    if (depth <= 0.0 || dot(packedNormal.xyz, packedNormal.xyz) <= 1e-6) {
+        plagueSunShadowSkip(index);
+        return;
+    }
+
+    // How far the ray reaches, from what the owner ASKED for, worked out the same way the engine
+    // works out its own trace radius: the traced distance in chunks, held inside the distance
+    // shadows draw to at all.
+    //
+    // Not from u_ShadowMapParams.y, which is how far last frame's trace said it could be trusted.
+    // That number is cleared at the top of every frame and set again only once a trace publishes,
+    // so on any frame where the publish has not landed it reads nought. A reach of nought gives
+    // every ray a length of nought, a ray that long meets nothing, and the whole screen comes back
+    // lit at once. Asking a result how far to look is what makes one late frame erase the shadows.
+    float reach = min(float(u_RtShadowDistance) * 16.0, u_ShadowDistance);
+    if (!(reach > 1e-3)) {
+        plagueSunShadowSkip(index);
+        return;
+    }
+
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 world = u_InvProjModelView * clip;
+    vec3 surface = world.xyz / world.w;
+
+    // The GEOMETRIC normal, not the shading one: a bump or a bent vertex normal would tilt the
+    // lift and drop the origin back into the very face it started on.
+    vec3 shadingNormal = normalize(packedNormal.xyz);
+    vec3 normal = plagueDecodeGeometricNormal(packedNormal.a, shadingNormal);
+
+    vec3 sunDir = dot(u_SkyCelestial.xyz, u_SkyCelestial.xyz) > 1e-6
+            ? normalize(u_SkyCelestial.xyz) : vec3(0.0, 1.0, 0.0);
+
+    // A light at or under the skyline sends nothing down here, so there is no shadow of it to
+    // find. Tracing anyway fires every ray into the ground it started on, every one comes back
+    // blocked, and the whole near half of the screen turns dark at once. u_SkyCelestial carries
+    // whichever of the two lights is the live one, so this flips over at dusk and dawn.
+    //
+    // A face turned away from the light is dark because of the turn, not because something stands
+    // in the way. Its ray would leave into its own block and answer blocked for a reason that is
+    // not an answer. Both cases ask for no trace and let the fallback speak.
+    if (sunDir.y <= 0.0 || dot(normal, sunDir) <= 0.0) {
+        plagueSunShadowSkip(index);
+        return;
+    }
+
+    // How square the ray leaves the face it starts on. A light low in the sky leaves it almost
+    // flat along the surface, and that is the whole difficulty below.
+    float squareness = dot(normal, sunDir);
+
+    // Started far enough along the ray to have left its own face.
+    //
+    // A ray lifted a fixed hair off the surface and started a fixed hair along itself clears
+    // nothing when it leaves almost flat: it rises by that squareness for every step it takes, so
+    // at a low sun it crawls along inside the very face it came from and answers blocked. Every
+    // point does it at once, so the whole near half of the screen turns dark together, and at a
+    // better sun angle the same fault survives as a dark fringe along each shadow edge.
+    //
+    // Dividing the lift by the squareness gives the distance along the ray at which it has truly
+    // risen that far above the face, which is what a start distance has to mean. The floor keeps
+    // an almost flat ray from asking for an endless one.
+    const float PLAGUE_SUN_SHADOW_LIFT = 0.03;
+    float start = PLAGUE_SUN_SHADOW_LIFT / max(squareness, 0.05);
+    if (!(reach > start)) {
+        plagueSunShadowSkip(index);
+        return;
+    }
+
+    vec3 origin = surface + normal * PLAGUE_SUN_SHADOW_LIFT;
+    rays.words[index * 2u] = vec4(origin, start);
+    rays.words[index * 2u + 1u] = vec4(sunDir, reach);
+}

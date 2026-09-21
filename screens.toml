@@ -68,7 +68,6 @@ sliders = [
     "u_PomAllowCutout",
     "u_ScreenBrightness",
     "u_BlockLightTemp",
-    "u_ShadowSoftness",
     "u_ShadowDistance",
     "u_RtShadowDistance",
     "u_SsaoRadius",
@@ -507,20 +506,20 @@ elements = [
 title = "Shadows"
 elements = [
     "SHADOWS",
-    "SHADOW_RESOLUTION|requires:SHADOWS",
+    "SHADOW_RESOLUTION",
     "SHADOW_SAMPLES|requires:SHADOWS",
     "u_ShadowDistance|requires:SHADOWS",
-    "u_ShadowSoftness|requires:SHADOWS",
     "HIDE_VANILLA_BLOB_SHADOWS",
 ]
 
 [screens.ray_tracing]
-title = "Ray Tracing"
+title = "Ray Tracing (Experimental)"
 elements = [
     "PLAGUE_GI",
     "u_GiLightStrength|requires:PLAGUE_GI",
     "PLAGUE_GI_VIEW|requires:PLAGUE_GI",
     "RT_SHADOWS",
+    "PLAGUE_SUN_SHADOW_VIEW|requires:RT_SHADOWS",
     "u_RtShadowDistance|requires:RT_SHADOWS",
 ]
 
@@ -1877,13 +1876,13 @@ A shorter distance makes nearby shadows noticeably crisper, because the same sha
 covers less ground. Shadows fade out gently near the limit, rather than stopping at a hard \
 line."""
 
-u_ShadowSoftness = """
-Scales how far a shadow's edge spreads.
+PLAGUE_SUN_SHADOW_VIEW = """
+Paints the traced sun answer as flat shades instead of light, for working out why a shadow went \
+wrong.
 
-The width itself comes from the shapes: how far the thing casting sits above what it lands on, and \
-how big the Sun looks in the sky. A fence against a wall is crisp and the same fence far from it \
-is soft, with no setting involved. At 1.0 the edge is the width that gives. Lower sharpens every \
-edge, higher spreads them all. Changing Shadow Resolution does not change this look."""
+White is a ray that reached the sun, black is one that was blocked. Mid grey means no ray answered \
+and the last good answer is being held, and dark grey means none answered and there was nothing to \
+hold. A whole screen in one shade says which of those four things happened to all of it at once."""
 
 RT_SHADOWS = """
 Uses a more realistic method for sun and moon shadows on nearby surfaces, when your graphics \
@@ -3099,4 +3098,8 @@ SHADOW_RESOLUTION = """
 How much detail shadows are drawn with.
 
 Higher gives crisper shadow edges, with less of the jagged, stair-step look you can see on \
-long shadows, at a cost in memory and frame rate. This is the main speed control for shadows."""
+long shadows, at a cost in memory and frame rate. This is the main speed control for shadows.
+
+Traced shadows land on the same grid, so this sets their detail as well. At 1024 over a \
+64 block distance one step is an eighth of a block, which is exactly how thick a fence rail \
+is, so a rail cannot cast a smooth edge until this is raised."""

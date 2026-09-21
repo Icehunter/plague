@@ -164,13 +164,12 @@ float sunVisibilityAt(vec3 worldPos, vec3 normal, vec3 sunDir, float rainFactorF
     const float goldenRatioFrac = 0.61803398875;
     float temporalNoise = fract(gradientNoise + goldenRatioFrac * mod(u_FrameState.x, 4096.0));
 
-    // The width comes from the geometry, not from a setting: how far the caster sits above this
-    // point, times the Sun's angular size. Nothing casting here means nothing to soften.
-    // Shadow Softness scales the width the geometry asked for, rather than setting it. At 1 the
-    // edge is the width the Sun's angular size gives; lower sharpens it, higher spreads it. One
-    // value suits every shadow, because the width it scales moves with the geometry.
+    // The width comes from the geometry alone: how far the caster sits above this point, times
+    // how big the Sun looks in the sky. Nothing casting here means nothing to soften, and there
+    // is no setting to scale it, so a fence against a wall is crisp and the same fence far from
+    // the wall is soft without anyone choosing that.
     float penumbraUv = plagueShadowPenumbraUv(shadowUv, refDepth, temporalNoise)
-            * radiusScale * u_ShadowSoftness;
+            * radiusScale;
     // The fitted disk radii describe the filter's SHAPE at whatever width it is given, so the
     // width divides out here and the profile they were fitted under is kept. A width of zero
     // collapses every tap onto the middle texel, which is a hard edge and costs no branch.

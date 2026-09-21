@@ -18,7 +18,7 @@
 // Renaming this pass leaves the list unbuilt with no error anywhere, and frees the buffer too: the
 // engine allocates analyticLightList only while a pass by this name is enabled.
 
-#define PLAGUE_GI 0 //[0 1] compile "Bounce Light" {0="Off" 1="On"}
+#define PLAGUE_GI 0 //[0 1] compile "Bounce Light (Experimental)" {0="Off" 1="On"}
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>

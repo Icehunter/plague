@@ -9,7 +9,11 @@
 // With this off, the engine never renders the shadow map and it stays a 64x64 placeholder.
 #define SHADOWS //[] compile "Shadows"
 // Owner-requested receiver distance: integer chunks, default two, from one through sixteen.
-#define RT_SHADOWS 1 //[0 1] compile "Ray Traced Shadows" {0="Off" 1="On"}
+#define RT_SHADOWS 1 //[0 1] compile "Ray Traced Shadows (Experimental)" {0="Off" 1="On"}
+// Paints the traced sun answer as four flat shades so a whole screen going wrong says WHICH way
+// it went wrong: white where a ray reached the sun, black where one was blocked, mid grey where no
+// ray answered and last frame was held, dark grey where nothing was answered and nothing was held.
+#define PLAGUE_SUN_SHADOW_VIEW 0 //[0 1] compile "Test View: Traced Sun Shadow (Experimental)" {0="Off" 1="On"}
 #define u_RtShadowDistance 2 //[1..16 step 1] runtime "RT Shadow Distance (Chunks)"
 // Default off: a new per-fragment cost on the full-res shading pass, on top of needing
 // CLOUDS_VOLUMETRIC (also default off). Its own toggle so enabling volumetric clouds doesn't
@@ -25,7 +29,6 @@
 // Taps per side (real count is double, +/- pairs). Powers of two so each tier doubles the cost.
 #define SHADOW_SAMPLES 8 //[2 4 8 16] compile "Shadow Samples" {2="Low" 4="Medium" 8="High" 16="Epic"}
 
-#define u_ShadowSoftness 1.0 //[0.0..4.0 step 0.05] runtime "Shadow Softness"
 // The engine reads this exact name to size the shadow frustum, so it must stay in blocks.
 #define u_ShadowDistance 96.0 //[16.0..512.0 step 16.0] runtime "Shadow Distance"
 

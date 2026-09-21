@@ -772,17 +772,71 @@ outputs = ["voxelLocalDirect"]
 
 # The shared receiver handoff combines RT terrain with independent entity depth before filtering.
 # The complete raster map remains available per tap; clouds keep their separate transmittance.
+# history = true: a chunk rebuild burst can leave every screen-space ray unanswered for a whole
+# frame, and the composite pass holds this same target's own previous frame for those pixels rather
+# than falling through to the raster fallback, which reads as full light with the raster map off.
 [targets.rtShadowComposite]
 format = "rgba16f"
 scale = 1.0
 filter = "nearest"
+history = true
+
+# One sun ray a screen pixel, read straight through with no history and no filter, so a lattice or
+# a set of separate rails keeps its own outline instead of landing on one light-space texel. The
+# count is a literal sized for a 1728x1084 window; a larger one leaves the tail of the screen
+# without a ray, and the composite pass falls back to the raster map there.
+#
+# sunShadowHits is read by resolve_hdr_rt_shadow, whose own gate is "SHADOWS || RT_SHADOWS", wider
+# than the trace that fills it. Its gate has to match that wider condition or the pack refuses to
+# load whenever raster shadows run without the traced ones: with the trace compiled out, the buffer
+# holds the zero fill it gets at allocation, which reads as no ray answered.
+[targets.sunShadowRequests]
+kind = "buffer"
+stride_bytes = 32
+count = 2097152
+enabled_if = "RT_SHADOWS"
+
+[targets.sunShadowHits]
+kind = "buffer"
+stride_bytes = 36
+count = 2097152
+enabled_if = "SHADOWS || RT_SHADOWS"
+
+[[pass]]
+name = "sun_shadow_seed"
+type = "compute"
+shader = "shaders/compute/sun_shadow_seed.comp"
+enabled_if = "RT_SHADOWS"
+# A buffer-only output has no extent to derive a dispatch from, so the count is a literal and the
+# group size comes from the shader's own local_size_x of 256: 8192 groups times 256 is 2097152.
+dispatch = [8192, 1, 1]
+inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal"]
+outputs = ["sunShadowRequests"]
+
+[[pass]]
+# Visibility, not closest hit: this only asks whether anything stands between the surface and the
+# sun, so a traversal may stop at the first thing it meets.
+name = "sun_shadow_trace"
+type = "ray_query"
+enabled_if = "RT_SHADOWS"
+inputs = ["sunShadowRequests"]
+outputs = ["sunShadowHits"]
+
+[pass.ray_query]
+kind = "visibility"
+rays = 2097152
+# The mesh tier is the only one that alpha-tests real lattice and rail triangles against their
+# baked texture coordinates. Naming it as the floor makes that shape fidelity a fact about the
+# pass, not a hope about which machine runs it.
+min_tier = "hardware_mesh"
 
 [[pass]]
 name = "resolve_hdr_rt_shadow"
 type = "fullscreen"
 shader = "shaders/post/rt_shadow_composite.fsh"
 enabled_if = "SHADOWS || RT_SHADOWS"
-inputs = ["builtin.depth", "builtin.gNormal", "sunShadowMap", "builtin.depth", "builtin.depth", "sunShadowMapRaw", "builtin.depth", "builtin.depth", "rtTerrainShadowDepth", "sunEntityShadowMapRaw", "builtin.gMotion"]
+# sunShadowHits, then rtShadowComposite.history last: inputs are positional, append only.
+inputs = ["builtin.depth", "builtin.gNormal", "sunShadowMap", "builtin.depth", "builtin.depth", "sunShadowMapRaw", "builtin.depth", "builtin.depth", "rtTerrainShadowDepth", "sunEntityShadowMapRaw", "builtin.gMotion", "sunShadowHits", "rtShadowComposite.history"]
 outputs = ["rtShadowComposite"]
 
 [[pass]]

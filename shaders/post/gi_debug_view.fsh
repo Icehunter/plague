@@ -9,8 +9,8 @@
 // it lands on. Multiplying by that surface's own colour is what the frame would show, and is what
 // makes this comparable with the lit picture beside it.
 
-#define PLAGUE_GI 0 //[0 1] compile "Bounce Light" {0="Off" 1="On"}
-#define PLAGUE_GI_VIEW 0 //[0 1] compile "Test View: Bounce Light" {0="Off" 1="On"}
+#define PLAGUE_GI 0 //[0 1] compile "Bounce Light (Experimental)" {0="Off" 1="On"}
+#define PLAGUE_GI_VIEW 0 //[0 1] compile "Test View: Bounce Light (Experimental)" {0="Off" 1="On"}
 
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:light_options.glsl>

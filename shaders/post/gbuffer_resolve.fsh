@@ -5,7 +5,7 @@
 #moj_import <fornax_runtime:geometric_normal.glsl>
 #moj_import <fornax_runtime:light_and_ambient_colors.glsl>
 #moj_import <fornax_runtime:light_options.glsl>
-#define PLAGUE_GI 0 //[0 1] compile "Bounce Light" {0="Off" 1="On"}
+#define PLAGUE_GI 0 //[0 1] compile "Bounce Light (Experimental)" {0="Off" 1="On"}
 #moj_import <fornax_runtime:shadow_options.glsl>
 #moj_import <fornax_runtime:shadow_debug.glsl>
 #moj_import <fornax_runtime:atmo_debug_options.glsl>
@@ -344,6 +344,28 @@ vec3 plagueGiUpsample(sampler2D grid, vec2 uv, float depth, vec3 pixelNormal) {
 #endif
 
 void main() {
+#if PLAGUE_SUN_SHADOW_VIEW && RT_SHADOWS
+    // The traced sun answer on its own, painted flat. Reads the composite this file already binds,
+    // so it costs no extra texture. Returning here is the point: the answer is a share of light,
+    // and anything drawn over it turns four plain shades back into a picture of a world.
+    //
+    // One flat colour a branch. Green reached the sun, red met a caster a way off, purple met one
+    // within a quarter block, white holds no distance at all so nothing wrote one, orange the
+    // entity map called it blocked, blue held last frame,
+    // yellow had nothing to hold, magenta never entered the traced path at all. Reading a shade
+    // of grey could not tell a blocked ray from a nought that came from somewhere else.
+    float branch = texture(RT_SHADOW_COMPOSITE, texCoord).r;
+    vec3 shown = vec3(1.0, 0.0, 1.0);
+    if (branch > 0.85) shown = vec3(0.0, 1.0, 0.0);
+    else if (branch > 0.75) shown = vec3(1.0, 0.5, 0.0);
+    else if (branch > 0.65) shown = vec3(1.0, 0.0, 0.0);
+    else if (branch > 0.55) shown = vec3(0.6, 0.0, 1.0);
+    else if (branch > 0.45) shown = vec3(1.0, 1.0, 1.0);
+    else if (branch > 0.4) shown = vec3(0.0, 0.4, 1.0);
+    else if (branch > 0.2) shown = vec3(1.0, 1.0, 0.0);
+    fragColor = vec4(shown, 1.0);
+    return;
+#endif
 #if PLAGUE_AIR_SHADOW_DEBUG
     // A slice of air at one fixed distance, not the surface lighting. Cloud and water passes
     // drawn after this can cover it, so check it over dry solid ground.

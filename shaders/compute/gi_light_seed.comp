@@ -8,7 +8,7 @@
 // lights and aiming at one finds it every time, and the ray that goes there answers whether
 // anything is in the way.
 
-#define PLAGUE_GI 0 //[0 1] compile "Bounce Light" {0="Off" 1="On"}
+#define PLAGUE_GI 0 //[0 1] compile "Bounce Light (Experimental)" {0="Off" 1="On"}
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
