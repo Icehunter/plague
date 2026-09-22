@@ -41,8 +41,9 @@ surface, and mixes in fog, edge fade and underwater effects to make `sceneHdr`. 
 loss are worked out together, in the same shader step: no separate compute pass or lookup table
 stands in for this.
 The fog pass copies its input straight through on sky pixels, when fog is off, and for debug
-views that don't need it. It shares its air, light source and shadow math with `atmo_aerial`
-through `atmo_transport.glsl`; `atmo_transport_compute.glsl` holds only the code that binds and
+views that don't need it. With underwater effects enabled, a submerged eye skips the air march
+and air sky reads that the fog dispatcher discards; water tint, veil and horizon closure still run.
+It shares its air, light source and shadow math with `atmo_aerial` through `atmo_transport.glsl`; `atmo_transport_compute.glsl` holds only the code that binds and
 reads compute textures. Light along the path is added up from far to near.
 Near the camera, the ray is split at world-grid lines every eight blocks, and the last piece is
 cut short at the solid surface. Each piece uses one smooth reading of air and haze, averaged from
@@ -66,9 +67,8 @@ against wrong sky light at cave mouths still works, and still misses a lit gap b
 sheltered points. This new fog step shares no cache and reuses nothing between frames; its speed
 and look still need to be checked on the owner's own machine before tuning it further.
 
-`sky.glsl` retains the shared palette estimates used for surface ambient, water illumination,
-reflection-probe clouds and forward particle/banner fog, plus the scattering sky's warmth and
-weather grading. Their controls remain live; removing the alternate dome does not retire them.
+`sky.glsl` retains the shared palette estimates used for surface ambient, water illumination and
+forward particle/banner fog, plus the scattering sky's warmth and weather grading. Their controls remain live; removing the alternate dome does not retire them.
 
 ### 1. Geometry: 7 passes
 
@@ -164,9 +164,10 @@ premultiplied colour and first density-bearing ray distance, one pair per genus.
 these layers and writes `cloudsVolumeCompute` plus the contribution-weighted mean of their sampled
 front distances to `cloudsVolumeDistance`. Existing history and composite passes consume these
 merged outputs.
-Weather, cloud decks, lighting and hemisphere sampling run once per 16 × 16 workgroup. Each
-invocation keeps its own view direction, noise phase and ray samples; a barrier shares the setup
-before any invocation can exit at the edge of the image.
+Weather, cloud decks, lighting and hemisphere sampling run once per 16 × 16 workgroup. The
+selected deck's incident sunlight or moonlight is also shared, including its atmospheric column
+and the End sky override. Each invocation keeps its own view direction, noise phase and ray
+samples; a barrier shares the setup before any invocation can exit at the edge of the image.
 The dispatch has seven Z workgroup planes, one per genus. Each invocation retains only its current
 layer while marching, preserving the independent dither phases, convective weather fade and sample
 budgets. Moving sorting to a separate pass removes the seven-result private arrays from the long
@@ -269,14 +270,16 @@ water and LabPBR normal maps take no part in cloud transport. These add no densi
 tap, pass or history resource and are subject to owner live acceptance.
 
 `plagueCloudActiveDeck` is the pack-owned contributor-selection seam shared by the direct compute
-march, cloud-shadow query, and reflected-sky probe. All three read the same global rain, thunder,
-wetness, and camera rain/snow classification so their cloud shape agrees.
+march and the cloud-shadow query. Both read the same global rain, thunder, wetness, and camera
+rain/snow classification so their cloud shape agrees.
 
 ### 5. Water: 13 passes, the deepest part of the graph
 
 After `scene_hdr_copy` snapshots the lit scene:
 
-- `water_environment_seed` → `water_environment_mips` build what water reflects.
+- `water_environment_seed` → `water_environment_mips` build the sky water reflects. Sky only:
+  the probe is indexed by two dot products, so a cloud written into it returns as a ring of copies
+  around the sun. Reflected cloud comes from the screen trace, which reads the marched sky itself.
 - `ssr_trace_water` → `ssr_blur_water` trace reflections off the surface itself.
 - `glint_occlusion` handles sun glitter visibility.
 - `water_volume_interval` → `water_volume_march` → `water_volume_scatter_history` are the water

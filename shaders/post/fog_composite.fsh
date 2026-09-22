@@ -177,17 +177,24 @@ void main() {
         // Integrate and compose at this fragment's current depth. No intermediate endpoint
         // image or cumulative-volume interpolation can import light from another surface.
         float fogDist = length(worldPos);
-        float fogFar = plagueAtmoAerialFar();
         vec3 fogTransmittance;
+        vec4 fogAerial;
+        float fogNearT;
+        vec3 fogSky;
+#if PLAGUE_UNDERWATER
+        // The dispatcher sets air and border opacity to zero for a submerged eye. Neutral air
+        // skips the discarded march; water tint, veil and horizon closure still run below.
+        if (!(u_WaterState.x > 0.5)) {
+#endif
+        float fogFar = plagueAtmoAerialFar();
         PlagueAtmoAir air = plagueAtmoComputeAir(sunDirTrue, rainFactor,
                                                 clamp(u_FrameState.z, 0.0, 1.0));
-        vec4 fogAerial = plagueAtmoComputeTransport(worldPos / max(fogDist, 1e-4), sunDirTrue,
+        fogAerial = plagueAtmoComputeTransport(worldPos / max(fogDist, 1e-4), sunDirTrue,
                 plagueAtmoCameraRadius(), air, fogDist, fogTransmittance);
-        float fogNearT = plagueAtmoAerial(texCoord, max(fogDist - PLAGUE_FOG_SKY_LIGHT_REACH, 0.0), fogFar).a;
+        fogNearT = plagueAtmoAerial(texCoord, max(fogDist - PLAGUE_FOG_SKY_LIGHT_REACH, 0.0), fogFar).a;
         vec3 fogDir = worldPos / max(fogDist, 1e-4);
         // Same Nether gate as the sky branch: the table assumes an Overworld sun, so this would
         // fade toward daylight otherwise.
-        vec3 fogSky;
         if (u_WorldBounds.w == 2.0) {
             // Varied by noise on the wind clock so it drifts. Stands in until a real aerosol
             // profile.
@@ -213,6 +220,14 @@ void main() {
                                                  sunDirTrue.y, rainFactor,
                                                  clamp(u_FrameState.z, 0.0, 1.0));
         }
+#if PLAGUE_UNDERWATER
+        } else {
+            fogTransmittance = vec3(1.0);
+            fogAerial = vec4(0.0, 0.0, 0.0, 1.0);
+            fogNearT = 1.0;
+            fogSky = vec3(0.0);
+        }
+#endif
         PlagueFogDrive fogDrive = PLAGUE_FOG_DRIVE(lighting);
         PlagueFogTerms fogTerms = plagueFogTermsAerialPath(worldPos, worldPos, skyLight, u_CameraSkyLight.x,
                                                  renderDistance, fogAerial, fogNearT, fogSky,

@@ -67,10 +67,53 @@ vec3 plagueCloudRay(vec2 texCoord) {
     return normalize(worldH.xyz / worldH.w);
 }
 
+#if CLOUDS_VOLUMETRIC
+// Every thread in a group marches the same cloud type. The first thread picks the deck and works
+// out its light before the barrier; doing either after it reads memory nothing has written yet.
+shared PlagueCloudDeck cloudDeck;
+shared bool cloudEnabled;
+shared float cloudPhaseOffset;
+shared vec3 cloudDirectRadiance;
+#endif
+
 void main() {
 #if CLOUDS_VOLUMETRIC
     if (gl_LocalInvocationIndex == 0u && u_SkyState.z > 0.5) {
         plaguePrepareCloudWorkgroup();
+        int cloudIndex = int(gl_WorkGroupID.z);
+        cloudPhaseOffset = 0.0;
+        if (cloudIndex == 0) {
+            cloudDeck = convectiveDeck;
+            cloudEnabled = cumulusOn > 0.0 && stratiform < 1.0;
+        } else if (cloudIndex == 1) {
+            cloudDeck = sheetDeck;
+            cloudPhaseOffset = 0.3333;
+            cloudEnabled = lowSheet > 0.0;
+        } else if (cloudIndex == 2) {
+            cloudDeck = stratiformDeck;
+            cloudPhaseOffset = 0.6667;
+            cloudEnabled = rainOn > 0.0 && stratiform > 0.0;
+        } else if (cloudIndex == 3) {
+            cloudDeck = rollDeck;
+            cloudPhaseOffset = 0.1667;
+            cloudEnabled = lowRolls > 0.0;
+        } else if (cloudIndex == 4) {
+            cloudDeck = altocumulusDeck;
+            cloudPhaseOffset = 0.5;
+            cloudEnabled = upperMasks.z > 0.0;
+        } else if (cloudIndex == 5) {
+            cloudDeck = cirrocumulusDeck;
+            cloudPhaseOffset = 0.8333;
+            cloudEnabled = upperMasks.y > 0.0;
+        } else {
+            cloudDeck = cirrusDeck;
+            cloudPhaseOffset = 0.25;
+            cloudEnabled = upperMasks.x > 0.0;
+        }
+        if (cloudEnabled) {
+            cloudDirectRadiance = plagueCloudDirectRadiance(cloudDeck, u_CameraAbs, ambientDome,
+                                                           lighting, sunDirTrue);
+        }
     }
     // Edge invocations must also reach this barrier. Returning early on bounds can stall the group.
     barrier();
@@ -119,41 +162,11 @@ void main() {
     vec4 selectedLayer = vec4(0.0);
     float selectedFront = 0.0;
 
-    PlagueCloudDeck deck;
-    float phase = dither;
-    bool enabled;
-    if (cloudIndex == 0) {
-        deck = convectiveDeck;
-        enabled = cumulusOn > 0.0 && stratiform < 1.0;
-    } else if (cloudIndex == 1) {
-        deck = sheetDeck;
-        phase = fract(dither + 0.3333);
-        enabled = lowSheet > 0.0;
-    } else if (cloudIndex == 2) {
-        deck = stratiformDeck;
-        phase = fract(dither + 0.6667);
-        enabled = rainOn > 0.0 && stratiform > 0.0;
-    } else if (cloudIndex == 3) {
-        deck = rollDeck;
-        phase = fract(dither + 0.1667);
-        enabled = lowRolls > 0.0;
-    } else if (cloudIndex == 4) {
-        deck = altocumulusDeck;
-        phase = fract(dither + 0.5);
-        enabled = upperMasks.z > 0.0;
-    } else if (cloudIndex == 5) {
-        deck = cirrocumulusDeck;
-        phase = fract(dither + 0.8333);
-        enabled = upperMasks.y > 0.0;
-    } else {
-        deck = cirrusDeck;
-        phase = fract(dither + 0.25);
-        enabled = upperMasks.x > 0.0;
-    }
-    if (enabled) {
+    float phase = cloudIndex == 0 ? dither : fract(dither + cloudPhaseOffset);
+    if (cloudEnabled) {
         plagueCloudCandidateDeckIndex = cloudIndex;
         selectedLayer = plagueGetClouds(viewDir, u_CameraAbs, 0.0, phase,
-                deck, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
+                cloudDeck, cloudDirectRadiance, ambientDome, skyAlong, lighting, sunDirTrue, syncedTime,
                 renderDistance, selectedFront);
         if (cloudIndex == 0) selectedLayer *= 1.0 - stratiform;
     }

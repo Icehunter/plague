@@ -19,7 +19,7 @@ covers what the pack does, not the engine under it.
   per screen froxel, with the fog drive's morning, night, after-rain and snow mist as a shallow
   layer. The render-edge veil fades into the sky along the same ray. The night-sky gate follows the
   scattering dome. Shared palette estimates still supply surface ambient, water illumination,
-  cloud direct lighting, reflection-probe clouds, smoke and banner fog; their controls remain active.
+  cloud direct lighting, smoke and banner fog; their controls remain active.
 - Stars, with amount, size, roundness and softness controls.
 - Night nebula (intensity, zoom, amount).
 - Shooting stars (count, speed, frequency).

@@ -24,8 +24,7 @@
 // gate still checks each pixel on its own; using only the camera's sky exposure would jump the
 // whole frame the moment the camera crosses a cave mouth.
 
-// Fog options and the PLAGUE_FOG_DRIVE macro, shared by this dispatcher, the cloud fade and the
-// reflection probe's cloud imposter.
+// Fog options and the PLAGUE_FOG_DRIVE macro, shared by this dispatcher and the cloud fade.
 #moj_import <fornax_runtime:fog_options.glsl>
 #moj_import <fornax_runtime:light_and_ambient_colors.glsl>
 #moj_import <fornax_runtime:sky.glsl>

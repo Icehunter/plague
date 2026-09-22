@@ -2149,11 +2149,9 @@ name = "water_environment_seed"
 type = "fullscreen"
 shader = "shaders/post/water_environment.fsh"
 enabled_if = "SSR_WATER_MODE > 0"
-# builtin.noise: the cloud imposter's erosion lattice. The probe now carries the cloud deck, so
-# a reflected sky is no longer clear under an overcast one. See the imposter note in the shader.
 # atmoSkyView: the probe paints the dome the resolve paints, or water reflects a different sky
-# than the one above it.
-inputs = ["builtin.noise", "atmoSkyView"]
+# than the one above it. Sky only, no cloud: the shader says why.
+inputs = ["atmoSkyView"]
 outputs = ["waterEnvironmentSeed"]
 
 [[pass]]

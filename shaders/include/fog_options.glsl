@@ -1,7 +1,6 @@
-// Every fog option, declared once: fog.glsl (dispatcher), clouds.glsl (deck air fade) and
-// water_environment.fsh (reflection probe's cloud imposter) all import this rather than each
-// carrying its own copy, since the option scanner requires every declaration of a name to be
-// byte-identical across files.
+// Every fog option, declared once: fog.glsl (dispatcher) and clouds.glsl (deck air fade) both
+// import this rather than each carrying its own copy, since the option scanner requires every
+// declaration of a name to be byte-identical across files.
 //
 // DefineRewriter swaps every runtime `#define` below for a comment at load time; the real values
 // arrive through the u_PackOptions block, spliced into the pass file, never an include. A pass

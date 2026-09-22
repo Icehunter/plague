@@ -43,9 +43,12 @@ vec3 worldPosAt(vec2 uv, float depth) {
     return world.xyz / world.w;
 }
 
+// For the far sky probe below, which aims at a point well past the engine's far plane on purpose.
+// That plane follows render distance and is never endless, so a depth test here would throw the
+// point out every time. Only points behind the camera are dropped; the caller reads xy alone.
 vec3 projectToScreen(vec3 pos) {
     vec4 clip = u_ProjectionMatrix * u_ModelViewMatrix * vec4(pos, 1.0);
-    if (clip.w <= 0.0 || clip.z < 0.0 || clip.z > clip.w) return vec3(-1.0);
+    if (clip.w <= 0.0) return vec3(-1.0);
     return vec3((clip.xy / clip.w) * 0.5 + 0.5, clip.z / clip.w);
 }
 

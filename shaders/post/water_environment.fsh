@@ -10,25 +10,11 @@
 #define PLAGUE_ATMO_READS_SKYVIEW
 #moj_import <fornax_runtime:atmo_lut.glsl>
 
-uniform sampler2D u_Noise; // builtin.noise: the cloud field's erosion lattice
 uniform sampler2D u_AtmoSkyView; // atmoSkyView, the marched dome (atmo_lut.glsl)
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
     return texture(u_AtmoSkyView, uv);
 }
-
-// The noise hook, per the contract at the top of clouds.glsl: defined over this pass's own input
-// slot, after the sampler's declaration and before the import.
-#define PLAGUE_CLOUD_NOISE(uv) texture(u_Noise, uv)
-// This pass's cloud imposter (plagueCloudDensityCoarse, below) cannot bind a real sampler3D:
-// Vulkan's fullscreen-pipeline shader-reflection step refuses any non-2D/Cube sampler outright, so
-// only the compute-based direct-view march samples the real 3D volumes. This uses the same ALU
-// approximation as the region field (plagueSkyFbm), folding height into the 2D coordinate for some
-// vertical variance. A lower-fidelity stand-in for a reflection probe, never a bare constant; see
-// clouds.glsl's own noise-hook contract doc for why.
-#define PLAGUE_CLOUD_NOISE_3D(uvw) vec4(plagueSkyFbm((uvw).xz + (uvw).y, 4))
-#define PLAGUE_CLOUD_DETAIL_3D(uvw) vec4(plagueSkyFbm((uvw).xz * 3.0 + (uvw).y, 2))
-#moj_import <fornax_runtime:clouds.glsl>
 
 #moj_import <fornax_runtime:light_options.glsl>
 in vec2 texCoord;
@@ -71,9 +57,6 @@ void main() {
     PlagueLighting lighting = plagueOverworldLighting(
             max(u_SkyColor.rgb, vec3(0.0)), u_SkyCelestial.y, u_SkyState.y,
             rainFactor, u_ScreenBrightness);
-    PlagueSkyColors skyColours = plagueSkyColors(
-            max(u_SkyColor.rgb, vec3(0.0)), trueSunDirection,
-            lighting.sunVisibility, rainFactor, u_CameraAbs.y);
     float VdotS = dot(direction, trueSunDirection);
 
     // Graded so a water reflection agrees with the dome gbuffer_resolve.fsh paints; identity
@@ -96,51 +79,10 @@ void main() {
                                   rainFactor, clamp(u_FrameState.z, 0.0, 1.0));
     radiance *= atmColorMult;
 
-#if CLOUDS_VOLUMETRIC
-    // A screen-space trace can never return the reflected sky (no depth to hit), so every
-    // reflected-sky pixel resolves from this probe — a probe with no clouds meant reflections
-    // showed clear sky under an overcast one. One coarse coverage sample at the mid-slab is enough
-    // structure: this is a 128x128 probe the mip chain prefilters and waves ripple apart anyway.
-    if (direction.y > 0.02) {
-        float syncedTime = u_SkyState.w * 0.05;
-        PlagueCloudDeck envDeck = plagueCloudActiveDeck(
-                rainFactor,
-                clamp(u_FrameState.z, 0.0, 1.0),
-                clamp(u_FrameState.w, 0.0, 1.0),
-                int(u_CameraSkyLight.y + 0.5) == 2 ? 1.0 : 0.0,
-                u_SkyCelestial.y,
-                syncedTime);
-        float midSlab = envDeck.base + 0.5 * envDeck.depth;
-        float dist = (midSlab - u_CameraAbs.y) / direction.y;
-        if (dist > 0.0) {
-            vec3 cloudPos = u_CameraAbs.xyz + direction * dist;
-            vec2 drift = plagueCloudDrift(envDeck, syncedTime);
-            float density = plagueCloudDensityCoarse(cloudPos, envDeck, drift);
-
-            // Optical depth through the slanted slab, capped where the slant stops meaning
-            // anything; reuses the deck's own tau so a storm deck reads darker and more opaque here
-            // with no extra plumbing.
-            float slant = clamp(1.0 / max(direction.y, 0.25), 1.0, 4.0);
-            float alpha = 1.0 - exp(-envDeck.tau * density * slant * 0.5);
-
-            // Flat two-term radiance (mid-dome ambient plus a modest sunward lift): an imposter for
-            // a prefiltered probe, not a lit cloud — the march owns that.
-            vec3 cloudCol = plagueSkyAnchorMiddle(skyColours, VdotS) * atmColorMult
-                    * (1.15 + 0.35 * max(VdotS, 0.0) * lighting.sunVisibility);
-
-            // Same air the direct-view clouds melt into, built by the same PLAGUE_FOG_DRIVE
-            // expansion, so a horizon cloud fades out of the reflection exactly where it fades out
-            // of the sky.
-            PlagueFogDrive fogDrive = PLAGUE_FOG_DRIVE(lighting);
-            float rainH = fogDrive.H * (1.0 + fogDrive.rainDepth * fogDrive.rain);
-            float pathDepth = dist * plagueFogPathWeight(u_CameraAbs.y, cloudPos.y, rainH);
-            float airOp = clamp(plagueFogAirOpacity(pathDepth, fogDrive,
-                                                    max(u_RenderFog.y, 32.0)), 0.0, 1.0);
-
-            radiance = mix(radiance, cloudCol, alpha * (1.0 - airOp));
-        }
-    }
-#endif
+    // Sky only, no cloud. This probe holds the sky by two numbers: how far a direction sits from
+    // the sun, and how high it sits. Every direction sharing those two reads the same pixel, so a
+    // cloud stored here comes back as a ring of copies around the sun, in a shape the real march
+    // never drew, drawn over the reflected cloud the trace already found.
 
     fragColor = vec4(max(radiance, vec3(0.0)), 1.0);
 }

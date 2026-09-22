@@ -105,11 +105,15 @@ const float PLAGUE_CLOUD_SHADOW_MAX_SLANT = 3.0;
 // can bind a real sampler3D, since Vulkan's fullscreen-pipeline shader-reflection step refuses any
 // non-2D/Cube sampler outright, so the direct-view march (shaders/compute/clouds_march_volume.comp)
 // is a compute pass and defines these as real texture() calls. gbuffer_resolve.fsh's cloud-shadow
-// query and water_environment.fsh's reflection imposter are both fullscreen passes: for those two
-// the macro is instead an ALU approximation (plagueSkyFbm, the same primitive the field's warp
-// already uses), the same cheap-field-for-a-cheap-consumer pattern plagueCloudDensityCoarseIn uses
-// for the sun march. Never a bare constant, which would flatten shadow/reflection density to a
-// uniform wash with no spatial structure at all.
+// query is a fullscreen pass, so there the macro is instead an ALU approximation (plagueSkyFbm, the
+// same primitive the field's warp already uses), the same cheap-field-for-a-cheap-consumer pattern
+// plagueCloudDensityCoarseIn uses for the sun march. Never a bare constant, which would flatten
+// shadow density to a uniform wash with no spatial structure at all.
+//
+// Water reflections take no cloud from either source. The probe they read holds the sky by two
+// numbers only, so a cloud put there comes back as a ring of copies around the sun, drawn over the
+// reflected cloud the screen trace already found. water_environment.fsh says so where one would
+// have gone.
 #if CLOUDS_VOLUMETRIC
 #ifndef PLAGUE_CLOUD_NOISE_3D
 #error clouds.glsl needs PLAGUE_CLOUD_NOISE_3D(uvw) defined before the import. See the noise-hook contract at the top of this file.
@@ -462,6 +466,77 @@ vec3 plagueCloudAirTransmittance(float eyeY, float rayUp, float dist) {
 // The march
 // ------------------------------------------------------------------------------------------------
 
+// The light falling on a deck depends only on the frame and the deck, never on the ray, so the
+// visible march works it out once per group. The arm below serves callers with no air texture.
+vec3 plagueCloudDirectRadiance(PlagueCloudDeck deck, vec3 cameraPosAbs, vec3 ambientDome,
+                               PlagueLighting lighting, vec3 sunDirTrue) {
+    float lightSign = lighting.sunVisibility2 > 0.0 ? 1.0 : -1.0;
+    vec3 lightDir = sunDirTrue * lightSign;
+    // Night uses plagueMoonColor rather than the authored `lighting.light` table: the two are
+    // calibrated against each other by day (PLAGUE_SUN_LUMINANCE solved for it) but diverge at
+    // night, where the authored table reads clouds darker than the sky behind them. Day and dusk
+    // keep the authored table unchanged. The flip sits at the same sunVisibility2==0 boundary as
+    // above, so it doesn't introduce a second discontinuity.
+#ifdef PLAGUE_ATMO_READS_TRANSMITTANCE
+    // How much sunlight reaches a cloud depends on the air above the CLOUD, not the air above the
+    // player, so the deck's own column is what gets measured, not lighting.light.
+    //
+    // Do not take the ratio of the two instead. A ratio against the camera's column divides by
+    // the eye's own light loss, which drops to zero at the horizon: cirrus at its usual height
+    // reads 2.0 times too strong at 8 degrees of sun height and 359 times too strong at 0
+    // degrees, and below the horizon it does not even move in one direction. No fixed limit
+    // fixes that, so the ratio is dropped; tools/derive_cloud_sun_altitude.py records the
+    // numbers.
+    //
+    // Do not use plagueAtmoSunRadiance here either: it carries PLAGUE_ATMO_SKY_GAIN, which is only
+    // there to set how bright the sky looks, and it makes direct sun 22 times too strong at noon.
+    //
+    // The calibration comes from the palette itself: PLAGUE_LIGHT_NOON_DEFAULT divided by the
+    // eye's column with the sun overhead, per colour channel. This way a deck at the camera's
+    // height reproduces the authored noon colour and the day look stays put; every difference
+    // below noon then comes from the atmosphere read at the deck. The limit comes from the model,
+    // not a clamp: across all seven decks and the whole u_CloudAltitude range, the deck light
+    // stays within 3.4 times the palette. tools/derive_cloud_sun_altitude.py produces this vector
+    // and checks that limit again.
+    const vec3 PLAGUE_CLOUD_SUN_CALIBRATION = vec3(1.5893, 1.4016, 1.3111);
+    float deckRadius = PLAGUE_PLANET_RADIUS
+            + plagueAtmoAltitude(deck.base + deck.depth * 0.5, plagueAtmoSeaLevel());
+    vec3 deckLight = PLAGUE_CLOUD_SUN_CALIBRATION
+            * plagueAtmoTransmittanceToLight(deckRadius, sunDirTrue.y);
+
+    // The switch to the authored table uses sunVisibility2, the same value the palette uses for
+    // its own night arm, so the two always agree on when night starts. Below the horizon the deck
+    // column is zero and the palette carries the look: the rain colour, the hand-picked table and
+    // the night colours all reach a cloud through this mix and no other path.
+    //
+    // Sunset warmth is added on the palette side only. The table does not warm on its own, so
+    // this corrects it (surface_lighting and water_composite use the same fix). The deck column
+    // already reddens by itself; warming it again would look like a filter placed over the sky.
+    vec3 sunLight = mix(plagueWarmLowSun(lighting.light, sunDirTrue.y), deckLight,
+                        lighting.sunVisibility2);
+    vec3 directRadiance = lightSign > 0.0
+            ? sunLight
+            : plagueMoonColor(plagueAirEyePos(cameraPosAbs.y), lightDir);
+    if (u_WorldBounds.w == 3.0) {
+        // Nothing shines on a cloud in the End. It is lit by the sky it hangs in, so it takes that
+        // colour and never picks up a bright side, which is what stops it reading as an Overworld
+        // cloud that wandered in.
+        directRadiance = ambientDome;
+    }
+#else
+    // There is no deck column in this arm: cloud_shadow_mask.fsh and water_environment.fsh
+    // compile it too, and neither binds atmoTransmittance. Moving the calibrated light above this
+    // #ifdef would hand both an unbound sampler, breaking the link in one and turning clouds
+    // black in the other. A shadow mask and a reflection stand-in should use the camera's light
+    // anyway.
+    vec3 directRadiance = lightSign > 0.0
+            ? plagueWarmLowSun(lighting.light, sunDirTrue.y)
+            : plagueMoonColor(plagueAirEyePos(cameraPosAbs.y), lightDir);
+#endif
+
+    return directRadiance;
+}
+
 /**
  * The low deck along one view ray, as PREMULTIPLIED vec4(rgb * a, a) in HDR linear.
  *
@@ -486,8 +561,8 @@ vec3 plagueCloudAirTransmittance(float eyeY, float rayUp, float dist) {
  * clouds_march_volume.comp supplies both sky colours from atmo_lut.glsl.
  */
 vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, float dither,
-                     PlagueCloudDeck deck, vec3 ambientDome, vec3 skyAlong, PlagueLighting lighting,
-                     vec3 sunDirTrue, float syncedTime, float renderDistance,
+                     PlagueCloudDeck deck, vec3 directRadiance, vec3 ambientDome, vec3 skyAlong,
+                     PlagueLighting lighting, vec3 sunDirTrue, float syncedTime, float renderDistance,
                      out float cloudFrontDistance) {
     cloudFrontDistance = 0.0;
     // --- Geometry -------------------------------------------------------------------------------
@@ -665,68 +740,6 @@ vec4 plagueGetClouds(vec3 viewDir, vec3 cameraPosAbs, float terrainDistance, flo
     float lightSign = lighting.sunVisibility2 > 0.0 ? 1.0 : -1.0;
     vec3 lightDir = sunDirTrue * lightSign;
     float cosLight = clamp(dot(viewDir, lightDir), -1.0, 1.0);
-
-    // Night uses plagueMoonColor rather than the authored `lighting.light` table: the two are
-    // calibrated against each other by day (PLAGUE_SUN_LUMINANCE solved for it) but diverge at
-    // night, where the authored table reads clouds darker than the sky behind them. Day and dusk
-    // keep the authored table unchanged. The flip sits at the same sunVisibility2==0 boundary as
-    // above, so it doesn't introduce a second discontinuity.
-#ifdef PLAGUE_ATMO_READS_TRANSMITTANCE
-    // How much sunlight reaches a cloud depends on the air above the CLOUD, not the air above the
-    // player, so the deck's own column is what gets measured, not lighting.light.
-    //
-    // Do not take the ratio of the two instead. A ratio against the camera's column divides by
-    // the eye's own light loss, which drops to zero at the horizon: cirrus at its usual height
-    // reads 2.0 times too strong at 8 degrees of sun height and 359 times too strong at 0
-    // degrees, and below the horizon it does not even move in one direction. No fixed limit
-    // fixes that, so the ratio is dropped; tools/derive_cloud_sun_altitude.py records the
-    // numbers.
-    //
-    // Do not use plagueAtmoSunRadiance here either: it carries PLAGUE_ATMO_SKY_GAIN, which is only
-    // there to set how bright the sky looks, and it makes direct sun 22 times too strong at noon.
-    //
-    // The calibration comes from the palette itself: PLAGUE_LIGHT_NOON_DEFAULT divided by the
-    // eye's column with the sun overhead, per colour channel. This way a deck at the camera's
-    // height reproduces the authored noon colour and the day look stays put; every difference
-    // below noon then comes from the atmosphere read at the deck. The limit comes from the model,
-    // not a clamp: across all seven decks and the whole u_CloudAltitude range, the deck light
-    // stays within 3.4 times the palette. tools/derive_cloud_sun_altitude.py produces this vector
-    // and checks that limit again.
-    const vec3 PLAGUE_CLOUD_SUN_CALIBRATION = vec3(1.5893, 1.4016, 1.3111);
-    float deckRadius = PLAGUE_PLANET_RADIUS
-            + plagueAtmoAltitude(deck.base + deck.depth * 0.5, plagueAtmoSeaLevel());
-    vec3 deckLight = PLAGUE_CLOUD_SUN_CALIBRATION
-            * plagueAtmoTransmittanceToLight(deckRadius, sunDirTrue.y);
-
-    // The switch to the authored table uses sunVisibility2, the same value the palette uses for
-    // its own night arm, so the two always agree on when night starts. Below the horizon the deck
-    // column is zero and the palette carries the look: the rain colour, the hand-picked table and
-    // the night colours all reach a cloud through this mix and no other path.
-    //
-    // Sunset warmth is added on the palette side only. The table does not warm on its own, so
-    // this corrects it (surface_lighting and water_composite use the same fix). The deck column
-    // already reddens by itself; warming it again would look like a filter placed over the sky.
-    vec3 sunLight = mix(plagueWarmLowSun(lighting.light, sunDirTrue.y), deckLight,
-                        lighting.sunVisibility2);
-    vec3 directRadiance = lightSign > 0.0
-            ? sunLight
-            : plagueMoonColor(plagueAirEyePos(cameraPosAbs.y), lightDir);
-    if (u_WorldBounds.w == 3.0) {
-        // Nothing shines on a cloud in the End. It is lit by the sky it hangs in, so it takes that
-        // colour and never picks up a bright side, which is what stops it reading as an Overworld
-        // cloud that wandered in.
-        directRadiance = ambientDome;
-    }
-#else
-    // There is no deck column in this arm: cloud_shadow_mask.fsh and water_environment.fsh
-    // compile it too, and neither binds atmoTransmittance. Moving the calibrated light above this
-    // #ifdef would hand both an unbound sampler, breaking the link in one and turning clouds
-    // black in the other. A shadow mask and a reflection stand-in should use the camera's light
-    // anyway.
-    vec3 directRadiance = lightSign > 0.0
-            ? plagueWarmLowSun(lighting.light, sunDirTrue.y)
-            : plagueMoonColor(plagueAirEyePos(cameraPosAbs.y), lightDir);
-#endif
 
     // Hoisted since these depend only on the ray/light angle, constant along the ray. What's
     // left inside the march is just the transmittance power. Octave 0 carries the single-
