@@ -21,6 +21,12 @@ notes; what is here is what a reader needs to know the limit exists.
 - **Camera rotation can shift opaque fog when anti-aliasing is off.** `shaders/post/fog_composite.fsh` reads current depth and adds fog in one step; whether this holds up during motion is not yet checked in game.
 - **The climate signal snaps at biome borders**, so fog character can change sharply across a line.
 - **Thunder is not its own fog driver.** Heavy weather reads as ordinary rain.
+- **The sun's glow bleeds into fog through terrain farther than the shadow distance.** The fog
+  march's sun gate (`shaders/include/atmo_shadow.glsl`) can only see casters inside the shadow
+  map; a heightfield sun-horizon fed from the engine's coarse weather clipmap is the planned fix.
+- **Ray traced light flashes under the Off and TAAU anti-aliasing modes.** The pack's temporal
+  pass only runs under TAA (engine `TemporalPassRunner.accumulationLive`), so nothing integrates
+  the trace noise in the other modes.
 - **Metal allows only 16 live samplers per fragment shader.** The material resolve and fog composite each use 13 with ray-traced shadows on (`tools/check_surface_metal_compat.py` checks the normal and debug builds); adding more inputs needs a fresh count on real hardware.
 - **A lit patch of fog between two sheltered points can lose its direct light** (`shaders/include/fog_aerial.glsl`). Fixing the sky-light guard at cave mouths needs a way to measure enclosed spaces that still keeps caves dark.
 - **Sharp shadow edges in fog stay blurry from some angles** (`shaders/include/atmo_lut.glsl`). A test with a hard-edged shape still shows 17.42% error in total light, even though the same-ray extension is stable; shadow sampling needs an accuracy check across angles, not just motion.
@@ -161,3 +167,12 @@ notes; what is here is what a reader needs to know the limit exists.
   supported; animated sprites without a full-copy page remain unsupported. Cost scales with
   receivers and sources
   (`shaders/include/voxel_local_light.glsl`, `shaders/post/voxel_local_direct.fsh`).
+
+## Focus blur
+
+- **Fire and smoke particles, glass and the held item stay sharp over the blur.** The engine
+  draws them after the render graph (`graph.toml`, `depth_copyback`), so no post pass ever sees
+  them; the fix is claiming those draws into the graph, engine-side.
+- **True Camera Stills can jitter with ray traced lighting on.** Experimental and off by
+  default (`shaders/post/dof_accumulate.fsh`, engine `ApertureJitter`); the diagnostic plan is
+  in the working notes.

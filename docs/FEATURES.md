@@ -211,6 +211,22 @@ covers what the pack does, not the engine under it.
   desaturation; **ACES**; and **Reinhard**.
 - Exposure applied before the curve; saturation and contrast applied after, on display values.
 
+## Focus blur
+
+- A camera-lens depth of field: focal length and f-stop set the blur through the thin-lens
+  law, autofocus follows the middle of the screen with a smoothed pull, and bright lights
+  grow into round discs through a half-resolution golden-angle gather over a four-level
+  pyramid. Bloom is folded into the picture before the blur, so glow takes the disc shape
+  too. A close object's blur spreads over what is behind it; light from behind a surface
+  never bleeds forward through it.
+- A by-distance mode with no focus tracking: everything past a set number of chunks goes
+  gently soft. This mode ships ON, tuned to a whisper of far haze.
+- A Photo quality choice doubles the gather samples, and a Highlight Boost slider keeps
+  small bright spots shining inside the blur.
+- **True Camera Stills, experimental and off by default**: stand perfectly still and the
+  engine looks through a different part of the lens each frame; the picture converges to a
+  real exposure with nothing faked. Known to shimmer with ray traced lighting on.
+
 ## World outline
 
 - Lines along the world's geometric edges, from a centred second difference of the depth buffer. It
