@@ -19,6 +19,8 @@
 // For the heat-haze blur below: same shared options heat_shimmer.fsh and heat_blur_h/v.fsh read.
 #moj_import <fornax_runtime:heat_options.glsl>
 #moj_import <fornax_runtime:end_sky.glsl>
+// Circle-of-confusion math and the DOF sliders, shared with the dof_* passes.
+#moj_import <fornax_runtime:dof.glsl>
 
 uniform sampler2D u_SceneHdrRefracted; // sceneHdrRefracted: linear, unbounded, finished composite (water, clouds, veil)
 uniform sampler2D u_Depth; // builtin.depth: reversed-Z, so 0.0 is the far plane
@@ -30,6 +32,9 @@ uniform sampler2D u_Noise; // builtin.noise, the camera water transition mask
 uniform sampler2D u_WaterVolumeShaftsResolved; // waterVolumeShaftsResolved: full-resolution linear shaft radiance
 uniform sampler2D u_GAo; // builtin.gAo: only .a is read here, the surface class (terrain.fsh:686)
 uniform sampler2D u_HeatBlurred; // heatBlurred: half-resolution scene Gaussian, Nether heat haze
+uniform sampler2D u_DofFilled; // dofFilled: half-res bokeh, rgb colour, a = gather blend; zero-cleared when DOF is gated off
+uniform sampler2D u_DofFocus; // dofFocus: 1x1 smoothed focus distance in blocks, 0.0 if unrun
+uniform sampler2D u_SceneHdrGlare; // sceneHdrGlare: scene with glare baked in (bloom_apply); zero-cleared when DOF is gated off
 
 // Only u_Param3 is read here; the trailing sun/celestial fields other passes append are left
 // undeclared, since the engine binds the full u_PassParams buffer regardless of block coverage.
@@ -48,6 +53,9 @@ out vec4 fragColor;
 
 // Compile option: bloom owns eight passes and eight render targets, so off must cost nothing.
 #define BLOOM_ENABLED //[] compile "Bloom"
+
+// Compile option: focus blur owns six passes and six render targets, so off must cost nothing.
+#define DOF_ENABLED //[] compile "Focus Blur"
 
 // Declared here byte-identical to gbuffer_resolve.fsh (loader requirement); without it the #ifdef
 // below never fires and this pass discards the sky the resolve just painted.
@@ -357,7 +365,14 @@ void main() {
     }
 
     vec2 frameUv = plagueUnderwaterViewUv(plagueWaterCameraUv(texCoord));
+#ifdef DOF_ENABLED
+    // The DOF chain blurred the GLARE image (bloom_apply runs before it), so the sharp base
+    // blended against the bokeh below must be the same image, or in-focus areas would lose
+    // their glow. The bloom arm further down is skipped for the same reason.
+    vec3 hdr = texture(u_SceneHdrGlare, frameUv).rgb;
+#else
     vec3 hdr = texture(u_SceneHdrRefracted, frameUv).rgb;
+#endif
 
     // Sky handling must match the resolve's exactly. With SKY_PROCEDURAL the resolve paints the dome
     // into sceneHdr, so tonemap it normally; without it sceneHdr holds LAST FRAME's discarded value,
@@ -423,7 +438,43 @@ void main() {
         hdr = vec3(0.0);
     }
 
-#ifdef BLOOM_ENABLED
+    // 1.0 everywhere DOF leaves a pixel sharp; the world outline far below multiplies by it,
+    // so edge lines never draw over blurred content. Declared outside the #ifdef because the
+    // outline compiles in every arm.
+    float dofOutlineKeep = 1.0;
+#ifdef DOF_ENABLED
+    // The glow is already in both the base and the blur (bloom_apply upstream), so the blur
+    // shapes the glare into discs instead of glare being laid sharp over them. Before the
+    // shafts, so beams stay crisp the same way they do through the underwater blur above.
+    float dofFocusDist = texture(u_DofFocus, vec2(0.5)).r;
+    // Defensive: dof_focus runs earlier in this same frame and always writes >= 0.5.
+    if (dofFocusDist > 0.0) {
+        // Nearest surface, water included, matching dof_focus/dof_tile/dof_downsample: the
+        // whole chain must rank a water pixel the same way or the composite and the blur
+        // disagree along every water edge.
+        vec2 dofDepths = plagueTonemapDepthPair(frameUv);
+        float dofDepth = max(dofDepths.x, dofDepths.y);
+        // Clamp the sky sentinel to the autofocus sky distance so sky and horizon share one CoC.
+        float dofDist = min(plagueTonemapDistance(frameUv, dofDepth), 512.0);
+        float dofCoc = plagueDofCoc(dofDist, dofFocusDist,
+                float(textureSize(u_DofFilled, 0).x) / PLAGUE_DOF_SENSOR_MM);
+        vec4 dofSample = texture(u_DofFilled, frameUv);
+        // Far blend from full-res depth so a sharp silhouette against a blurred background
+        // keeps a crisp edge; the gather alpha carries only near-field coverage, which must
+        // be allowed to blur over a sharp background, so the two combine by max.
+        float dofFarBlend = clamp(abs(dofCoc) - 0.5, 0.0, 1.0);
+        float dofBlend = max(dofFarBlend, dofSample.a);
+        if (any(isnan(dofSample.rgb))) {
+            dofBlend = 0.0;
+        }
+        hdr = mix(hdr, max(dofSample.rgb, vec3(0.0)), dofBlend);
+        dofOutlineKeep = 1.0 - dofBlend;
+    }
+#endif
+
+// With DOF on, this same composite already ran in bloom_apply.fsh so the blur could shape the
+// glow; running it again here would double the glare.
+#if defined(BLOOM_ENABLED) && !defined(DOF_ENABLED)
     // Laid on before exposure and the curve, in scene-referred linear light: glare is light that
     // scattered on its way through the lens, so it belongs to the scene the curve is measuring.
     //
@@ -513,9 +564,11 @@ void main() {
     // upstream.
     // Keep the owner's separate End outline strength; the same light-aware composite applies.
     float outlineScale = u_WorldBounds.w == 3.0 ? max(u_EndOutline, 0.0) : 1.0;
+    // dofOutlineKeep fades the lines out wherever DOF blurred the pixel: a sharp edge drawn
+    // over a defocused surface reads as a wireframe floating on the blur.
     display = plagueApplyOutline(display,
             plagueOutlineAmount(u_Depth, u_GAo, u_WaterDepth, frameUv, u_PassTexelSize)
-                    * outlineScale);
+                    * outlineScale * dofOutlineKeep);
 #endif
 
     // Display-space dither on the finished value, the last arithmetic before quantization, which is

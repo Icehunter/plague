@@ -240,6 +240,7 @@ sliders = [
     "u_AtmPaletteRainNightR", "u_AtmPaletteRainNightG", "u_AtmPaletteRainNightB",
     "u_AuroraRedOnset", "u_AuroraRedWidth", "u_AuroraVioletExtent", "u_NebulaDrift", "u_NebulaIonisedOnset", "u_NebulaIonisedWidth", "u_NebulaStarGlow", "u_ShootingStarBrightness", "u_ShootingStarSize", "u_ShootingStarThickness", "u_ShootingStarTrail", "u_StarBrightness", "u_StarColorSpread", "u_StarDensity", "u_StarMagnitudeFalloff",
     "u_BloomFalloff",
+    "u_DofFocalLength", "u_DofFStop", "u_DofMaxBlur", "u_DofFocusSpeed",
 ]
 
 
@@ -744,6 +745,16 @@ elements = [
     "u_BloomFalloff|requires:BLOOM_ENABLED",
 ]
 
+[screens.dof]
+title = "Focus Blur"
+elements = [
+    "DOF_ENABLED",
+    "u_DofFocalLength|requires:DOF_ENABLED",
+    "u_DofFStop|requires:DOF_ENABLED",
+    "u_DofMaxBlur|requires:DOF_ENABLED",
+    "u_DofFocusSpeed|requires:DOF_ENABLED",
+]
+
 [screens.tonemap]
 title = "Tonemapping"
 elements = [
@@ -812,7 +823,7 @@ elements = [
 ]
 
 [yacl]
-pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "ray_tracing", "occlusion", "reflections", "heat_shimmer", "end", "water", "materials", "snow", "parallax", "bloom", "tonemap", "outline", "debug"]
+pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "ray_tracing", "occlusion", "reflections", "heat_shimmer", "end", "water", "materials", "snow", "parallax", "bloom", "dof", "tonemap", "outline", "debug"]
 
 # Prose shown in each option's tooltip, above the mechanical Default/Range/Applies lines.
 [descriptions]
@@ -1757,6 +1768,37 @@ How far the glow around bright things spreads.
 
 Low gives a tight, hard shine hugging the light itself; high spreads an even, hazy glow across \
 everything bright. The default is a natural, restrained spread."""
+
+DOF_ENABLED = """
+Blurs what is much closer or much farther away than the thing in the middle of the screen, the \
+way a camera lens does. Bright points in the blur grow into soft round discs.
+
+The picture follows where you look: aim at something and it comes into focus while the rest \
+melts away. Turning it off saves some frame rate and memory."""
+
+u_DofFocalLength = """
+How zoomed-in the pretend camera lens is, in millimetres, like a real lens.
+
+Short lenses (15 to 35) keep most of the world readable; long lenses (85 and up) melt the \
+background the way a portrait photo does."""
+
+u_DofFStop = """
+How wide the pretend lens opens, like the f-number on a real camera.
+
+Lower numbers open wider and blur more; higher numbers keep more of the scene sharp. \
+At f/16 the blur nearly disappears."""
+
+u_DofMaxBlur = """
+The largest a blur disc may grow.
+
+Big discs look striking on lanterns and torches at night, but very large ones can look grainy \
+and can swallow small details behind them."""
+
+u_DofFocusSpeed = """
+How fast the picture settles on a new subject when you look somewhere else.
+
+Lower is slower and calmer, like an eye taking a moment to adjust; higher snaps to the new \
+subject almost at once."""
 
 
 

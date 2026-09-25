@@ -2984,6 +2984,175 @@ enabled_if = "BLOOM_ENABLED"
 inputs = ["bloomDown4", "bloomDown8", "bloomDown16", "bloomDown32", "bloomDown64", "bloomDown128", "bloomDown256"]
 outputs = ["bloomFinal"]
 
+# Glare baked into the scene at full resolution ahead of the depth-of-field chain, so the blur
+# shapes the finished glow into discs instead of glare lying sharp over them. Ungated for the same
+# reason as dofFilled: the ungated tonemap reads it under its DOF_ENABLED #ifdef. Written by
+# exactly one of the two arms below, split on BLOOM_ENABLED; when DOF is off, nothing writes or
+# reads it and tonemap applies bloom itself.
+[targets.sceneHdrGlare]
+format = "rgba16f"
+scale = 1.0
+
+[[pass]]
+name = "bloom_apply"
+type = "fullscreen"
+shader = "shaders/post/bloom_apply.fsh"
+enabled_if = "DOF_ENABLED && BLOOM_ENABLED"
+inputs = ["sceneHdrRefracted", "bloomFinal"]
+outputs = ["sceneHdrGlare"]
+
+# Bloom off: the DOF chain still needs the image in sceneHdrGlare, so pass it through unchanged.
+[[pass]]
+name = "bloom_apply_passthrough"
+type = "copy"
+enabled_if = "DOF_ENABLED && !BLOOM_ENABLED"
+inputs = ["sceneHdrRefracted"]
+outputs = ["sceneHdrGlare"]
+
+# --- Depth of field --------------------------------------------------------------------------------
+# Half-resolution bokeh gather (Jimenez 2014 SIGGRAPH course design): a 1x1 autofocus accumulator,
+# a 1/16-scale tile map of the largest blur disc, the half-res gather over a golden-angle spiral,
+# and a median postfilter. The final blend into the frame lives in tonemap.fsh, the same shape as
+# the underwater and heat blurs. The passes are gated as one group. Only dofFilled and dofFocus
+# stay ungated: the ungated tonemap pass reads them (a gated target read by an ungated pass is
+# refused by the graph validator), and off leaves them zero-cleared behind tonemap's DOF_ENABLED
+# #ifdef. The four scratch targets are read by gated passes only, so they gate with the group and
+# off frees their memory.
+
+# 1x1 smoothed focus distance in blocks; history for the frame-to-frame blend, like exposure.
+[targets.dofFocus]
+format = "rgba32f"
+scale = 0.0
+history = true
+
+# r = max abs CoC in the tile. rgba16f rather than a one-channel format: every declared target
+# format in this graph is one the engine is known to allocate. Linear filtering is safe on these
+# maxima: after the 9x9 dilate every neighbouring texel is already at least the local tile's own
+# max, so any bilinear mix still is, and the gather radius never undershoots.
+[targets.dofTile]
+format = "rgba16f"
+scale = 0.0625
+filter = "linear"
+enabled_if = "DOF_ENABLED"
+
+[targets.dofTileDilated]
+format = "rgba16f"
+scale = 0.0625
+filter = "linear"
+enabled_if = "DOF_ENABLED"
+
+# filter = "linear" on the half-res trio for the same reason as the bloom pyramid: they exist to be
+# read back magnified or at offset positions, and NEAREST would show blocks.
+[targets.dofHalf]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+enabled_if = "DOF_ENABLED"
+
+[targets.dofGather]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+enabled_if = "DOF_ENABLED"
+
+# Two coarser copies of dofHalf so the gather's taps integrate a footprint that keeps up
+# with their spacing at large radii; without them a big disc resolves as speckle.
+[targets.dofQuarter]
+format = "rgba16f"
+scale = 0.25
+filter = "linear"
+enabled_if = "DOF_ENABLED"
+
+[targets.dofEighth]
+format = "rgba16f"
+scale = 0.125
+filter = "linear"
+enabled_if = "DOF_ENABLED"
+
+[targets.dofSixteenth]
+format = "rgba16f"
+scale = 0.0625
+filter = "linear"
+enabled_if = "DOF_ENABLED"
+
+[targets.dofFilled]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+
+[[pass]]
+name = "dof_focus"
+type = "fullscreen"
+shader = "shaders/post/dof_focus.fsh"
+enabled_if = "DOF_ENABLED"
+inputs = ["builtin.depth", "dofFocus.history", "builtin.waterDepth"]
+outputs = ["dofFocus"]
+
+[[pass]]
+name = "dof_tile"
+type = "fullscreen"
+shader = "shaders/post/dof_tile.fsh"
+enabled_if = "DOF_ENABLED"
+inputs = ["builtin.depth", "dofFocus", "builtin.waterDepth"]
+outputs = ["dofTile"]
+
+[[pass]]
+name = "dof_tile_dilate"
+type = "fullscreen"
+shader = "shaders/post/dof_tile_dilate.fsh"
+enabled_if = "DOF_ENABLED"
+inputs = ["dofTile"]
+outputs = ["dofTileDilated"]
+
+[[pass]]
+name = "dof_downsample"
+type = "fullscreen"
+shader = "shaders/post/dof_downsample.fsh"
+enabled_if = "DOF_ENABLED"
+inputs = ["sceneHdrGlare", "builtin.depth", "dofFocus", "builtin.waterDepth"]
+outputs = ["dofHalf"]
+
+[[pass]]
+name = "dof_downsample_4"
+type = "fullscreen"
+shader = "shaders/post/dof_downsample_level.fsh"
+enabled_if = "DOF_ENABLED"
+inputs = ["dofHalf"]
+outputs = ["dofQuarter"]
+
+[[pass]]
+name = "dof_downsample_8"
+type = "fullscreen"
+shader = "shaders/post/dof_downsample_level.fsh"
+enabled_if = "DOF_ENABLED"
+inputs = ["dofQuarter"]
+outputs = ["dofEighth"]
+
+[[pass]]
+name = "dof_downsample_16"
+type = "fullscreen"
+shader = "shaders/post/dof_downsample_level.fsh"
+enabled_if = "DOF_ENABLED"
+inputs = ["dofEighth"]
+outputs = ["dofSixteenth"]
+
+[[pass]]
+name = "dof_gather"
+type = "fullscreen"
+shader = "shaders/post/dof_gather.fsh"
+enabled_if = "DOF_ENABLED"
+# Pyramid levels appended, never inserted: the first three kept their ordinals.
+inputs = ["dofHalf", "dofTileDilated", "builtin.noise", "dofQuarter", "dofEighth", "dofSixteenth"]
+outputs = ["dofGather"]
+
+[[pass]]
+name = "dof_postfilter"
+type = "fullscreen"
+shader = "shaders/post/dof_postfilter.fsh"
+enabled_if = "DOF_ENABLED"
+inputs = ["dofGather"]
+outputs = ["dofFilled"]
+
 # Linear HDR -> displayable sRGB. Kept separate from the resolve so bloom, exposure metering and this
 # pass all read true scene values.
 [[pass]]
@@ -2994,7 +3163,7 @@ shader = "shaders/post/tonemap.fsh"
 # Inputs are positional — append only, never insert.
 inputs = ["sceneHdrRefracted", "builtin.depth", "bloomFinal", "builtin.waterDepth", "exposure",
           "underwaterBlurred", "builtin.noise", "waterVolumeShaftsResolved", "builtin.gAo",
-          "heatBlurred"]
+          "heatBlurred", "dofFilled", "dofFocus", "sceneHdrGlare"]
 outputs = ["builtin.output"]
 
 # NO SNOW ACCUMULATION / COMPUTE PASS, deliberately: a deferred blend can only paint colour, not
