@@ -20,7 +20,8 @@ uniform sampler2D Sampler2;
 
 out vec2 texCoord0;
 out vec4 vertexColor;
-out vec2 v_PlagueMotion;
+out vec3 v_MotionCurrentClip;
+out vec3 v_MotionPreviousClip;
 
 void main() {
     vec4 viewPos = ModelViewMat * vec4(Position, 1.0);
@@ -41,19 +42,14 @@ void main() {
     // strictly better than a cleared gMotion, which would make TAA fetch 90%-stale history at
     // taaBlendFactor 0.9 while the camera turns.
     //
-    // u_CameraDelta is added here (unlike entities.vsh/block_entities.vsh) because both model-view
+    // u_CameraDelta is added here because both model-view
     // matrices in u_Globals are rotation-only, so reprojecting a camera that TRAVELLED (not just
-    // turned) needs `P + u_CameraDelta.xyz`, matching what terrain.vsh builds from
-    //
-    // Fixes the sky-ghosting regression from Fornax a878f59. entities.vsh and block_entities.vsh
-    // still have the same particle-motion reprojection gap this file just closed for particles.
-    // u_PrevRegionOffset.
+    // turned) needs `P + u_CameraDelta.xyz`, matching terrain.vsh's u_PrevRegionOffset.
     vec4 previousClip = u_PrevProjectionMatrix * u_PrevModelViewMatrix
             * vec4(worldPos + u_CameraDelta.xyz, 1.0);
 
-    // Each frame's jitter cancels by subtracting it; skipping this makes the jitter itself read as
-    // motion, the wobble TAA exists to remove.
-    vec2 currentNdc  = (gl_Position.xy / gl_Position.w) - u_JitterOffset;
-    vec2 previousNdc = (previousClip.xy / previousClip.w) - u_PrevJitterOffset;
-    v_PlagueMotion = (currentNdc * 0.5 + 0.5) - (previousNdc * 0.5 + 0.5);
+    // Preserve homogeneous coordinates through interpolation: divided vertex motion picks the
+    // wrong history pixel on slanted faces. Removing jitter times w is linear in clip space.
+    v_MotionCurrentClip = vec3(gl_Position.xy - u_JitterOffset * gl_Position.w, gl_Position.w);
+    v_MotionPreviousClip = vec3(previousClip.xy - u_PrevJitterOffset * previousClip.w, previousClip.w);
 }

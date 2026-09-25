@@ -515,6 +515,7 @@ elements = [
 [screens.ray_tracing]
 title = "Ray Tracing (Experimental)"
 elements = [
+    "PLAGUE_LOCAL_SHADOWS",
     "PLAGUE_GI",
     "u_GiLightStrength|requires:PLAGUE_GI",
     "PLAGUE_GI_VIEW|requires:PLAGUE_GI",
@@ -834,12 +835,14 @@ effect that blends frames together for smoother motion. Off removes it. Neither 
 cloud pixels."""
 
 PLAGUE_VOXEL_REFLECTIONS = """
-Lets the game find water reflections from nearby world shapes, including things off screen.
+Fills missing reflections on opaque surfaces and water from nearby world shapes, including \
+things off screen. Fine reflections can remain unresolved, and scenes with many nearby lights \
+cost more to draw.
 
-Needs Water Surface set to Reflective and Reflections set to High or Epic. Light Reach \
-(Chunks) and how much of the world is loaded around you limit how much it can find, and small \
-shapes or lighting can look a little different from the real scene. Works above water, on both \
-still water and waves."""
+Needs Reflections set to High or Epic; water also needs Water Surface set to Reflective. Light \
+Reach (Chunks) and how much of the world is loaded around you limit how much it can find, and \
+small shapes or lighting can look a little different from the real scene. Works while your \
+view is above water, on opaque surfaces, still water and waves."""
 PLAGUE_VOXEL_PROFILE = """
 A test view for measuring how much World Reflections costs, without changing what you see.
 
@@ -852,19 +855,16 @@ These are rough differences, not exact costs during normal play.
 
 Needs World Reflections on, and reflective water with Reflections set to High or Epic."""
 PLAGUE_LOCAL_LIGHTING = """
-Experimental block-by-block lighting, separate from Minecraft's normal light.
+Experimental block lighting with source colour and geometry-aware shadows.
 
-Turns off Minecraft's normal block light on every surface, even ones it doesn't fully support \
-and where its block data is missing. Sunlight, skylight, the light from items you hold, and \
-glowing blocks still work as normal.
+Replaces Minecraft's block light everywhere, including places with missing source data or \
+unsupported lamps. Sunlight, skylight, the light from items you hold, and glowing blocks remain.
 
-Only blocks the pack has specifically set up as light sources work with this. A full, solid \
-block face can light nearby solid cube faces up to four blocks away. Shapes it doesn't support, \
-places with many light sources close together, and distant terrain can stay dark.
+Supported sources light surfaces within 12 blocks, with a smooth fade from 9 to 12 blocks. \
+This distance is measured from each source, not from the camera. Missing sources remain dark \
+until their data is available.
 
-It only remembers lighting in a small area around you, and checks shadows at a coarse, \
-half-block scale; both are known rough edges. This is direct light only: it does not bounce off \
-surfaces to light up other surfaces."""
+This is direct light only. Bounce Light adds illumination reflected from other surfaces."""
 PLAGUE_SOURCE_DIAGNOSTIC = """
 A test view for checking which blocks the pack can read as light sources. It is not coloured \
 light or a reflection preview. It reads terrain depth, including terrain hidden behind water.
@@ -903,20 +903,30 @@ Both sides use the same fixed brightness, without Auto Exposure, Bloom or Tonema
 applied.
 
 This view overrides other test views. Turn it Off to see normal lighting again."""
+PLAGUE_LOCAL_SHADOWS = """
+Light from glowing blocks, with shadows from real rays, sent toward a glowing block once per \
+cell of a coarse grid each frame, so grates, fences and leaves shadow at their true shape.
+
+Works with or without Local Coloured Light: where a ray gets no answer for a cell, this falls \
+back to Local Coloured Light if that is on, otherwise it waits for valid ray data. Minecraft's \
+merged block light stays replaced, so missing data cannot erase shadows or add held light twice.
+
+Needs a graphics card that can trace rays; without one this direct light is unavailable."""
 PLAGUE_GI = """
 Light that bounces: one ray per cell of a coarse grid, leaving each surface you can see and \
-carrying back what it finds.
+carrying back what it finds. Works with any lighting setup, and adds one bounce of it on top of \
+whatever is already lighting the room.
 
-A second ray asks whether the sun reaches where the first one landed, so a surface in shade sends \
-back nothing. Glowing blocks send light whatever the sun does, which is what lights a room.
-
-This takes over from the game's own block light rather than adding to it. That light is a flood \
-fill: it fills a room evenly whatever stands in the way. This light has to get past the walls."""
+Two more rays ask what reaches the spot the first one landed on: one toward the sun, one toward a \
+glowing block. A surface in shade sends back nothing; a wall beside a lamp sends its light on to \
+the floor. Averaged over about a second, so it settles after the view moves."""
 
 u_GiLightStrength = """
-How strong glowing blocks are in the bounce light.
+How strong glowing blocks are in the bounce light: the share of a lamp's light that a lit wall \
+sends on to the surfaces around it.
 
-One lights a room at 1. Raise it for a brighter, more open look, lower it for a darker one."""
+Leave it at 1 for the measured amount. Raise it for a brighter, more open room, lower it for a \
+darker one. It does not change the lamp's own direct light."""
 
 PLAGUE_LOCAL_DEBUG = """
 Shows one half of Coloured Lighting on its own.

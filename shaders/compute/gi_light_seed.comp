@@ -1,17 +1,19 @@
 #version 450
 
-// A ray from each cell's surface to one glowing block, so the light gets found rather than
-// stumbled upon.
+// A ray from each cell's surface to one glowing block, so the lamp's shadow gets measured rather
+// than guessed.
 //
-// A bounce ray sent into the hemisphere finds a torch only by luck. One that does comes back very
-// bright, and a single lucky sample among many dark ones is what a firefly is. Reading the list of
-// lights and aiming at one finds it every time, and the ray that goes there answers whether
-// anything is in the way.
+// The light itself is exact and per pixel (voxel_local_direct.fsh). What this grid asks is only
+// how much of a lamp a surface can see, one ray a cell a frame: a lamp drawn in proportion to its
+// share, aimed at a fresh point on its face. gi_light_resolve averages the answers over frames,
+// gi_light_upsample hands the fraction to the voxel chain, and voxel_local_combine multiplies.
 
-#define PLAGUE_GI 0 //[0 1] compile "Bounce Light (Experimental)" {0="Off" 1="On"}
+#define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:gi_grid.glsl>
+#moj_import <fornax_runtime:geometric_normal.glsl>
 #define PLAGUE_GI_LIGHT_READER
 #moj_import <fornax_runtime:gi_lights.glsl>
 
@@ -36,66 +38,28 @@ uint plagueGiLightWord(uint index) {
     return lights.words[index];
 }
 
-// How long a spread of frames the shade averages over. Holds the walk short enough that a point
-// keeps seeing fresh parts of the lamp within the window it is averaged over, and divides the
-// engine's own counter wrap evenly so the sequence cycles with no jump at it.
-const float PLAGUE_GI_LIGHT_WALK = 48.0;
-
-/**
- * Where on the lamp's own face this cell aims, this frame.
- *
- * A lamp is a block, not a point. Aiming at its middle gives an edge with no width at all, and the
- * real width is the face's own width times how far the receiver sits past the blocker, over how far
- * the blocker sits from the face. A block-wide lamp half a block behind a grate therefore spreads
- * its pattern over several blocks, and a crisp lattice on a far wall is not what a lamp in a cage
- * does.
- *
- * One list entry is one flat face, so there is nothing to choose: the point is taken evenly over
- * that face, however many cells wide the run is.
- *
- * Walked every frame, so a point that is averaged over frames sees the face spread out rather than
- * one spot on it. R2: each step lands in the largest gap the earlier ones left. Roberts, "The
- * Unreasonable Effectiveness of Quasirandom Sequences", 2018.
- */
-vec3 plagueGiLightPoint(uint index, PlagueGiLight light) {
-    // Three-round integer mix. One round leaves the low bits of neighbouring cells correlated, and
-    // correlated neighbours are a pattern rather than a dither.
-    uint state = index * 747796405u + 2891336453u;
-    state ^= state >> 16; state *= 2246822519u;
-    state ^= state >> 13; state *= 3266489917u;
-    uint a = state ^ (state >> 16);
-    state = a * 747796405u + 2891336453u;
-    state ^= state >> 15; state *= 2246822519u;
-    uint b = state ^ (state >> 16);
-    vec2 base = vec2(float(a & 0xFFFFFFu), float(b & 0xFFFFFFu)) / 16777216.0;
-    float frame = mod(u_FrameState.x, PLAGUE_GI_LIGHT_WALK);
-    vec2 draw = fract(base + frame * vec2(0.7548776662466927, 0.5698402909980532));
-
-    int face = plagueLocalRunFace(light.run);
-    vec2 span = plagueLocalRunSpan(light.run);
-    vec3 alongU, alongV;
-    plagueGiFaceAxes(face, alongU, alongV);
-    return plagueGiFaceCentre(light) + alongU * ((draw.x - 0.5) * span.x)
-                                     + alongV * ((draw.y - 0.5) * span.y);
-}
-
 void main() {
     uint index = gl_GlobalInvocationID.x;
     ivec2 size = imageSize(u_GiGrid);
     uvec2 gridSize = uvec2(size);
     if (index >= gridSize.x * gridSize.y) return;
 
-    // Row-major on the grid's WIDTH. gi_resolve decodes this same index with the width it reads off
-    // the same target, so the two must agree or a ray answers the wrong cell.
+    // Row-major on the grid's WIDTH. gi_light_resolve decodes this same index with the width it
+    // reads off the same target, so the two must agree or a ray answers the wrong cell.
     vec2 cell = vec2(float(index % gridSize.x), float(index / gridSize.x));
-    vec2 uv = (cell + 0.5) / vec2(size);
+    vec2 uv = plagueGiCellUv(cell, vec2(size));
 
     float depth = texture(u_Depth, uv).r;
-    vec3 n = texture(u_GNormal, uv).xyz;
+    vec4 packed = texture(u_GNormal, uv);
+    // The flat face, decoded from gNormal's alpha, not the bumped normal in its rgb: leaves
+    // change their bumped normal texel to texel, which fails the history test's facing check
+    // every frame, and the flat face stays the same across a whole leaf block.
+    vec3 normal = dot(packed.xyz, packed.xyz) > 1e-6
+            ? plagueDecodeGeometricNormal(packed.a, normalize(packed.xyz)) : vec3(0.0);
     uint count = min(lights.words[0], PLAGUE_GI_MAX_LIGHTS);
     // Sky, an unwritten normal, or a frame with no lights at all. A zero-length direction is a
     // caller bug to the engine's kernel, and a tMax of zero is what says this ray wants no trace.
-    if (depth <= 0.0 || dot(n, n) <= 1e-6 || count == 0u) {
+    if (depth <= 0.0 || dot(normal, normal) <= 1e-6 || count == 0u) {
         rays.words[index * 2u] = vec4(0.0);
         rays.words[index * 2u + 1u] = vec4(0.0, 1.0, 0.0, 0.0);
         return;
@@ -104,26 +68,27 @@ void main() {
     vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
     vec4 world = u_InvProjModelView * clip;
     vec3 surface = world.xyz / world.w;
-    vec3 normal = normalize(n);
 
     // Weighted by what each light would give this cell, so the one ray this cell can afford goes
-    // where the light is. The resolve runs the same chooser on the same cell and frame and lands on
-    // the same light, which is what makes this ray the right question for the shade it answers.
-    PlagueGiPick pick = plagueGiPickLight(surface, normal, count, index);
+    // where the light is, and drawn again every frame so every lamp gets its turn.
+    PlagueGiPick pick = plagueGiPickLight(surface, normal, count, plagueGiFrameSeed(index));
     vec3 toLight = pick.light.position - surface;
     float distance = length(toLight);
     // Nothing in reach facing this way, or a light the cell sits inside. Neither is a ray worth
-    // tracing, and the resolve drops the same cases by the same test.
+    // tracing. A tMax of zero tells gi_light_resolve to count this cell as fully lit.
     if (!pick.valid || !(distance > 1e-3)) {
         rays.words[index * 2u] = vec4(0.0);
         rays.words[index * 2u + 1u] = vec4(0.0, 1.0, 0.0, 0.0);
         return;
     }
 
-    // At a point on the lamp's surface, a different one each frame. The shade averages those over
-    // frames, and what comes out is the fraction of the lamp this cell can see: a soft edge whose
-    // width is set by the lamp's real size and where the blocker stands, not by a number.
-    vec3 toTarget = plagueGiLightPoint(index, pick.light) - surface;
+    // At a point on the lamp's surface, a different one each frame. The average over frames is
+    // the fraction of the lamp this cell can see: a soft edge whose width is set by the lamp's real
+    // size and where the blocker stands, not by a number.
+    // Lift along the normal to avoid re-hitting the receiver at grazing angles. Aim from that
+    // origin too: reusing the old direction translates the segment past its chosen lamp point.
+    vec3 origin = surface + normal * 0.03;
+    vec3 toTarget = plagueGiLightPoint(index, pick.light) - origin;
     float span = length(toTarget);
     if (!(span > 1e-3)) {
         rays.words[index * 2u] = vec4(0.0);
@@ -131,33 +96,7 @@ void main() {
         return;
     }
 
-    // Lifted along the normal rather than along the ray: a light almost level with the surface
-    // leaves tMin alone and would re-hit the face it started on.
-    vec3 origin = surface + normal * 0.03;
     vec3 direction = toTarget / span;
-
-    // Stopped exactly where the ray meets the light's own block.
-    //
-    // The list puts a light at the centre of its block, which is inside solid geometry, so a ray
-    // that runs the whole way there ends inside the very block it is asking about and comes back
-    // blocked by it. Every surface in the room then reads as shadowed.
-    //
-    // Half the cube's diagonal clears that from any direction, but it also clears a shell reaching
-    // 0.87 blocks out while the block itself stops at 0.5. Anything standing in that shell goes
-    // untested, and a cage built against a lamp sits exactly there: only the far side of each cage
-    // block would cast a shadow.
-    //
-    // The slab test gives the distance at which this ray enters the cube itself, so nothing
-    // outside the light's own block is skipped. A component near zero is held away from it, since
-    // a ray running along a face plane divides nothing by nothing.
-    vec3 slabDir = vec3(abs(direction.x) < 1e-6 ? 1e-6 : direction.x,
-                        abs(direction.y) < 1e-6 ? 1e-6 : direction.y,
-                        abs(direction.z) < 1e-6 ? 1e-6 : direction.z);
-    vec3 toNear = (pick.light.position - 0.5 - origin) / slabDir;
-    vec3 toFar = (pick.light.position + 0.5 - origin) / slabDir;
-    vec3 nearest = min(toNear, toFar);
-    float entry = max(max(nearest.x, nearest.y), nearest.z);
-    // A surface already against the light leaves a stub that misses, which reads as lit.
     rays.words[index * 2u] = vec4(origin, 0.001);
-    rays.words[index * 2u + 1u] = vec4(direction, max(min(entry, span) - 0.001, 0.01));
+    rays.words[index * 2u + 1u] = vec4(direction, plagueGiLampReach(origin, direction, span, pick.light));
 }

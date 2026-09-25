@@ -1,0 +1,50 @@
+#version 450
+
+// Each grid cell's own surface: rgb the normal, a the plane's offset (normal dot the
+// camera-relative point). Next frame's history test reprojects to this cell and compares against
+// what this pass wrote here, not against what this frame's own depth and normal now hold at that
+// spot: a turned view puts a different wall behind that screen position, and comparing against
+// this frame's geometry there would pass a surface that only looks the same from the new angle.
+// The plane's offset does not move under TAA jitter, because jitter slides the sampled point along
+// its own plane rather than off it.
+
+#define PLAGUE_GI 0 //[0 1] compile "Bounce Light (Experimental)" {0="Off" 1="On"}
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:gi_grid.glsl>
+#moj_import <fornax_runtime:geometric_normal.glsl>
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Bindings follow the pass's declaration order, inputs then the output: 0 globals, 1 packOptions
+// (both engine-injected), 2 depth, 3 the surface normal, then 4 this frame's surface. Inputs are
+// APPENDED, never inserted: an inserted one re-points every binding after it with no error
+// anywhere.
+layout(set = 0, binding = 2) uniform sampler2D u_Depth;
+layout(set = 0, binding = 3) uniform sampler2D u_GNormal;
+layout(rgba16f, set = 0, binding = 4) uniform writeonly image2D u_OutSurface;
+
+void main() {
+    ivec2 size = imageSize(u_OutSurface);
+    ivec2 cell = ivec2(gl_GlobalInvocationID.xy);
+    if (cell.x >= size.x || cell.y >= size.y) return;
+    vec2 uv = plagueGiCellUv(vec2(cell), vec2(size));
+
+    float depth = texture(u_Depth, uv).r;
+    vec4 packed = texture(u_GNormal, uv);
+    // The flat face, decoded from gNormal's alpha, not the bumped normal in its rgb: leaves
+    // change their bumped normal texel to texel, which fails the history test's facing check
+    // every frame, and the flat face stays the same across a whole leaf block.
+    vec3 normal = dot(packed.xyz, packed.xyz) > 1e-6
+            ? plagueDecodeGeometricNormal(packed.a, normalize(packed.xyz)) : vec3(0.0);
+    if (depth <= 0.0 || dot(normal, normal) <= 1e-6) {
+        imageStore(u_OutSurface, cell, vec4(0.0));
+        return;
+    }
+
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 world = u_InvProjModelView * clip;
+    vec3 p = world.xyz / world.w;
+    imageStore(u_OutSurface, cell, vec4(normal, dot(normal, p)));
+}

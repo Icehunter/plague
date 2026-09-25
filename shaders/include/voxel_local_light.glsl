@@ -23,7 +23,7 @@ const int PLAGUE_LOCAL_RAY_CEILING = 48;
 // Caller supplies source word/size accessors, the 2D dither (taken in uniform control flow) and
 // voxel_coverage traversal. Primary and reflected surfaces use the same finite segment query;
 // there is no screen or receiver-quadrant cache.
-vec3 plagueLocalSegmentStart(vec3 point,vec3 geometricNormal) {
+vec3 plagueLocalSurfacePoint(vec3 point,vec3 geometricNormal) {
     vec3 start=point;
     // Depth roundoff can lie on either side of an axis plane. Recover nearby 1/16-block model
     // planes before the outward bias, without snapping crossed foliage onto cube boundaries.
@@ -32,8 +32,10 @@ vec3 plagueLocalSegmentStart(vec3 point,vec3 geometricNormal) {
         float plane=round(p[axis]*16.0)/16.0;
         if(abs(plane-p[axis])<=PLAGUE_LOCAL_PLANE_TOLERANCE) start[axis]+=plane-p[axis];
     }
-    start+=geometricNormal*PLAGUE_LOCAL_NUDGE;
     return start;
+}
+vec3 plagueLocalSegmentStart(vec3 point,vec3 geometricNormal) {
+    return plagueLocalSurfacePoint(point,geometricNormal)+geometricNormal*PLAGUE_LOCAL_NUDGE;
 }
 bool plagueLocalSegment(vec3 point,vec3 geometricNormal,vec3 emitter,vec3 emitterNormal) {
     vec3 start=plagueLocalSegmentStart(point,geometricNormal);
@@ -131,6 +133,9 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
             || plagueLocalSourceWord(0)!=2u || plagueLocalSourceWord(1)!=uint(PLAGUE_LOCAL_CAPACITY)
             || plagueLocalSourceWord(2)>uint(PLAGUE_LOCAL_CAPACITY)) return false;
     if(any(isnan(point)) || any(isinf(point)) || any(isnan(normal)) || any(isinf(normal))) return false;
+    // Use the same unbiased model plane for source support and visibility. Captured grass at
+    // y=72.9999986 admitted an entire below-ground lamp; its true y=73 plane rejects that source.
+    point=plagueLocalSurfacePoint(point,geometricNormal);
     // Authored thin-sheet model: at maximum subsurface response half the diffuse energy goes
     // to each hemisphere. This splits diffuse energy; it adds no extra emitter power and gives
     // solid backing no transmission. It is a local sheet approximation, not a volume BSSRDF.
@@ -258,7 +263,7 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
             if(!any(greaterThan(offer,vec3(0.0))) || any(isnan(offer)) || any(isinf(offer))) continue;
             unshadowed+=offer;
 
-#ifdef PLAGUE_LOCAL_VISIBILITY_ONLY
+#if defined(PLAGUE_LOCAL_VISIBILITY_ONLY) || defined(PLAGUE_LOCAL_REFLECTED)
             // Everything above is exact and the same every frame. Only whether something stands
             // in the way is sampled, so only that is cut into pieces: each probe speaks for its
             // own share of the rectangle, and blocking one loses that share.

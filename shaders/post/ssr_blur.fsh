@@ -18,6 +18,7 @@
 // separable form would change Fancy's output, not just reorganise it.
 
 #moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:geometric_normal.glsl>
 
 uniform sampler2D u_Input0; // ssrRaw: this frame's traced reflection
 uniform sampler2D u_Input1; // ssr.history: last frame's accumulated reflection
@@ -25,6 +26,10 @@ uniform sampler2D u_GMotion; // builtin.gMotion
 uniform sampler2D u_Depth; // builtin.depth
 uniform sampler2D u_GMaterial; // builtin.gMaterial: r = smoothness, g = F0, b = porosity/SSS
 uniform sampler2D u_GNormal; // builtin.gNormal
+#define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "World Reflections" {0="Off" 1="On"}
+#if PLAGUE_VOXEL_REFLECTIONS != 0
+uniform sampler2D u_Input6; // appended input: same-resolution world recovery
+#endif
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -38,8 +43,13 @@ layout(std140) uniform u_PassParams {
 // High because one mirror ray per pixel is a thin guess. The depth check below is a guess too:
 // it cannot tell the pixel, or the thing it reflected, is the same one as last frame.
 const float SSR_TEMPORAL_BLEND = 0.85;
-const float SSR_DISOCCLUSION_DEPTH_THRESHOLD = 0.05;
 const float SSR_SHARPEN = 0.4;
+// Existing GI reconstruction's 0.05-block precision floor and face-agreement threshold.
+// Keep the plane bound in world units: a distance-scaled bound admits entire terrain steps
+// at long range. tools/verify_terrain_reflection_blur_native.py covers one-block steps and
+// coplanar camera slopes at 4..256 blocks; arbitrary curved surfaces are not the same plane.
+const float SSR_SURFACE_PLANE_TOLERANCE = 0.05;
+const float SSR_SURFACE_NORMAL_REJECT = 0.9;
 // Tap spacing in full-res pixels, converted through the actual texture-size ratio so Fast (half-res
 // source) and Fancy sample the same authored roughness footprint.
 const float SSR_BLUR_TAP_SPACING_FULL_RES = 2.0;
@@ -62,6 +72,37 @@ vec4 expandRange(vec4 c) {
     return vec4(pow(length(c.rgb), 1.0 / SSR_SHARPEN) * normalizeSafe(c.rgb), clamp(c.a, 0.0, 1.0));
 }
 
+vec4 plagueOpaqueRaw(vec2 uv) {
+    vec4 screen = texture(u_Input0, uv);
+#if PLAGUE_VOXEL_REFLECTIONS != 0
+    // Preserve every screen hit byte-for-byte. Only the trace's zero-confidence miss may use
+    // world geometry, before roughness filtering so recovery never paints a sharp rough metal.
+    if (screen.a <= 0.0) return texture(u_Input6, uv);
+#endif
+    return screen;
+}
+
+vec3 reflectionPosition(vec2 uv, float depth) {
+    // Depth is nearest sampled. Reconstruct its texel centre, not the continuous reprojection
+    // coordinate: mixing the two moves a sloped surface off its plane during fractional motion
+    // and at half-resolution SSR centres. Clamp matches the depth sampler at screen borders.
+    ivec2 size = textureSize(u_Depth, 0);
+    ivec2 pixel = clamp(ivec2(floor(uv * vec2(size))), ivec2(0), size - 1);
+    vec2 depthUv = (vec2(pixel) + 0.5) / vec2(size);
+    vec4 position = u_InvProjModelView * vec4(depthUv * 2.0 - 1.0, depth, 1.0);
+    return position.xyz / position.w;
+}
+
+bool reflectionSameSurface(vec2 uv, float depth, vec4 packedNormal,
+        vec3 centerPosition, vec3 centerFace) {
+    if (depth <= 0.0 || dot(packedNormal.xyz, packedNormal.xyz) < 1e-6) return false;
+    vec3 face = plagueDecodeGeometricNormal(packedNormal.a, normalize(packedNormal.xyz));
+    vec3 separation = reflectionPosition(uv, depth) - centerPosition;
+    return dot(centerFace, face) >= SSR_SURFACE_NORMAL_REJECT
+            && abs(dot(centerFace, separation)) <= SSR_SURFACE_PLANE_TOLERANCE
+            && abs(dot(face, separation)) <= SSR_SURFACE_PLANE_TOLERANCE;
+}
+
 /** Sharpness of the specular lobe as a spherical Gaussian. Mirrors are enormous, rough are broad. */
 float lobeSharpness(float roughness) {
     float r = max(roughness, 1e-5);
@@ -77,12 +118,11 @@ float specularLobeWeight(vec3 centerNormal, vec3 sampleNormal, float centerRough
     float ls = lobeSharpness(sampleRoughness);
     float harmonic = lc * ls / max(lc + ls, 1e-5);
     float amplitude = pow(2.0 * sqrt(lc * ls) / max(lc + ls, 1e-5), beta);
-    float cosine = clamp(dot(centerNormal, sampleNormal), 0.0, 1.0);
-    float sg = exp(beta * harmonic * (cosine - 1.0));
-    // Falls back to a gentle normal falloff below denormal range, where sg collapses to exactly zero
-    // for mirror surfaces and would otherwise leave a pixel with no valid neighbours.
-    float gaussian = sg > 1e-8 ? sg : exp(-(1.0 - cosine) * 16.0);
-    return amplitude * gaussian;
+    // For unit normals, dot(n,m)-1 = -0.5*|n-m|^2. The difference form stays exactly zero
+    // for identical normals, including oblique mirrors. An underflowed lobe is rejection;
+    // replacing it with a broad fallback admits the very bump directions the lobe excluded.
+    vec3 delta = centerNormal - sampleNormal;
+    return amplitude * exp(-0.5 * beta * harmonic * dot(delta, delta));
 }
 
 void main() {
@@ -104,13 +144,27 @@ void main() {
     // Radius 0 (pass-through) at mirror smoothness, radius 3 at the trace's 0.1 floor.
     int radius = int(round((1.0 - smoothness) * 3.0));
 
+    vec4 centerPacked = texture(u_GNormal, texCoord);
+    if (dot(centerPacked.xyz, centerPacked.xyz) < 1e-6) {
+        fragColor = vec4(0.0);
+        return;
+    }
+    vec3 centerNormal = normalize(centerPacked.xyz);
+    vec3 centerFace = plagueDecodeGeometricNormal(centerPacked.a, centerNormal);
+    vec3 centerPosition = reflectionPosition(texCoord, centerDepth);
+    vec4 centerCurrent = compressRange(plagueOpaqueRaw(texCoord));
+    // Bounds describe only this frame's supported reflection. Zero misses and black hits
+    // must remain in the box: either can replace a formerly bright, now-hidden surface.
+    vec4 currentLo = centerCurrent;
+    vec4 currentHi = centerCurrent;
+
     vec4 blurred;
     if (radius == 0) {
         // Exact shortcut, not an approximation: at radius 0 the loop below degenerates to comparing
-        // the centre tap with itself, which always yields weight 1. Covers smoothness > 5/6 — every
-        // wet and puddled surface — skipping 5 of 9 fetches. Verified against the full loop
-        // (tools/verify_ssr.py, 0 mismatches).
-        blurred = compressRange(texture(u_Input0, texCoord));
+        // the centre tap with itself, which always yields weight 1. Covers smoothness > 5/6.
+        // Its current bounds are that single deterministic mirror sample; TAA still accumulates
+        // the final image, while this reflection history cannot trail a vanished mirror hit.
+        blurred = centerCurrent;
     } else {
         vec2 sourceSize = vec2(textureSize(u_Input0, 0));
         vec2 fullSize = vec2(textureSize(u_Depth, 0));
@@ -118,8 +172,6 @@ void main() {
         float sourceToFullScale = min(sourceSize.x / max(fullSize.x, 1.0),
                                       sourceSize.y / max(fullSize.y, 1.0));
         float tapSpacingSourceTexels = SSR_BLUR_TAP_SPACING_FULL_RES * sourceToFullScale;
-        vec3 cn = texture(u_GNormal, texCoord).xyz;
-        vec3 centerNormal = dot(cn, cn) > 1e-6 ? normalize(cn) : vec3(0.0, 1.0, 0.0);
         float centerRoughness = (1.0 - smoothness) * (1.0 - smoothness);
 
         vec4 sum = vec4(0.0);
@@ -134,36 +186,38 @@ void main() {
                 vec2 uv = texCoord + vec2(float(x), float(y)) * texelSize
                                      * tapSpacingSourceTexels;
                 float tapDepth = texture(u_Depth, uv).r;
-                // Hard depth gate first: the lobe weight alone doesn't always reject a
-                // far-side-of-silhouette tap.
-                if (abs(tapDepth - centerDepth) > SSR_DISOCCLUSION_DEPTH_THRESHOLD) {
+                vec4 tapPacked = texture(u_GNormal, uv);
+                // Check the receiver's geometry before either colour OR confidence. A bump
+                // normal can agree across a block corner while the actual faces disagree.
+                if (!reflectionSameSurface(uv, tapDepth, tapPacked, centerPosition, centerFace)) {
                     continue;
                 }
-                vec4 tapSample = texture(u_Input0, uv);
+                vec4 tapSample = plagueOpaqueRaw(uv);
                 alphaSum += clamp(tapSample.a, 0.0, 1.0);
                 alphaTaps += 1.0;
-                vec3 sn = texture(u_GNormal, uv).xyz;
-                if (dot(sn, sn) < 1e-6) {
-                    continue;
-                }
-                vec3 tapNormal = normalize(sn);
+                vec3 tapNormal = normalize(tapPacked.xyz);
                 float tapSmoothness = texture(u_GMaterial, uv).r;
                 float tapRoughness = (1.0 - tapSmoothness) * (1.0 - tapSmoothness);
                 float w = specularLobeWeight(centerNormal, tapNormal, centerRoughness, tapRoughness, 1.5);
                 if (w <= 0.0) {
                     continue;
                 }
-                sum += compressRange(tapSample) * w;
+                vec4 current = compressRange(tapSample);
+                sum += current * w;
                 weightSum += w;
+                currentLo = min(currentLo, current);
+                currentHi = max(currentHi, current);
             }
         }
 
         // weightSum can legitimately be zero only if every tap was rejected.
-        blurred = weightSum > 0.0 ? sum / weightSum : compressRange(texture(u_Input0, texCoord));
+        blurred = weightSum > 0.0 ? sum / weightSum : centerCurrent;
         if (alphaTaps > 0.0) {
             blurred.a = alphaSum / alphaTaps;
         }
     }
+    currentLo = min(currentLo, blurred);
+    currentHi = max(currentHi, blurred);
 
     // Motion leaves out both wobble offsets; history holds last frame's wobbled picture.
     vec2 previousUv = texCoord - texture(u_GMotion, texCoord).rg
@@ -171,16 +225,19 @@ void main() {
     bool validHistory = u_LocalActorFluid.w < 0.5 && previousUv.x >= 0.0 && previousUv.x <= 1.0
             && previousUv.y >= 0.0 && previousUv.y <= 1.0;
     if (validHistory) {
-        // A guess from the current depth: it cannot tell this is the same surface as last frame.
+        // Current geometry is only a coverage heuristic, not the previous frame's surface.
+        // The current supported-colour bounds below reject stale energy without another
+        // full-resolution history allocation. They cannot identify old geometry exactly.
         float depthAtReprojected = texture(u_Depth, previousUv).r;
-        if (abs(centerDepth - depthAtReprojected) > SSR_DISOCCLUSION_DEPTH_THRESHOLD) {
-            validHistory = false;
-        }
+        validHistory = reflectionSameSurface(previousUv, depthAtReprojected,
+                texture(u_GNormal, previousUv), centerPosition, centerFace);
     }
 
-    vec4 accumulated = validHistory
-            ? mix(blurred, compressRange(texture(u_Input1, previousUv)), SSR_TEMPORAL_BLEND)
-            : blurred;
+    vec4 accumulated = blurred;
+    if (validHistory) {
+        vec4 history = clamp(compressRange(texture(u_Input1, previousUv)), currentLo, currentHi);
+        accumulated = mix(blurred, history, SSR_TEMPORAL_BLEND);
+    }
 
     fragColor = expandRange(accumulated);
 }

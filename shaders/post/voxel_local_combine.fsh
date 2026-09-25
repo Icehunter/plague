@@ -17,7 +17,7 @@
 // downstream sees them, and a product tells you nothing about which factor is noisy.
 #define PLAGUE_LOCAL_DEBUG 0 //[0 1 2] compile "Test View: Coloured Lighting" {0="Off" 1="Visibility only" 2="Light only"}
 
-uniform sampler2D u_VoxelLocalUnshadowed; // voxelLocalUnshadowed, rgb the light, a how much got through
+uniform sampler2D u_VoxelLocalUnshadowed; // voxelLocalUnshadowed, RGB the light; alpha unused
 uniform sampler2D u_Depth; // builtin.depth
 uniform sampler2D u_GNormal; // builtin.gNormal
 uniform sampler2D u_CloudShadowMask; // cloudShadowMask, carried into alpha for the resolve

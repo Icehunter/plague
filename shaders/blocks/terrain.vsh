@@ -25,7 +25,8 @@ out vec3 v_WaterBasePos;
 out vec3 v_FaceNormal;
 out float v_BlockLight;
 out float v_SkyLight;
-out vec2 v_MotionVector;
+out vec3 v_MotionCurrentClip;
+out vec3 v_MotionPreviousClip;
 // Forwarded because push constants are declared per stage and the fragment stage can't see them.
 out vec3 v_SunDirection;
 // Clip x, y, w: the fragment's own NDC, the coordinate the aerial-perspective table is indexed by.
@@ -171,11 +172,10 @@ void main() {
     v_Clip = gl_Position.xyw;
     vec4 previousClipPosition = u_PrevProjectionMatrix * u_PrevModelViewMatrix * vec4(previousWorldPosition, 1.0);
 
-    // Subtracting each frame's own jitter cancels TAA's baked-in NDC offset; skipping it leaves the
-    // motion vector carrying jitter wobble, which reads as permanent shimmer.
-    vec2 currentNdc  = (gl_Position.xy / gl_Position.w) - u_JitterOffset;
-    vec2 previousNdc = (previousClipPosition.xy / previousClipPosition.w) - u_PrevJitterOffset;
-    v_MotionVector = (currentNdc * 0.5 + 0.5) - (previousNdc * 0.5 + 0.5);
+    // Preserve homogeneous coordinates through interpolation: divided vertex motion picks the
+    // wrong history pixel on slanted faces. Removing jitter times w is linear in clip space.
+    v_MotionCurrentClip = vec3(gl_Position.xy - u_JitterOffset * gl_Position.w, gl_Position.w);
+    v_MotionPreviousClip = vec3(previousClipPosition.xy - u_PrevJitterOffset * previousClipPosition.w, previousClipPosition.w);
 
     v_Color      = _vert_color * texture(u_LightTex, plagueLightingTexCoord(_vert_tex_light_coord));
     v_RawTint    = _vert_color;

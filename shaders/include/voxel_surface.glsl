@@ -7,11 +7,19 @@
 #moj_import <fornax_runtime:voxel_lightmap.glsl>
 
 #define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="On"}
-#if PLAGUE_LOCAL_LIGHTING != 0
+#ifndef PLAGUE_LOCAL_SHADOWS
+#define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
+#endif
+#if PLAGUE_LOCAL_LIGHTING != 0 || (defined(PLAGUE_OPAQUE_REFLECTION) && PLAGUE_LOCAL_SHADOWS != 0)
 uniform usamplerBuffer u_VoxelLocalRadiance;
 uint plagueLocalSourceWord(int word) { return texelFetch(u_VoxelLocalRadiance,word).r; }
 int plagueLocalSourceSize() { return textureSize(u_VoxelLocalRadiance); }
 #moj_import <fornax_runtime:voxel_local_jitter.glsl>
+#ifdef PLAGUE_OPAQUE_REFLECTION
+// A world hit has no filtered screen visibility. Evaluate the existing finite source probes
+// with its BRDF so a hidden lamp cannot shine through an opaque blocker in the recovered image.
+#define PLAGUE_LOCAL_REFLECTED
+#endif
 #moj_import <fornax_runtime:voxel_local_light.glsl>
 #endif
 
@@ -105,7 +113,10 @@ vec3 plagueVoxelSurfaceDirect(PlagueVoxelSurface surface, vec3 viewDir, vec3 sun
     float blockLight = surface.light.x;
     vec3 localRadiance = vec3(0.0);
     float localBlockLight = blockLight;
-#if PLAGUE_LOCAL_LIGHTING != 0
+#if PLAGUE_LOCAL_LIGHTING != 0 || (defined(PLAGUE_OPAQUE_REFLECTION) && PLAGUE_LOCAL_SHADOWS != 0)
+#ifdef PLAGUE_OPAQUE_REFLECTION
+    localBlockLight = 0.0;
+#endif
     vec3 reflectedUnshadowed;
     float reflectedVisibility;
     // The camera-column water height cannot classify a reflected surface (dry caves may be below

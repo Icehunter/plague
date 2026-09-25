@@ -49,8 +49,8 @@ const float PLAGUE_BLOCKLIGHT_GAIN = 48.2418;
 
 float plagueBlockLightCurve(float blockLight, float vsBrightness) {
 #if PLAGUE_LOCAL_LIGHTING != 0
-    // This is the common placed-light path for all deferred surfaces and reflection proxies.
-    // Never restore vanilla on a cache miss: that would move false shadows with the camera.
+    // The merged lightmap cannot separate a supported lamp from other sources.
+    // Keep replacement global, including reflection proxies and missing source data.
     return 0.0;
 #else
     float bl = clamp(blockLight, 0.0, 1.0);

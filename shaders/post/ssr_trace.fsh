@@ -19,6 +19,7 @@
 // of the same rays rather than coarser ones.
 
 #moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:geometric_normal.glsl>
 // For plagueUntonemapApprox: sceneHistory is display-referred and everything downstream of this
 // pass is scene-referred linear HDR. One shared inverse, not a second hand-maintained copy.
 #moj_import <fornax_runtime:tonemap.glsl>
@@ -71,7 +72,8 @@ void main() {
         return;
     }
 
-    vec3 n = texture(u_GNormal, texCoord).xyz;
+    vec4 packedNormal = texture(u_GNormal, texCoord);
+    vec3 n = packedNormal.xyz;
     if (dot(n, n) < 1e-6) {
         fragColor = vec4(0.0);
         return;
@@ -105,6 +107,14 @@ void main() {
     float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
     float phi = xi.y * 6.2831853;
     vec3 rayDir = normalize(t * (sinTheta * cos(phi)) + b * (sinTheta * sin(phi)) + mirror * cosTheta);
+
+    // A bump cannot reflect through its opaque supporting face. This is known occlusion,
+    // not a missing screen hit: black confidence prevents sky/world recovery behind the face.
+    vec3 geometricNormal = plagueDecodeGeometricNormal(packedNormal.a, normal);
+    if (dot(rayDir, geometricNormal) <= 0.0) {
+        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
 
     // A ray pointing back at the camera has nothing resolvable in screen space.
     if (dot(rayDir, viewDir) < -0.9) {
@@ -198,6 +208,11 @@ void main() {
     // Colour comes from last frame's finished image, reprojected: this frame's scene colour isn't
     // available yet (the resolve that produces it consumes this pass's output).
     vec2 historyUv = hit.xy - texture(u_GMotion, hit.xy).rg;
+#if FX_UPSCALE != 0
+    // Upscalers store reconstructed, unjittered scene history. Motion excludes jitter, while
+    // hit.xy still contains this frame's NDC jitter; the NDC-to-UV conversion contributes 1/2.
+    historyUv -= 0.5 * u_JitterOffset;
+#endif
     if (historyUv.x < 0.0 || historyUv.x > 1.0 || historyUv.y < 0.0 || historyUv.y > 1.0) {
         fragColor = vec4(0.0);
         return;

@@ -38,6 +38,8 @@ const float PLAGUE_ATLAS_GHOST_DIST = 32.0;
 
 #define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 
+#define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
+
 // Wave complexity is fixed at compile time; only strength (u_WaveStrength, bridged below) is a runtime scalar.
 #define PLAGUE_WATER_INTERACTION 2 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="High" 2="Epic"}
 #define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Wave Motion" {0="Off" 1="Standard"}
@@ -246,7 +248,8 @@ in vec3 v_WaterBasePos;
 in vec3 v_FaceNormal;
 in float v_BlockLight;
 in float v_SkyLight;
-in vec2 v_MotionVector;
+in vec3 v_MotionCurrentClip;
+in vec3 v_MotionPreviousClip;
 in vec3 v_SunDirection;
 in vec3 v_Clip;
 flat in vec3 v_CameraAbs;
@@ -316,7 +319,7 @@ void main() {
     vec3 geoNormal = cross(dPosX, dPosY);
     float geoLen = length(geoNormal);
     float geoSine = geoLen / max(length(dPosX) * length(dPosY), 1e-20);
-#if PLAGUE_LOCAL_LIGHTING != 0 && defined(USE_DEFERRED) && defined(ALPHA_CUTOUT)
+#if (PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0) && defined(USE_DEFERRED) && defined(ALPHA_CUTOUT)
     // The mesher supplies a cardinal face normal even for diagonal grass quads. Build their
     // tangent frame against the actual primitive plane: otherwise a lamp in the real front
     // hemisphere can still land behind the snapped BRDF normal. Use the same derivative
@@ -791,7 +794,11 @@ void main() {
 #else
     gAoOut       = vec4(bakedAo, emission, pomShadow, 1.0);
 #endif
-    gMotionOut   = v_MotionVector;
+    // Divide after interpolation; 0.5 converts NDC to UVs. Behind the previous eye,
+    // two UV spans force every [0,1] lookup out of bounds, including when previous w is zero.
+    gMotionOut = v_MotionPreviousClip.z > 0.0
+            ? (v_MotionCurrentClip.xy / v_MotionCurrentClip.z
+               - v_MotionPreviousClip.xy / v_MotionPreviousClip.z) * 0.5 : vec2(2.0);
 #if PLAGUE_SOURCE_RADIANCE > 0
     // Preview deliberately invalidates normal albedo/material RGB for intermediate lighting passes;
     // source_radiance_preview replaces their final output. Keep alpha and the surface class intact.

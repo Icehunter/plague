@@ -1,9 +1,9 @@
 #version 450
 
-// First spreading step over the bounce grid, taps side by side.
+// First spreading step over the bounce grid, one cell apart.
 //
-// The kernel and the reason for two passes live in gi_blur_kernel.glsl. This one writes to the
-// middle pair, which only gi_blur_wide reads.
+// The kernel and the reasons for it live in gi_blur_kernel.glsl. The variance starts here, taken
+// from the moments the resolve pass kept beside the raw bounce.
 
 #define PLAGUE_GI 0 //[0 1] compile "Bounce Light (Experimental)" {0="Off" 1="On"}
 #define FORNAX_COMPUTE_GLOBALS
@@ -12,56 +12,23 @@
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
-// Bindings: 0 globals, 1 packOptions (engine-injected), 2 the raw bounce, 3 depth, 4 the raw
-// bearing, 5 the raw lamp light, then the outputs, 6 the bounce, 7 its bearing and 8 that lamp
-// light. Inputs are APPENDED, never inserted: an inserted one re-points every binding after it,
-// outputs included, with no error anywhere.
+// Bindings: 2 the raw bounce, 3 depth, 4 the raw bearing, 5 the moments from the resolve, 6 the
+// surface normal, then the outputs, 7 the bounce and 8 its bearing. Inputs are APPENDED, never
+// inserted: an inserted one re-points every binding after it, outputs included, with no error
+// anywhere.
 layout(rgba16f, set = 0, binding = 2) uniform readonly image2D u_Bounce;
 layout(set = 0, binding = 3) uniform sampler2D u_Depth;
 layout(rgba16f, set = 0, binding = 4) uniform readonly image2D u_Dir;
-layout(rgba16f, set = 0, binding = 5) uniform readonly image2D u_Direct;
-layout(rgba16f, set = 0, binding = 6) uniform writeonly image2D u_OutBlurred;
-layout(rgba16f, set = 0, binding = 7) uniform writeonly image2D u_OutDir;
-layout(rgba16f, set = 0, binding = 8) uniform writeonly image2D u_OutDirect;
+layout(rgba16f, set = 0, binding = 5) uniform readonly image2D u_Moments;
+layout(set = 0, binding = 6) uniform sampler2D u_GNormal;
+layout(rgba16f, set = 0, binding = 7) uniform writeonly image2D u_OutBlurred;
+layout(rgba16f, set = 0, binding = 8) uniform writeonly image2D u_OutDir;
 
+#define PLAGUE_GI_HISTORY_DEPTH u_Depth
+#define PLAGUE_GI_HISTORY_NORMAL u_GNormal
+#moj_import <fornax_runtime:gi_history_test.glsl>
+#define PLAGUE_GI_BLUR_FIRST
 #moj_import <fornax_runtime:gi_blur_kernel.glsl>
-
-// The lamp light, over one cell either side.
-//
-// Its ray goes at a point on the lamp's face and comes back yes or no, so a cell holds one of a
-// handful of answers however long the frame average runs, and that reads as speckle. The bounce
-// beside it takes two far wider passes; the same here would smear a grate's shadow back into the
-// blob those passes were making of it before it was moved out of them.
-//
-// Stopped at a depth edge for the same reason as the bounce: without it, light crosses a corner
-// onto a face nothing reaches.
-void plagueGiSmoothDirect(ivec2 cell, ivec2 size) {
-    vec2 uv = (vec2(cell) + 0.5) / vec2(size);
-    float depth = texture(u_Depth, uv).r;
-    if (depth <= 0.0) {
-        imageStore(u_OutDirect, cell, imageLoad(u_Direct, cell));
-        return;
-    }
-    vec3 total = vec3(0.0);
-    float weight = 0.0;
-    for (int y = -1; y <= 1; ++y) {
-        for (int x = -1; x <= 1; ++x) {
-            ivec2 tap = clamp(cell + ivec2(x, y), ivec2(0), size - 1);
-            vec2 tapUv = (vec2(tap) + 0.5) / vec2(size);
-            float tapDepth = texture(u_Depth, tapUv).r;
-            if (tapDepth <= 0.0
-                    || abs(depth - tapDepth) > PLAGUE_GI_BLUR_DEPTH_REJECT * max(depth, 1e-4)) {
-                continue;
-            }
-            // Binomial row of three, the discrete Gaussian at this width.
-            float tapWeight = (x == 0 ? 2.0 : 1.0) * (y == 0 ? 2.0 : 1.0);
-            total += imageLoad(u_Direct, tap).rgb * tapWeight;
-            weight += tapWeight;
-        }
-    }
-    imageStore(u_OutDirect, cell,
-            vec4(weight > 0.0 ? total / weight : imageLoad(u_Direct, cell).rgb, 1.0));
-}
 
 void main() {
     ivec2 cell = ivec2(gl_GlobalInvocationID.xy);
@@ -70,5 +37,4 @@ void main() {
     ivec2 size = imageSize(u_Bounce);
     if (cell.x >= size.x || cell.y >= size.y) return;
     plagueGiBlurCell(cell, 1, size);
-    plagueGiSmoothDirect(cell, size);
 }

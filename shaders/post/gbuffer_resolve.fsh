@@ -1,6 +1,7 @@
 #version 330
 
 #moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:gi_grid.glsl>
 #moj_import <fornax_runtime:color.glsl>
 #moj_import <fornax_runtime:geometric_normal.glsl>
 #moj_import <fornax_runtime:light_and_ambient_colors.glsl>
@@ -31,6 +32,7 @@
 #moj_import <fornax_runtime:surface_lighting.glsl>
 
 #define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="On"}
+#define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
 
 uniform sampler2D u_GNormal; // builtin.gNormal
 #define G_NORMAL u_GNormal
@@ -80,7 +82,6 @@ uniform sampler2D u_VoxelLocalDirect;
 // later sampler with no error anywhere.
 #define GI_BOUNCE u_GiBounce
 #define GI_BOUNCE_DIR u_GiBounceDir
-#define GI_DIRECT u_GiDirect
 uniform sampler2D u_AtmoSkyView; // atmoSkyView, the marched dome (atmo_lut.glsl)
 #define ATMO_SKY_VIEW u_AtmoSkyView
 
@@ -99,7 +100,8 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 uniform sampler2D u_RtShadowComposite; // rtShadowComposite
 uniform sampler2D u_GiBounce; // giBounce
 uniform sampler2D u_GiBounceDir; // giBounceDir, which way that light arrives and how much it agrees
-uniform sampler2D u_GiDirect; // giDirect, light straight from the glowing blocks, never smoothed
+// u_Input22 stays reserved (bound to builtin.depth) so no input numbers shift. Not declared: a
+// sampler with no alias binds nothing.
 #define RT_SHADOW_COMPOSITE u_RtShadowComposite
 // u_Input19 stays reserved (bound to builtin.depth) so no input numbers shift.
 // Must follow NOISE_TEX: PLAGUE_CLOUD_NOISE expands inline where clouds.glsl calls it, so an
@@ -266,10 +268,13 @@ vec3 plagueUnderwaterSunTint(float pattern) {
 #if PLAGUE_GI != 0
 // How far a cell's light may be pushed up by a pixel facing the light more squarely than the cell
 // did. A pixel turned almost edge-on to the cell's own facing divides by almost nothing, so without
-// a ceiling one bumpy pixel returns many times the light that ever reached it.
-const float PLAGUE_GI_SHAPE_CEILING = 3.0;
-// Below this the cell's facing is too near edge-on for the ratio to mean anything.
-const float PLAGUE_GI_SHAPE_FLOOR = 0.1;
+// a ceiling one bumpy pixel returns many times the light that ever reached it. 1.5, not higher:
+// the bounce is spread-out light with an averaged bearing, not a point source, and on a 512x
+// normal map a higher ceiling multiplies it texel by texel into an etched, over-sharpened surface.
+const float PLAGUE_GI_SHAPE_CEILING = 1.5;
+// Below this the cell's facing is too near edge-on for the ratio to mean anything: light raking
+// along a wall puts every bump at the ceiling. A cosine of 0.35 is about 70 degrees off the face.
+const float PLAGUE_GI_SHAPE_FLOOR = 0.35;
 
 /**
  * One cell's light, re-aimed at the normal THIS pixel has.
@@ -307,39 +312,71 @@ vec3 plagueGiShape(vec3 light, vec3 bearing, vec4 cellNormal, vec3 pixelNormal) 
 // The bounce grid is far coarser than the screen, so reading it straight stretches one cell over
 // many pixels and the picture reads as soft blocks.
 //
-// Four cells around this pixel, each weighted by how close its own depth is to the pixel's. A cell
-// sitting on another surface carries another surface's light, and weighting by depth is what stops
-// it crossing the corner. Falls back to the nearest cell where every neighbour is rejected.
+// Four cells around this pixel, restricted to its geometric surface. Missing coverage contributes
+// no bounce: normalizing a tiny surface weight or borrowing an unrelated cell leaks through terrain.
 vec3 plagueGiUpsample(sampler2D grid, vec2 uv, float depth, vec3 pixelNormal) {
-    // Read off the bounce grid rather than a fixed number, so the direct grid this same function
-    // upsamples maps onto the one extent both were laid out against. Two components, not one: the
-    // grid follows the screen's own shape, not always a square.
+    // Invert the grid's jittered G-buffer lookup, or a stationary surface shifts between
+    // neighbouring light cells every frame while its history stays on the unjittered grid.
     vec2 side = vec2(textureSize(GI_BOUNCE, 0));
-    vec2 texel = uv * side - 0.5;
+    vec2 texel = plagueGiGridPlace(uv, side);
     vec2 base = floor(texel);
     vec2 f = texel - base;
     vec3 total = vec3(0.0);
-    float weight = 0.0;
+    // Nearest depth belongs to its texel centre, not the fractional lookup position.
+    // Mixing the two reconstructs a different plane on sloped, distant terrain.
+    vec2 gbufSize = vec2(textureSize(G_DEPTH, 0));
+    vec2 hereGbuf = (clamp(floor(uv * gbufSize), vec2(0.0), gbufSize - 1.0) + 0.5) / gbufSize;
+    vec4 clipHere = vec4(hereGbuf * 2.0 - 1.0, depth, 1.0);
+    vec4 worldHere = u_InvProjModelView * clipHere;
+    vec3 here = worldHere.xyz / worldHere.w;
+    // Reuse the history test's near-field precision allowance (blocks), without its distance
+    // growth: a one-block terrace must remain a different plane even beyond fifty blocks.
+    const float tolerance = 0.05;
+    // The FLAT face this pixel sits on, from gNormal's alpha, not the bumped pixelNormal: the
+    // plane test asks whether a cell sits on the same surface, and a bump tilts that test off
+    // the surface it is meant to measure. plagueGiShape below still takes the bumped normal,
+    // since re-aiming toward the bump is its own job.
+    vec4 herePacked = texture(G_NORMAL, uv);
+    vec3 faceHere = dot(herePacked.xyz, herePacked.xyz) > 1e-6
+            ? plagueDecodeGeometricNormal(herePacked.a, normalize(herePacked.xyz)) : pixelNormal;
     for (int y = 0; y <= 1; ++y) {
         for (int x = 0; x <= 1; ++x) {
-            vec2 cell = (base + vec2(x, y) + 0.5) / side;
-            float cellDepth = texture(G_DEPTH, cell).r;
-            if (cellDepth <= 0.0 || abs(depth - cellDepth) > 0.02 * max(depth, 1e-4)) {
+            // The G-buffer was rendered jittered, so the cell's own G-buffer sample has to be read
+            // at the jittered place; the grid was written at the fixed unjittered cell centre and
+            // is read there.
+            vec2 cell = clamp(base + vec2(x, y), vec2(0.0), side - 1.0);
+            vec2 cellGbuf = plagueGiCellUv(cell, side);
+            cellGbuf = (clamp(floor(cellGbuf * gbufSize), vec2(0.0), gbufSize - 1.0) + 0.5) / gbufSize;
+            vec2 cellGrid = (cell + 0.5) / side;
+            float cellDepth = texture(G_DEPTH, cellGbuf).r;
+            if (cellDepth <= 0.0) {
                 continue;
             }
-            float bilinear = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
-            // Shaped per cell, before the mix: each one arrived from its own bearing, and
-            // averaging the bearings first would aim the whole tap at a direction none of them saw.
-            total += plagueGiShape(texture(grid, cell).rgb, texture(GI_BOUNCE_DIR, cell).rgb,
-                                   texture(G_NORMAL, cell), pixelNormal) * bilinear;
-            weight += bilinear;
+            vec4 clipThere = vec4(cellGbuf * 2.0 - 1.0, cellDepth, 1.0);
+            vec4 worldThere = u_InvProjModelView * clipThere;
+            vec3 there = worldThere.xyz / worldThere.w;
+            vec4 cellPacked = texture(G_NORMAL, cellGbuf);
+            if (dot(cellPacked.xyz, cellPacked.xyz) <= 1e-6) continue;
+            vec3 faceThere = plagueDecodeGeometricNormal(cellPacked.a, normalize(cellPacked.xyz));
+            // Same geometric-facing criterion as GI history; shading bumps do not identify a face.
+            if (dot(faceHere, faceThere) < 0.9) continue;
+            float corner = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
+            float separation = max(abs(dot(there - here, faceHere)),
+                                   abs(dot(there - here, faceThere)));
+            // Compact, continuous support: confidence reaches zero at the plane allowance.
+            // Keep that lost coverage instead of dividing it away at a thin surface or silhouette.
+            float plane = 1.0 - smoothstep(0.0, tolerance, separation);
+            if (plane <= 0.0) continue;
+            vec3 light = texture(grid, cellGrid).rgb;
+            // Use the same continuous surface confidence for re-aiming and gathering.
+            // A hard confidence cutoff flips bump lighting as camera distance changes.
+            vec3 shaped = mix(light,
+                    plagueGiShape(light, texture(GI_BOUNCE_DIR, cellGrid).rgb,
+                                  cellPacked, pixelNormal), plane);
+            total += shaped * corner * plane;
         }
     }
-    if (weight > 0.0) {
-        return total / weight;
-    }
-    return plagueGiShape(texture(grid, uv).rgb, texture(GI_BOUNCE_DIR, uv).rgb,
-                         texture(G_NORMAL, uv), pixelNormal);
+    return total;
 }
 #endif
 
@@ -774,6 +811,7 @@ int debugView = int(u_Param3 + 0.5);
                && uwFragWorldY < u_WaterState.z));
 #endif
 
+
 // Reachable with the raster map off, as long as the traced tier is on: RT_SHADOW_COMPOSITE
 // already carries a full-light answer for every texel the trace could not reach when the raster
 // map is off, so this block needs no separate off-map branch of its own.
@@ -1020,25 +1058,19 @@ int debugView = int(u_Param3 + 0.5);
 
     vec3 localRadiance = vec3(0.0);
     float localBlockLight = blockLight;
-// Only when the voxel path is off. That path ASSIGNS localRadiance below rather than adding to it,
-// so with both on the bounce is thrown away a line later. Zeroing the block light here as well
-// would then leave the room with neither: no vanilla fill, and a traced answer nothing reads.
-#if PLAGUE_GI != 0 && PLAGUE_LOCAL_LIGHTING == 0
-    // Traced light replaces vanilla's block light rather than adding to it. That lightmap is a
-    // flood fill: it fills a room evenly whatever stands in the way, so a surface behind a wall
-    // reads as lit. The bounce measures the same light against the geometry, and the two together
-    // would light everything twice.
+#if PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0
+    // A lightmap merges placed and dynamic lights, so source-cache reach cannot select
+    // which lamp it replaces. A distance fallback also adds held light a second time.
     localBlockLight = 0.0;
-    // The grid holds light arriving at the surface. A matte surface sends back its own colour
-    // times that, so the albedo and the surface response belong here rather than in the grid.
-    // Two grids, read the same way. Both are averaged over frames; only the bounce is also spread
-    // across neighbours, so a grate keeps the shadow it casts. Kept as named values rather than
-    // folded in here: the energy split below (kD) is not known yet at this point in the file.
-    vec3 giBounceIrradiance = plagueGiUpsample(GI_BOUNCE, texCoord, depth, normal);
-    vec3 giDirectIrradiance = plagueGiUpsample(GI_DIRECT, texCoord, depth, normal);
+    localRadiance = texture(CLOUD_SHADOW_MASK, texCoord).rgb;
 #endif
-#if PLAGUE_LOCAL_LIGHTING != 0
-    localRadiance=texture(CLOUD_SHADOW_MASK,texCoord).rgb;
+#if PLAGUE_GI != 0
+    // The grid holds light arriving at the surface after one bounce. A matte surface sends back
+    // its own colour times that, so the albedo and the surface response belong here rather than
+    // in the grid. Kept as a named value rather than folded in here: the energy split below (kD)
+    // is not known yet at this point in the file. Added on top of whatever local light landed
+    // above, traced, voxel or none: the bounce runs independently of both.
+    vec3 giBounceIrradiance = plagueGiUpsample(GI_BOUNCE, texCoord, depth, normal);
 #endif
 
     PlagueBrdf brdf = plagueEvaluateBrdf(mat, albedo, normal, viewDir, sunDir);
@@ -1072,29 +1104,12 @@ int debugView = int(u_Param3 + 0.5);
     // conductor absorbs it. Neither is a branch.
     vec3 kD = (1.0 - specularAlbedo) * (1.0 - mat.metalness);
 
-#if PLAGUE_GI != 0 && PLAGUE_LOCAL_LIGHTING == 0
-    // Diffuse from both grids, weighted the same way the sun's own diffuse is: a polished or
-    // metal surface must not take full diffuse from a lamp it also mirrors.
-    localRadiance += kD * albedo * (giBounceIrradiance + giDirectIrradiance);
-
-    // Specular answer for the direct grid only. The bounce grid is smeared in from every
-    // surrounding surface, so it carries no single bearing worth mirroring; the reflection
-    // passes already own that content. GI_BOUNCE_DIR's length is how much the arrivals folded
-    // into this pixel's cell agreed on a bearing, so a pixel where they disagree fades toward no
-    // specular rather than mirroring a direction nothing actually came from.
-    vec3 giDirectBearing = texture(GI_BOUNCE_DIR, texCoord).rgb;
-    float giDirectAgreement = length(giDirectBearing);
-    if (giDirectAgreement > 1e-4) {
-        vec3 giDirectDir = giDirectBearing / giDirectAgreement;
-        PlagueBrdf giBrdf = plagueEvaluateBrdf(mat, albedo, normal, viewDir, giDirectDir);
-        // plagueEvaluateBrdf's specular already carries N.L against giDirectDir (brdf.glsl).
-        // giDirectIrradiance already carries the cosine at this surface for the same bearing, so
-        // the N.L folded into giBrdf.specular is divided back out first; multiplying by
-        // irradiance without removing it would square the cosine.
-        float giNdotL = max(dot(normal, giDirectDir), 1e-4);
-        vec3 giSpecularShape = giBrdf.specular / giNdotL;
-        localRadiance += giSpecularShape * giDirectIrradiance * clamp(giDirectAgreement, 0.0, 1.0);
-    }
+#if PLAGUE_GI != 0
+    // Diffuse from the bounce grid, weighted the same way the sun's own diffuse is: a polished or
+    // metal surface must not take full diffuse from a wall it also mirrors. No specular from it:
+    // the grid is smeared in from every surrounding surface, so it carries no single bearing
+    // worth mirroring, and the reflection passes already own that content.
+    localRadiance += kD * albedo * giBounceIrradiance;
 #endif
 
     // Both BRDF terms already carry N.L, so only visibility and light colour apply here; adding

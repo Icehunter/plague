@@ -11,7 +11,8 @@ uniform sampler2D Sampler1;
 in vec4 texProj0;
 in float sphericalVertexDistance;
 in float cylindricalVertexDistance;
-in vec2 v_PlagueMotion;
+in vec3 v_MotionCurrentClip;
+in vec3 v_MotionPreviousClip;
 
 layout(location = 0) out vec4 gNormalOut;
 layout(location = 1) out vec4 gAlbedoOut;
@@ -35,5 +36,9 @@ void main() {
     // Rough, non-metal, no porosity, no block light. The last lane is what would make it glow.
     gMaterialOut = vec4(0.0, 0.0, 0.0, 0.0);
     gAoOut = vec4(1.0, 0.0, 1.0, 0.25);
-    gMotionOut = v_PlagueMotion;
+    // Divide after interpolation; 0.5 converts NDC to UVs. Behind the previous eye,
+    // two UV spans force every [0,1] lookup out of bounds, including when previous w is zero.
+    gMotionOut = v_MotionPreviousClip.z > 0.0
+            ? (v_MotionCurrentClip.xy / v_MotionCurrentClip.z
+               - v_MotionPreviousClip.xy / v_MotionPreviousClip.z) * 0.5 : vec2(2.0);
 }

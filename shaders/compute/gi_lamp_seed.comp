@@ -1,0 +1,114 @@
+#version 450
+
+// A lamp ray from every point the bounce landed on, so lamp light bounces once.
+//
+// The bounce says what a surface is made of. What it sends back depends on the light reaching
+// it, and the sun ray beside this asks about one light only. A room at night has no sun: what
+// lights its walls is the glowing blocks, and without this ray the bounce carries none of that
+// light on to the floor. Same idea as gi_light_seed, from a different starting point: pick a lamp
+// in proportion to what it gives the hit, aim at a fresh point on its face, and ask whether
+// anything stands in the way.
+//
+// The light itself is added up here as well, every candidate's share, and handed on in a small
+// buffer: the resolve reads it back rather than walking the list a second time.
+
+#define PLAGUE_GI 0 //[0 1] compile "Bounce Light (Experimental)" {0="Off" 1="On"}
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax:ray_answer.glsl>
+#define PLAGUE_GI_LIGHT_READER
+#moj_import <fornax_runtime:gi_lights.glsl>
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Bindings: 0 globals, 1 packOptions (engine-injected), 2 the bounce rays, 3 their hits, 4 the
+// light list, 5 the grid (read only for its own extent), then the outputs, 6 the lamp rays and 7
+// the light each hit would receive. This pass writes no image itself, so the grid is bound purely
+// to read imageSize off it. Inputs are APPENDED, never inserted: an inserted one re-points every
+// binding after it, outputs included, with no error anywhere.
+layout(std430, set = 0, binding = 2) readonly buffer GiRayRequests {
+    vec4 words[];
+} bounce;
+layout(std430, set = 0, binding = 3) readonly buffer GiRayHits {
+    uint words[];
+} hits;
+layout(std430, set = 0, binding = 4) readonly buffer AnalyticLightList {
+    uint words[];
+} lights;
+layout(rgba16f, set = 0, binding = 5) uniform readonly image2D u_GiGrid;
+layout(std430, set = 0, binding = 6) buffer GiLampRequests {
+    vec4 words[];
+} rays;
+// One vec4 a cell: rgb the summed lamp light arriving at the hit, w 1 where a ray was sent.
+layout(std430, set = 0, binding = 7) buffer GiLampShade {
+    vec4 words[];
+} shade;
+
+const uint PLAGUE_GI_HIT_WORDS = 9u;
+const uint PLAGUE_GI_WORD_DISTANCE = 0u;
+const uint PLAGUE_GI_WORD_NORMAL = 4u;
+const uint PLAGUE_GI_WORD_TIER = 7u;
+
+// The chooser lives in the include and the list lives here, so this is how it reads one.
+uint plagueGiLightWord(uint index) {
+    return lights.words[index];
+}
+
+void plagueGiNoRay(uint index) {
+    rays.words[index * 2u] = vec4(0.0);
+    rays.words[index * 2u + 1u] = vec4(0.0, 1.0, 0.0, 0.0);
+    shade.words[index] = vec4(0.0);
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    uvec2 gridSize = uvec2(imageSize(u_GiGrid));
+    if (index >= gridSize.x * gridSize.y) return;
+
+    uint base = index * PLAGUE_GI_HIT_WORDS;
+
+    // A ray with no length asks for no trace, which is what an unanswered or missed bounce wants:
+    // there is no surface to light. Same for a frame with no lamps in it.
+    uint tier = hits.words[base + PLAGUE_GI_WORD_TIER];
+    float distance = uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_DISTANCE]);
+    uint count = min(lights.words[0], PLAGUE_GI_MAX_LIGHTS);
+    if (int(tier) == FORNAX_RAY_TIER_NONE || distance < 0.0 || count == 0u) {
+        plagueGiNoRay(index);
+        return;
+    }
+
+    vec4 originAndMin = bounce.words[index * 2u];
+    vec4 directionAndMax = bounce.words[index * 2u + 1u];
+    // Distances come back along the NORMALISED direction, and the seeded one is not normalised.
+    vec3 bounceDir = normalize(directionAndMax.xyz);
+    vec3 hitPoint = originAndMin.xyz + bounceDir * distance;
+    vec3 normal = vec3(
+            uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_NORMAL]),
+            uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_NORMAL + 1u]),
+            uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_NORMAL + 2u]));
+    // The zero vector means the hit names no face. The face the ray came in through faces back
+    // along the ray, which is the best guess left.
+    normal = dot(normal, normal) > 1e-6 ? normalize(normal) : -bounceDir;
+
+    PlagueGiPick pick = plagueGiPickLight(hitPoint, normal, count, plagueGiFrameSeed(index ^ 0x9E3779B9u));
+    vec3 toLight = pick.light.position - hitPoint;
+    if (!pick.valid || !(length(toLight) > 1e-3)) {
+        plagueGiNoRay(index);
+        return;
+    }
+    vec3 origin = hitPoint + normal * 0.03;
+    vec3 toTarget = plagueGiLightPoint(index ^ 0x9E3779B9u, pick.light) - origin;
+    float span = length(toTarget);
+    if (!(span > 1e-3)) {
+        plagueGiNoRay(index);
+        return;
+    }
+    vec3 direction = toTarget / span;
+    rays.words[index * 2u] = vec4(origin, 0.001);
+    rays.words[index * 2u + 1u] = vec4(direction, plagueGiLampReach(origin, direction, span, pick.light));
+    // What every lamp in reach sends the hit, cosine at the hit and falloff already in the share.
+    // Times four: only one cell in four traces this ray a frame, so the write here has to stand
+    // in for the three that did not.
+    shade.words[index] = vec4(pick.colourSum, 1.0);
+}

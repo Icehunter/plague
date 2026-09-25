@@ -1,0 +1,137 @@
+#version 450
+
+// Averages the traced lamp visibility over frames, one cell of the grid at a time.
+//
+// One ray a frame comes back yes or no, and no filter over neighbours can do more than a few
+// times better before it eats the shadow it is cleaning. Frames are the other axis: the same
+// surface under the same lamp answers the same every frame, so averaging over time costs no extra
+// rays. The arithmetic is voxel_local_accum.fsh's, moved onto the grid the rays are laid out on:
+// an age counter so a fresh cell takes its first answer outright, and a drift watch so a lamp
+// going out lands in a handful of frames rather than a whole window.
+
+#define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:gi_grid.glsl>
+#moj_import <fornax_runtime:geometric_normal.glsl>
+#moj_import <fornax:ray_answer.glsl>
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Bindings follow the pass's declaration order, inputs then the output: 0 globals, 1 packOptions
+// (both engine-injected), 2 the lamp rays, 3 their answers, 4 depth, 5 the surface normal,
+// 6 motion, 7 last frame's result, 8 last frame's own surface from gi_surface, then 9 this
+// frame's. Inputs are APPENDED, never inserted: an inserted one re-points every binding after it
+// with no error anywhere.
+layout(std430, set = 0, binding = 2) readonly buffer GiLightRequests {
+    vec4 words[];
+} rays;
+layout(std430, set = 0, binding = 3) readonly buffer GiLightHits {
+    uint words[];
+} hits;
+layout(set = 0, binding = 4) uniform sampler2D u_Depth;
+layout(set = 0, binding = 5) uniform sampler2D u_GNormal;
+layout(set = 0, binding = 6) uniform sampler2D u_Motion;
+layout(rgba16f, set = 0, binding = 7) uniform readonly image2D u_History;
+layout(rgba16f, set = 0, binding = 8) uniform readonly image2D u_SurfaceHistory;
+layout(rgba16f, set = 0, binding = 9) uniform writeonly image2D u_Out;
+
+#define PLAGUE_GI_HISTORY_DEPTH u_Depth
+#define PLAGUE_GI_HISTORY_NORMAL u_GNormal
+#define PLAGUE_GI_HISTORY_MOTION u_Motion
+#define PLAGUE_GI_HISTORY_SURFACE u_SurfaceHistory
+#moj_import <fornax_runtime:gi_history_test.glsl>
+
+// Word offsets inside one hit record. Appending to the record is safe; inserting moves every
+// later field with nothing to report it.
+const uint PLAGUE_GI_HIT_WORDS = 9u;
+const uint PLAGUE_GI_WORD_DISTANCE = 0u;
+const uint PLAGUE_GI_WORD_TIER = 7u;
+
+// How many frames a settled cell averages over.
+//
+// The voxel path takes four probes a pixel and settles over twelve frames. This grid takes one ray
+// a cell, and a cell covers several pixels, so it has fewer answers per patch of wall to average
+// and needs a longer window for the same grain: twice the voxel window. Shorter and the grain
+// shows at rest; longer and a lamp change is what a player waits for instead. The drift watch
+// below is what keeps that wait short.
+const float PLAGUE_GI_VIS_FRAMES = 24.0;
+// The running average of the gap between a frame's answer and the settled value, and the bar it
+// has to cross to start the count again.
+//
+// Sampling noise lands on both sides of the average and cancels; a lamp going out lands on one
+// side every frame and the running average walks away from zero. Set against a yes-or-no answer
+// at a half-lit shadow edge, the noisiest case: the gap is plus or minus a half, and its running
+// average at this rate would wander with a spread of sqrt(rate / (2 - rate)) times a half, about
+// 0.11, if the settled value stood still. It does not: a run of same-sided answers pulls the
+// average toward them and shrinks the next gap, so the real spread is narrower. Measured over a
+// hundred million cell-frames at a half (tools/verify_gi_temporal.py): the running average never
+// crossed 0.4, its highest value 0.3999 and its 99.99th percentile 0.31. A lamp going out
+// crosses the bar on the sixth frame; without the watch the same change takes 55.
+//
+// No single-frame step test, unlike the voxel path: with one yes-or-no answer a frame every
+// half-lit cell steps by a whole one every few frames, and a test on that would keep resetting
+// the very cells that need the window most.
+const float PLAGUE_GI_VIS_DRIFT = 0.1;
+const float PLAGUE_GI_VIS_DRIFT_BAR = 0.4;
+
+void main() {
+    ivec2 size = imageSize(u_Out);
+    ivec2 cell = ivec2(gl_GlobalInvocationID.xy);
+    if (cell.x >= size.x || cell.y >= size.y) return;
+    vec2 uv = plagueGiCellUv(vec2(cell), vec2(size));
+    // Row-major on the grid's WIDTH, the same one gi_light_seed read off the same target to lay
+    // its rays out. Either side using a different width answers a ray into the wrong cell.
+    uint index = uint(cell.y * size.x + cell.x);
+
+    // Fully lit where nothing was asked: a cell no lamp reaches is not a shadowed cell. Age zero,
+    // so a lamp coming into reach starts a fresh count instead of averaging against this.
+    float depth = texture(u_Depth, uv).r;
+    vec4 packed = texture(u_GNormal, uv);
+    // The flat face, decoded from gNormal's alpha, not the bumped normal in its rgb: leaves
+    // change their bumped normal texel to texel, which fails the history test's facing check
+    // every frame, and the flat face stays the same across a whole leaf block.
+    vec3 n = dot(packed.xyz, packed.xyz) > 1e-6
+            ? plagueDecodeGeometricNormal(packed.a, normalize(packed.xyz)) : vec3(0.0);
+    float reach = rays.words[index * 2u + 1u].w;
+    if (depth <= 0.0 || dot(n, n) <= 1e-6) {
+        imageStore(u_Out, cell, vec4(1.0, 0.0, 0.0, 1.0));
+        return;
+    }
+    // No lamp can light this surface, so no ray was needed. Mark this as answered;
+    // otherwise the merge may substitute voxel visibility for a deliberate zero-light result.
+    if (!(reach > 0.0)) {
+        imageStore(u_Out, cell, vec4(1.0, 1.0, 0.0, 1.0));
+        return;
+    }
+
+    // Whatever was at that spot last frame has to be the same surface, or this blends one
+    // surface's shadow onto another and drags it along as the view moves.
+    ivec2 corner; vec4 weights;
+    float kept = plagueGiHistoryWeights(uv, depth, n, size, corner, weights);
+    vec4 previous = kept > 0.0
+            ? plagueGiHistoryGather(u_History, corner, weights, size) : vec4(1.0, 0.0, 0.0, 1.0);
+
+    // The tier first. A buffer nothing traced reads back all zeros, and zero is a legal distance,
+    // so no other word can tell an answer from untouched memory. While acceleration data is
+    // unavailable, retain valid history; a fresh cell contributes no direct light until answered.
+    uint base = index * PLAGUE_GI_HIT_WORDS;
+    uint tier = hits.words[base + PLAGUE_GI_WORD_TIER];
+    if (int(tier) == FORNAX_RAY_TIER_NONE) {
+        imageStore(u_Out, cell, vec4(kept > 0.0 ? previous.rgb : vec3(1.0, 0.0, 0.0), 1.0));
+        return;
+    }
+    // A miss is the good case: nothing stood between the surface and the lamp.
+    float current = uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_DISTANCE]) < 0.0 ? 1.0 : 0.0;
+
+    float history = kept > 0.0 ? previous.r : current;
+    float gathered = kept > 0.0 ? previous.g : 0.0;
+    float drift = kept > 0.0 ? mix(previous.b, current - history, PLAGUE_GI_VIS_DRIFT) : 0.0;
+    if (abs(drift) > PLAGUE_GI_VIS_DRIFT_BAR) {
+        gathered = 0.0;
+        drift = 0.0;
+    }
+    gathered = min(gathered + 1.0, PLAGUE_GI_VIS_FRAMES);
+    imageStore(u_Out, cell, vec4(mix(history, current, 1.0 / gathered), gathered, drift, current));
+}

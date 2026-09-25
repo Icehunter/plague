@@ -1,7 +1,8 @@
 #version 450
 
-// One bounce ray per cell of a 256x256 grid laid over the screen, written straight into the
-// engine's request layout: 8 floats a ray, origin xyz + tMin, then direction xyz + tMax.
+// One bounce ray per cell of a grid laid over the screen (its size is read off the grid target),
+// written straight into the engine's request layout: 8 floats a ray, origin xyz + tMin, then
+// direction xyz + tMax.
 //
 // Origins are CAMERA-RELATIVE, the frame u_InvProjModelView hands back. The engine rebases them
 // into whichever tier answers. A world-space origin traces a scene displaced by that tier's grid
@@ -11,6 +12,8 @@
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:gi_grid.glsl>
+#moj_import <fornax_runtime:geometric_normal.glsl>
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
@@ -45,15 +48,20 @@ void main() {
     // Row-major on the grid's WIDTH. gi_resolve decodes this same index with the width it reads off
     // the same target, so the two must agree or a ray answers the wrong cell.
     vec2 cell = vec2(float(index % gridSize.x), float(index / gridSize.x));
-    vec2 uv = (cell + 0.5) / vec2(size);
+    vec2 uv = plagueGiCellUv(cell, vec2(size));
 
     float depth = texture(u_Depth, uv).r;
-    vec3 n = texture(u_GNormal, uv).xyz;
+    vec4 packed = texture(u_GNormal, uv);
+    // The flat face, decoded from gNormal's alpha, not the bumped normal in its rgb: leaves
+    // change their bumped normal texel to texel, which fails the history test's facing check
+    // every frame, and the flat face stays the same across a whole leaf block.
+    vec3 normal = dot(packed.xyz, packed.xyz) > 1e-6
+            ? plagueDecodeGeometricNormal(packed.a, normalize(packed.xyz)) : vec3(0.0);
 
     // Sky, or a pixel whose normal never got written. The direction still has to be well formed:
     // a zero-length one is a caller bug to the engine's kernel rather than a miss. A tMax of zero
     // is what says this ray wants no trace.
-    if (depth <= 0.0 || dot(n, n) <= 1e-6) {
+    if (depth <= 0.0 || dot(normal, normal) <= 1e-6) {
         requests.words[index * 2u] = vec4(0.0);
         requests.words[index * 2u + 1u] = vec4(0.0, 1.0, 0.0, 0.0);
         return;
@@ -62,7 +70,6 @@ void main() {
     vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
     vec4 world = u_InvProjModelView * clip;
     vec3 origin = world.xyz / world.w;
-    vec3 normal = normalize(n);
 
     // Cosine-weighted hemisphere about the normal, by Malley's method: a uniform disc lifted onto
     // the hemisphere. That is the density a diffuse bounce wants, so the resolve needs no weight.

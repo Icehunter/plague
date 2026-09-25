@@ -11,7 +11,7 @@
 // block's texture, so it has nothing to gain and detail to lose.
 
 uniform sampler2D u_VoxelLocalVisibility; // voxelLocalVisibility, r = this frame's visibility
-uniform sampler2D u_VoxelLocalVisAccum_history; // voxelLocalVisAccum.history, r = what previous frames settled on
+uniform sampler2D u_VoxelLocalVisVoxel_history; // voxelLocalVisVoxel.history, r = what previous frames settled on
 uniform sampler2D u_GMotion; // builtin.gMotion
 uniform sampler2D u_Depth; // builtin.depth
 uniform sampler2D u_GNormal; // builtin.gNormal
@@ -89,7 +89,7 @@ void main() {
         return;
     }
 
-    vec3 previous = texture(u_VoxelLocalVisAccum_history, previousUv).rgb;
+    vec3 previous = texture(u_VoxelLocalVisVoxel_history, previousUv).rgb;
     float history = previous.r;
     float gathered = previous.g;
     // Blue carries the running average of the gap between a frame and the settled answer.

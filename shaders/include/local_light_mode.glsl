@@ -5,6 +5,10 @@
 #define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="On"}
 #endif
 
+#ifndef PLAGUE_LOCAL_SHADOWS
+#define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
+#endif
+
 // A lightmap combines all placed lamps. Replacement must mute its block axis everywhere,
 // including unsupported receivers; cache validity cannot identify an individual lamp's share.
 vec2 plagueLightingTexCoord(vec2 coordinate) {

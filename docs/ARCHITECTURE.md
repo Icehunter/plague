@@ -92,11 +92,12 @@ Fornax's integer sidecar rectangles; misaligned leading edges are excluded where
 can overlap during mip reduction. This keeps emission and metal codes from crossing sprite boundaries.
 Missing bounds use level zero; missing overflow material pages use the engine's neutral layer.
 
-### 2. Screen-space occlusion and reflection: 9 passes
+### 2. Screen-space occlusion and reflection
 
 `ssao_raw` → `ssao_blur`, then `hiz` (a mip chain over depth), then the reflection tier:
-`ssr_trace_fancy` **or** `ssr_trace_fast`, each followed by its own blur, with `ssr_upsample` for the
-half-resolution tier and `ssr_prefilter` building a roughness pyramid.
+`ssr_trace_fancy` **or** `ssr_trace_fast`, each followed by optional world recovery and its own blur,
+with `ssr_upsample` for the half-resolution tier and `ssr_prefilter` building a roughness pyramid.
+The source-radiance producer runs before these consumers so reflected lighting uses current sources.
 
 The AO blur evaluates a five-by-five box using nine weighted bilinear samples. Its `ssaoRaw`
 input is R8 with linear clamp sampling; changing that sampler changes the kernel. The R8 output
@@ -324,6 +325,11 @@ the 512² Quality grid, and 16×16 groups cover the 256² Performance grid.
 folds it back; `tonemap` maps HDR to display and applies grading. `depth_copyback` restores depth for
 anything drawn afterwards.
 
+The exposure target stores mean luminance in r and the previous day/game clock in gba, using
+RGBA32F to preserve the day fraction. `lighting_history.glsl` distinguishes a commanded time jump
+from normal ticking, frozen daylight and clock rollover; a jump seeds the new measurement directly
+instead of adapting through the old lighting. Ordinary eye adaptation keeps its existing rates.
+
 `tonemap` also owns the world outline, which is why it reads `builtin.gAo`, appended at input 8. The
 detector runs there rather than in its own pass because it must sit after `temporal_accumulate` (a
 one-pixel line is the outlier a neighbourhood clamp rejects) and needs the finished colour to
@@ -376,7 +382,7 @@ pack.
 A constant that is not generated carries a comment saying why it has the value it has: a paper, a
 measurement, or the render it was tuned against.
 
-### Voxel water reflection recovery
+### Voxel reflection recovery
 
 `voxel_water_reflection_pass.glsl` holds the shared fullscreen implementation. The Debug option
 `PLAGUE_VOXEL_PROFILE` adds five timing draws: primary trace including alpha, surface
@@ -389,6 +395,25 @@ differences include those output sinks, compiler choices and cache/order effects
 no-fog estimates segment fog cost; no-fog minus direct estimates secondary reflection cost. Both
 are marginal draw differences, not exact timings inside the normal shader, and enabled-mode FPS
 is not a gameplay benchmark.
+
+Opaque recovery uses a separate entry into the same material, lighting and fog implementation.
+`resolve_hdr_opaque_reflection_fancy` and `_fast` run between their SSR trace and blur, at one eighth
+of the linear resolution of those rays. The `resolve_hdr` prefix is the existing engine ABI that
+supplies active sun, moon and terrain distance. A coarse receiver reuses its current SSR hit or
+traces world geometry on a miss. Its geometry and colour both use one snapped SSR texel centre;
+the reconstruction derives that same centre even at odd resolutions. `opaque_reflection_upsample`
+and `_fast` reconstruct at the SSR
+resolution, checking the containing coarse receiver against the geometric plane and shading lobe. With no compatible donor
+they leave a hole rather than borrow another surface. Every positive SSR hit keeps its existing
+colour and confidence. Coarse screen donors retain their fractional confidence, while world hits,
+including black blockers, carry confidence one. The recovered image is appended at blur input 6
+and enters the same roughness filtering and mip pyramid. A miss or unavailable voxel data stays
+zero confidence, leaving the existing sky/enclosure fallback in charge. Recovery retains the
+above-water-view boundary of the shared world lighting; underwater SSR is unchanged.
+
+Opaque reflected surfaces use local sources with either local lighting mode enabled. Their direct
+light suppresses merged block light and evaluates the existing finite source visibility probes
+alongside the BRDF, because a reflected world point has no screen-space visibility history.
 
 `PLAGUE_VOXEL_REFLECTIONS` defaults On under Reflections and runs `voxel_water_reflection` between
 the water SSR trace and the blur, at half size. It needs reflective water and SSR on. Screen-space
@@ -492,11 +517,13 @@ pass when Off. The display encoding is diagnostic only, not a source-energy stor
 
 ### Experimental local coloured lighting
 
-`PLAGUE_LOCAL_LIGHTING`, default Off under Debug, replaces vanilla placed block light on every
-surface. Missing source data and unsupported lamps have no vanilla fallback. Sun/sky, held light
-and visible emission remain separate. The shared block-light curve returns zero; forward geometry
-samples the zero-block-light column of the vanilla LUT. Raw light values remain available as world
-data. A merged lightmap cannot subtract one selected lamp, so replacement is global.
+`PLAGUE_LOCAL_LIGHTING`, default On under Debug, replaces vanilla placed block light globally.
+Missing source data and unsupported lamps do not restore the merged lightmap. Sun/sky, analytic
+held light and visible emission remain separate. The shared block-light curve suppresses vanilla
+for the voxel mode, including reflection proxies; the opaque resolve also suppresses it when
+traced block light is active. A source-distance fallback cannot identify an individual lamp's
+share and would also reintroduce dynamic held lighting alongside the analytic held light.
+Raw light values remain available as world data.
 
 `blocks.toml` opts casting sources in with root `[lighting] voxel = false` and per-category
 `lighting.voxel = true`. The engine resolves membership at harvest. Unselected blocks remain
@@ -526,6 +553,86 @@ visible surface, using emitter cosine, inverse-square transport and the material
 section ranges come from the receiver's 27 neighbouring sections. The authored finite domain is
 12 blocks from each source, with a smooth taper only from 9 to 12 blocks. There is no camera-range
 fade and no limit of three contributing faces. Adding known lamps adds their contributions.
+
+#### Traced lamp shadows and the bounce
+
+`PLAGUE_LOCAL_LIGHTING`, `PLAGUE_LOCAL_SHADOWS` and `PLAGUE_GI` are independent: each may be on or
+off in any combination. Per pixel, direct visibility comes from a valid traced answer, else the
+voxel probes if Local Coloured Light is on, else no local direct contribution. Neither direct
+mode restores vanilla block light on missing source data.
+Bounce Light adds on top of whatever that cascade produced, in every combination, including with
+both other options off.
+
+`voxel_local_sources` (the per-cell radiance the direct light, the traced shadows and the bounce
+all read) runs whenever any lighting mode is on. `voxel_local_direct` (the light itself, exact
+per pixel) runs only when `PLAGUE_LOCAL_LIGHTING` or `PLAGUE_LOCAL_SHADOWS` is on.
+`voxel_local_visibility` and
+`voxel_local_accum` are the voxel probes' own visibility pass and its temporal accumulation; they
+run whenever `PLAGUE_LOCAL_LIGHTING` is on, independent of whether traced shadows also run,
+accumulating into `voxelLocalVisVoxel`.
+
+`PLAGUE_LOCAL_SHADOWS` on runs `gi_light_seed` (one ray per cell of a 512x512 grid, lamp drawn by
+share, face point walked by R2), `gi_light_trace` (a `ray_query` visibility pass) and
+`gi_light_resolve` (per-cell age counter to 24 frames, drift watch, reprojection by motion vector
+with depth and normal rejection), writing `giLightVisRaw`. The merge pass `gi_light_upsample` runs
+whenever `PLAGUE_LOCAL_LIGHTING` or `PLAGUE_LOCAL_SHADOWS` is on: a depth and normal aware 2x2 read
+of `giLightVisRaw` gives the traced answer where a ray answered that cell (its frame-gathered count
+is nonzero); where none did, it falls back to `voxelLocalVisVoxel` if Local Coloured Light is on,
+else reports nothing found. It writes the merged fraction, and whether anything answered, into
+`voxelLocalVisAccum`, packed as `r` = fraction and `g` = answered (1 or 0). `voxel_local_combine`
+reads that target either way. `voxelLocalDirect` carries the resulting radiance in RGB and only
+the cloud shadow in alpha; no quantized reach mask changes the lightmap contribution. Bounce-only
+mode retains vanilla direct light because the bounce chain supplies only indirect light.
+The light list (`light_list_reset`, `light_list_build`, engine-dispatched) is built ahead of these
+passes whenever `PLAGUE_LOCAL_SHADOWS` or `PLAGUE_GI` is on, and shared with the bounce.
+
+`PLAGUE_GI` is independent of the other two and adds one bounce: `gi_seed_rays` (cosine hemisphere ray
+per cell) -> `gi_trace` (closest hit) -> `gi_shadow_seed`/`gi_shadow_trace` (sun ray from the
+hit) -> `gi_lamp_seed`/`gi_lamp_trace` (lamp ray from the hit, with the summed lamp light at the
+hit in `giLampShade`) -> `gi_resolve` (albedo over pi times what reaches the hit; per-cell age
+and luminance moments in `giMomentsRaw`, capped at 24 frames; the colour history is
+`giBounceMid.history`, last frame's once-spread light) -> `gi_blur`, `gi_blur_wide`,
+`gi_blur_step4`, `gi_blur_step8` (five-tap à-trous at steps 1, 2, 4, 8 with the variance carried
+in alpha and edge stops on facing, plane distance and luminance, Schied et al. 2017). Both grids
+test history with `gi_history_test.glsl`: motion-vector reprojection, then the point seen at the
+old spot must lie in the cell's own plane (2 percent of distance, 0.05 block floor) and face the
+same way. When bilinear bounce history is empty, `gi_surface_cache.glsl` first checks four separate
+surface estimates at that same cell. `gi_cache_update`, immediately after `gi_blur`, stores the
+once-filtered colour, raw direction, raw moments and normal/plane in four vertically stacked
+512x512 slots. These estimates survive the four TAA coverage phases without blending different
+leaf planes. The exact unjittered inverse camera and zero camera translation gate reuse; any view
+change clears the older slots and leaves ordinary motion reprojection intact. A fifth full-float
+metadata texel carries the lighting clock: discontinuous world time rejects every GI history path,
+including immediate and spatial history and unanswered holds. Slots expire after
+24 unobserved frames, and a returning sample uses a compounded temporal weight for the elapsed
+gap. A held, unanswered ray neither increases sample count nor refreshes expiry; its negative raw
+moment alpha preserves the elapsed gap if it becomes immediate history before tracing resumes.
+More than four
+recurring surfaces evict the least recently observed one, including on longer AA cycles.
+
+If no cached surface matches, bounce history can recover the nearest compatible neighbour within
+one cell. The borrowed estimate counts as at most one prior sample, so a different coplanar
+lighting region cannot donate its entire accumulated confidence. The current surface target stays
+truthful for filtering and traced direct visibility, which keeps its original bilinear-only test.
+The cache adds 64 MiB of ping-pong surface tuples plus its small camera metadata and one compute
+pass, with no additional rays; native regression and owner checks are required to establish its
+appearance and frame cost.
+
+`gi_trace` opts into Fornax's `atlas_uv_encoding = "texel_u16"`: hit word3 carries the exact
+level-zero atlas texel accepted by the ray's alpha test, tagged by flag bit13. `gi_resolve` uses
+`texelFetch` for that format and retains half-UV decoding for legacy hits. Normalized half UVs
+can round across several texels on large atlases and shade a hole or neighboring sprite instead
+of the accepted surface. This graph requires an engine that recognizes the encoding option.
+
+The resolve composites `kD * albedo * giBounce` on top of the local light. Each
+`ray_query` pass is one Metal round trip per frame; the frame runs four of them with both
+features on, plus the sun shadow's own.
+
+With `PLAGUE_GI_VIEW` enabled, `gi_debug_view` displays the filtered bounce before bump shaping.
+Its appended 2D sampler bindings expose raw/filtered light and direction, moments/history age,
+surface normals, motion, and pre/post-TAA scene colour to an F10 capture selecting that pass.
+Those extra inputs do not change the debug image. The pass is absent with the view off; it has
+no layered inputs because Fornax's fullscreen readback rejects an entire pass containing one.
 
 Full opaque cubes beside a source's forward cell clip its visible face area analytically when
 the receiver lies within the other tangent slab. A full cube is the engine's boxCount-0 palette
@@ -584,7 +691,8 @@ the local transport does not integrate water absorption along a segment.
 Visible emission and received source radiance share the scale derived by
 `tools/derive_local_emission.py`: a white unit face one block from a neutral rough wall matches the
 legacy block-14 reference luminance at the documented fixed settings. This establishes relative
-scene units, not measured lumens. Off keeps the legacy emission scale.
+scene units, not measured lumens. Voxel and traced local lighting use this same scale; disabling
+both keeps the legacy emission scale.
 
 The radiance buffer occupies 1,991,496 bytes and remains allocated for fixed bindings while Off.
 The engine sparse source inventory adds 418,632 bytes while enabled. Section state adds 32 bytes

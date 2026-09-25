@@ -24,6 +24,7 @@ int plagueEntityOccluderSize() { return textureSize(u_EntityOccluders); }
 #define PLAGUE_VOXEL_ENTITY_OCCLUDERS
 #moj_import <fornax_runtime:voxel_local_jitter.glsl>
 #moj_import <fornax_runtime:voxel_local_light.glsl>
+#define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
 in vec2 texCoord;
 // ONE output. A fullscreen pass may declare exactly one, and a second is not a compile error: the
 // graph never builds at all and every frame retries, which reads as a black screen.
@@ -36,7 +37,7 @@ out vec4 fragColor;
 void main() {
     // Fully lit where nothing is computed: a pixel no emitter reaches is not a shadowed pixel.
     fragColor=vec4(0.0,0.0,0.0,1.0);
-#if PLAGUE_LOCAL_LIGHTING != 0
+#if PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0
     float depth=texture(u_Depth,texCoord).r;
     // Reconstructed and dithered BEFORE any early return. plagueLocalJitter takes a screen
     // derivative, which is only defined when every pixel of a 2 by 2 quad reaches it; behind a

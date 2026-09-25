@@ -1,9 +1,8 @@
 #version 450
 
-// Second spreading step, two cells apart.
+// Fourth spreading step, eight cells apart.
 //
-// Every cell it reads is already an average of its own neighbours, so stepping over the ones in
-// between loses nothing and reaches twice as far. The kernel and the reasons live in
+// Last step; its output is what the world resolve reads. The kernel and the reasons live in
 // gi_blur_kernel.glsl.
 
 #define PLAGUE_GI 0 //[0 1] compile "Bounce Light (Experimental)" {0="Off" 1="On"}
@@ -13,8 +12,8 @@
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
-// Bindings: 2 the once-spread bounce, its variance riding in alpha, 3 depth, 4 its bearing, 5 the
-// surface normal, then the outputs, 6 the twice-spread bounce and 7 its bearing. Inputs are
+// Bindings: 2 the four-times-spread bounce, its variance riding in alpha, 3 depth, 4 its bearing,
+// 5 the surface normal, then the outputs, 6 the final bounce and 7 its bearing. Inputs are
 // APPENDED, never inserted: an inserted one re-points every binding after it, outputs included,
 // with no error anywhere.
 layout(rgba16f, set = 0, binding = 2) uniform readonly image2D u_Bounce;
@@ -31,9 +30,9 @@ layout(rgba16f, set = 0, binding = 7) uniform writeonly image2D u_OutDir;
 
 void main() {
     ivec2 cell = ivec2(gl_GlobalInvocationID.xy);
-    // Read off the once-spread grid itself, matching the first pass rather than a number kept in
-    // step with graph.toml by hand.
+    // Read off the previous step's grid itself, matching the earlier passes rather than a number
+    // kept in step with graph.toml by hand.
     ivec2 size = imageSize(u_Bounce);
     if (cell.x >= size.x || cell.y >= size.y) return;
-    plagueGiBlurCell(cell, 2, size);
+    plagueGiBlurCell(cell, 8, size);
 }

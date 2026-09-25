@@ -113,14 +113,14 @@ struct PlagueGiPick {
  * average with almost none of that noise. Talbot, Cline and Egbert, "Importance Resampling for
  * Global Illumination", EGSR 2005.
  *
- * Deterministic in the cell ALONE, not the frame. Only one ray can be spent here, so whichever
- * light it goes to is the only one whose shadow this cell knows. Re-drawing that light every frame
- * makes the cell ask about a different light each time, and a cell that can see one lamp but not
- * the other then swings between lit and dark while nothing moves. Holding the choice still leaves
- * the aim across the source as the only thing that varies, which is the part meant to vary. The
- * choice is weighted by contribution, so the light a cell settles on is the one that matters to it.
+ * Drawn afresh every frame, from the seed the caller passes. Held still per cell, a cell lit by
+ * two lamps only ever asks about one of them, and reads fully dark whenever that one is blocked
+ * although the other reaches it. Drawn in proportion to share each frame, the average over the
+ * accumulation window is the share-weighted visibility of every lamp, which is what the voxel
+ * probes measure. The extra swing per frame is the same coin toss those probes make, and the same
+ * window absorbs it.
  */
-PlagueGiPick plagueGiPickLight(vec3 surface, vec3 normal, uint count, uint cell) {
+PlagueGiPick plagueGiPickLight(vec3 surface, vec3 normal, uint count, uint seed) {
     PlagueGiPick pick;
     pick.weightSum = 0.0;
     pick.colourSum = vec3(0.0);
@@ -131,7 +131,7 @@ PlagueGiPick plagueGiPickLight(vec3 surface, vec3 normal, uint count, uint cell)
     pick.light.colour = vec3(0.0);
     pick.light.radius = 0.0;
     pick.light.emission = 0.0;
-    uint state = cell * 747796405u + 2891336453u;
+    uint state = seed * 747796405u + 2891336453u;
     for (uint i = 0u; i < count; ++i) {
         uint base = 1u + i * PLAGUE_GI_LIGHT_WORDS;
         PlagueGiLight light = plagueGiDecodeLight(plagueGiLightWord(base),
@@ -144,6 +144,12 @@ PlagueGiPick plagueGiPickLight(vec3 surface, vec3 normal, uint count, uint cell)
         vec3 toLight = faceCentre - surface;
         float range = length(toLight);
         if (!(range > 1e-4)) {
+            continue;
+        }
+        // Zero-support lights cannot enter the reservoir. Reject them before the four
+        // edge-angle evaluations; the sum and random sequence are unchanged.
+        float falloff = plagueGiFalloff(range, light.radius);
+        if (falloff <= 0.0) {
             continue;
         }
         // The receiver has to sit in front of the face's own plane: the block behind a face is
@@ -165,12 +171,8 @@ PlagueGiPick plagueGiPickLight(vec3 surface, vec3 normal, uint count, uint cell)
         if (dot(flux, faceNormal) > 0.0) {
             flux = -flux;
         }
-        // The rectangle's own solid-angle integral already carries the cosine at both ends and
-        // the inverse-square spread; only the tail closing near the reach limit is separate.
-        float falloff = plagueGiFalloff(range, light.radius);
-        if (falloff <= 0.0) {
-            continue;
-        }
+        // The solid-angle integral carries both cosines and inverse-square spread;
+        // falloff only closes the finite source reach.
         float share = light.emission * max(dot(flux, normal), 0.0) * falloff;
         if (!(share > 0.0)) {
             continue;
@@ -187,6 +189,82 @@ PlagueGiPick plagueGiPickLight(vec3 surface, vec3 normal, uint count, uint cell)
         }
     }
     return pick;
+}
+
+/** A seed that changes every frame for one cell, so a redraw per frame is a fresh draw. */
+uint plagueGiFrameSeed(uint cell) {
+    return cell * 747796405u + uint(u_FrameState.x) * 2891336453u;
+}
+
+// How long a spread of frames the aim across a lamp's face walks over. Short enough that a point
+// keeps seeing fresh parts of the lamp within the window it is averaged over, and dividing the
+// engine's own counter wrap evenly so the sequence cycles with no jump at it.
+const float PLAGUE_GI_LIGHT_WALK = 48.0;
+
+/**
+ * Where on the lamp's own face a ray aims, this frame.
+ *
+ * A lamp is a block, not a point. Aiming at its middle gives an edge with no width at all, and the
+ * real width is the face's own width times how far the receiver sits past the blocker, over how far
+ * the blocker sits from the face. A block-wide lamp half a block behind a grate therefore spreads
+ * its pattern over several blocks, and a crisp lattice on a far wall is not what a lamp in a cage
+ * does.
+ *
+ * One list entry is one flat face, so there is nothing to choose: the point is taken evenly over
+ * that face, however many cells wide the run is.
+ *
+ * Walked every frame, so a point that is averaged over frames sees the face spread out rather than
+ * one spot on it. R2: each step lands in the largest gap the earlier ones left. Roberts, "The
+ * Unreasonable Effectiveness of Quasirandom Sequences", 2018.
+ */
+vec3 plagueGiLightPoint(uint cell, PlagueGiLight light) {
+    // Three-round integer mix. One round leaves the low bits of neighbouring cells correlated, and
+    // correlated neighbours are a pattern rather than a dither.
+    uint state = cell * 747796405u + 2891336453u;
+    state ^= state >> 16; state *= 2246822519u;
+    state ^= state >> 13; state *= 3266489917u;
+    uint a = state ^ (state >> 16);
+    state = a * 747796405u + 2891336453u;
+    state ^= state >> 15; state *= 2246822519u;
+    uint b = state ^ (state >> 16);
+    vec2 base = vec2(float(a & 0xFFFFFFu), float(b & 0xFFFFFFu)) / 16777216.0;
+    float frame = mod(u_FrameState.x, PLAGUE_GI_LIGHT_WALK);
+    vec2 draw = fract(base + frame * vec2(0.7548776662466927, 0.5698402909980532));
+
+    int face = plagueLocalRunFace(light.run);
+    vec2 span = plagueLocalRunSpan(light.run);
+    vec3 alongU, alongV;
+    plagueGiFaceAxes(face, alongU, alongV);
+    return plagueGiFaceCentre(light) + alongU * ((draw.x - 0.5) * span.x)
+                                     + alongV * ((draw.y - 0.5) * span.y);
+}
+
+/**
+ * Where a lamp ray from `origin` stops: at the light's own block, not inside it.
+ *
+ * The list puts a light at the centre of its block, which is inside solid geometry, so a ray that
+ * runs the whole way there ends inside the very block it is asking about and comes back blocked
+ * by it. Every surface in the room then reads as shadowed.
+ *
+ * Half the cube's diagonal clears that from any direction, but it also clears a shell reaching
+ * 0.87 blocks out while the block itself stops at 0.5. Anything standing in that shell goes
+ * untested, and a cage built against a lamp sits exactly there: only the far side of each cage
+ * block would cast a shadow.
+ *
+ * The slab test gives the distance at which this ray enters the cube itself, so nothing outside
+ * the light's own block is skipped. A component near zero is held away from it, since a ray
+ * running along a face plane divides nothing by nothing. A surface already against the light
+ * leaves a stub that misses, which reads as lit.
+ */
+float plagueGiLampReach(vec3 origin, vec3 direction, float span, PlagueGiLight light) {
+    vec3 slabDir = vec3(abs(direction.x) < 1e-6 ? 1e-6 : direction.x,
+                        abs(direction.y) < 1e-6 ? 1e-6 : direction.y,
+                        abs(direction.z) < 1e-6 ? 1e-6 : direction.z);
+    vec3 toNear = (light.position - 0.5 - origin) / slabDir;
+    vec3 toFar = (light.position + 0.5 - origin) / slabDir;
+    vec3 nearest = min(toNear, toFar);
+    float entry = max(max(nearest.x, nearest.y), nearest.z);
+    return max(min(entry, span) - 0.001, 0.01);
 }
 #endif
 

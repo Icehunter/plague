@@ -81,7 +81,9 @@ vec3 plagueEmittedRadiance(vec3 albedoLinear, float emitterLum) {
     float lumSqrt = sqrt(lum);
     vec3 blendedHue = mix(squaredHue, hue, lumSqrt);
 
-#if PLAGUE_LOCAL_LIGHTING != 0
+    // Both visibility paths consume the same source radiance; selecting traced shadows must not
+    // put the visible emitter and its receivers back into legacy lightmap units.
+#if PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0
     return blendedHue * lum * PLAGUE_LOCAL_EMISSION_MAGNITUDE;
 #else
     return blendedHue * lum * PLAGUE_EMISSION_MAGNITUDE;

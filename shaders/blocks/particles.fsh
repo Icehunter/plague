@@ -7,7 +7,8 @@ uniform sampler2D Sampler0;
 
 in vec2 texCoord0;
 in vec4 vertexColor;
-in vec2 v_PlagueMotion;
+in vec3 v_MotionCurrentClip;
+in vec3 v_MotionPreviousClip;
 
 // Same G-buffer layout terrain, entities and block entities write, so one resolve lights all four.
 layout(location = 0) out vec4 gNormalOut;
@@ -49,5 +50,9 @@ void main() {
 
     // No fog here: the resolve applies it once, from depth, to every pixel the G-buffer marks as
     // geometry — the entire point of routing particles through the G-buffer at all.
-    gMotionOut   = v_PlagueMotion;
+    // Divide after interpolation; 0.5 converts NDC to UVs. Behind the previous eye,
+    // two UV spans force every [0,1] lookup out of bounds, including when previous w is zero.
+    gMotionOut = v_MotionPreviousClip.z > 0.0
+            ? (v_MotionCurrentClip.xy / v_MotionCurrentClip.z
+               - v_MotionPreviousClip.xy / v_MotionPreviousClip.z) * 0.5 : vec2(2.0);
 }

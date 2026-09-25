@@ -5,11 +5,25 @@
 // The stand-in sprite's alpha keeps leaves; see-through texels fall through to the background.
 #define PLAGUE_VOXEL_ALPHA_CUTOUTS
 #define PLAGUE_VOXEL_TEXTURED_FACES
+#ifdef PLAGUE_OPAQUE_REFLECTION
+uniform sampler2D u_GNormal; // opaque normal, with geometric normal packed in alpha
+uniform sampler2D u_Input1; // opaque receiver depth
+uniform sampler2D u_GMaterial; // appended input: same smoothness cutoff as opaque SSR
+#moj_import <fornax_runtime:geometric_normal.glsl>
+#moj_import <fornax_runtime:opaque_reflection_grid.glsl>
+#else
 uniform sampler2D u_WaterNormal; // water normal
 uniform sampler2D u_WaterDepth; // water depth
+// Opaque binds depth twice for the shared input layout; the engine aliases u_Depth to its
+// first slot (u_Input1), so declaring both names there would redeclare the same sampler.
 uniform sampler2D u_Depth; // opaque depth
+#endif
 #moj_import <fornax_runtime:voxel_coverage.glsl>
+#ifdef PLAGUE_OPAQUE_REFLECTION
+uniform sampler2D u_Input7; // current opaque SSR, at the selected reflection tier's resolution
+#else
 uniform sampler2D u_SsrWaterRaw; // current SSR
+#endif
 uniform sampler2DShadow u_SunShadowMap; // sun shadow map
 uniform sampler2D u_NormalAtlas; // normal atlas
 uniform sampler2D u_MaterialAtlas; // material atlas
@@ -36,6 +50,7 @@ layout(std140) uniform u_PassParams {
 in vec2 texCoord;
 out vec4 fragColor;
 
+#ifndef PLAGUE_OPAQUE_REFLECTION
 bool plagueVoxelFallbackNeeded(vec2 uv) {
     ivec2 size = textureSize(u_SsrWaterRaw, 0);
     vec2 center = uv * vec2(size);
@@ -56,21 +71,51 @@ bool plagueVoxelFallbackNeeded(vec2 uv) {
     }
     return false;
 }
+#endif
 
 void main() {
     fragColor = vec4(0.0);
 #if PLAGUE_VOXEL_REFLECTIONS != 0
     if (u_WaterState.x > 0.5) return;
+#ifdef PLAGUE_OPAQUE_REFLECTION
+    ivec2 screenSize = textureSize(u_Input7, 0);
+    ivec2 coarseSize = ivec2(round(vec2(1.0) / u_PassTexelSize));
+    ivec2 coarseCell = ivec2(floor(texCoord * vec2(coarseSize)));
+    vec2 receiverUv = plagueOpaqueReceiverUv(coarseCell, coarseSize, screenSize);
+    float depth = texture(u_Input1,receiverUv).r;
+    vec4 packedNormal = texture(u_GNormal,receiverUv);
+    // The cutoff is shared with ssr_trace/ssr_blur; below it the receiver never consumes a ray.
+    if (depth<=0.0 || texture(u_GMaterial,receiverUv).r<0.1
+            || dot(packedNormal.xyz,packedNormal.xyz)<1e-6) return;
+    // A coarse screen hit is already a shaded answer for this same receiver. Keep its
+    // confidence; tracing it again or scanning its entire footprint spent several extra ms.
+    vec4 screen = texelFetch(u_Input7, ivec2(receiverUv * vec2(screenSize)), 0);
+    if (screen.a > 0.0) { fragColor = screen; return; }
+    vec3 normal = normalize(packedNormal.xyz);
+    vec3 receiverNormal = plagueDecodeGeometricNormal(packedNormal.a,normal);
+#else
+    vec2 receiverUv = texCoord;
     vec3 normal; float roughness,flags;
     plagueDecodeWaterReflectionSurface(texture(u_WaterNormal,texCoord),normal,roughness,flags);
     float depth = texture(u_WaterDepth,texCoord).r;
     if (abs(flags)<0.5 || depth<=0.0 || texture(u_Depth,texCoord).r>=depth) return;
+    vec3 receiverNormal = normal;
     if (!plagueVoxelFallbackNeeded(texCoord)) return;
-    vec4 h = u_InvProjModelView*vec4(texCoord*2.0-1.0,depth,1.0);
+#endif
+    vec4 h = u_InvProjModelView*vec4(receiverUv*2.0-1.0,depth,1.0);
     vec3 origin = h.xyz/h.w;
+    vec3 rayDirection = reflect(normalize(origin),normal);
+#ifdef PLAGUE_OPAQUE_REFLECTION
+    // Match SSR's opaque geometric hemisphere, including offscreen receivers. A blocked
+    // direction carries a black answer rather than requesting an environment replacement.
+    if (dot(rayDirection,receiverNormal)<=0.0) {
+        fragColor=vec4(0.0,0.0,0.0,1.0);
+        return;
+    }
+#endif
     vec3 point,faceNormal,local; uint colour; int entry;
-    float state = plagueVoxelTraceMaterial(origin+normal*PLAGUE_COVERAGE_EPSILON,
-            reflect(normalize(origin),normal),point,faceNormal,colour,entry,local);
+    float state = plagueVoxelTraceMaterial(origin+receiverNormal*PLAGUE_COVERAGE_EPSILON,
+            rayDirection,point,faceNormal,colour,entry,local);
 #if PLAGUE_VOXEL_PROFILE_STAGE == 1
     // Consume the trace outputs so a prefix draw retains the work its later stages would use.
     // Integer scales come from the uint32 colour word and the low uint16 entry lane.

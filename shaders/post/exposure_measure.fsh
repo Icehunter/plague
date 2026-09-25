@@ -1,4 +1,6 @@
 #version 330
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:lighting_history.glsl>
 
 // Auto-exposure measurement: writes the 1x1 exposure accumulator. Grid-samples sceneHdrRefracted
 // for log-average scene luminance (Reinhard et al. 2002, "Photographic Tone Reproduction for
@@ -13,8 +15,7 @@
 // operating point, and exp2(avgLogLuma) is always > 0.
 
 uniform sampler2D u_SceneHdrRefracted; // sceneHdrRefracted: the base signal that establishes auto exposure
-uniform sampler2D u_Exposure_history; // exposure.history (previous frame's smoothed avg LINEAR luma; 0.0 =
-                            // no data yet / frame-1 sentinel, unambiguous since real luma is > 0)
+uniform sampler2D u_Exposure_history; // r = smoothed linear luma (0 = empty); gba = lighting clock
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -52,10 +53,13 @@ void main() {
     // Direction decides the rate (darker scene -> slower, rising exposure; brighter -> faster,
     // falling exposure), compared on the measured luma so this stays independent of tonemap.fsh's
     // own exposure formula.
-    float prev = texture(u_Exposure_history, texCoord).r;
+    vec4 history = texture(u_Exposure_history, texCoord);
+    float prev = history.r;
     float speed = (avgLuma < prev) ? u_ExposureAdaptSpeedDarken : u_ExposureAdaptSpeedBrighten;
     float retention = clamp(1.0 - speed, 0.0, 0.999);
-    float blended = (prev <= 0.0) ? avgLuma : mix(avgLuma, prev, retention);
+    // A commanded time change is new illumination, not eye adaptation to the old scene.
+    bool valid = prev > 0.0 && plagueLightingHistoryValid(vec4(history.gba, 1.0));
+    float blended = valid ? mix(avgLuma, prev, retention) : avgLuma;
 
-    fragColor = vec4(blended, 0.0, 0.0, 1.0);
+    fragColor = vec4(blended, plagueLightingClock().xyz);
 }

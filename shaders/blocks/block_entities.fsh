@@ -15,7 +15,8 @@ in vec4 vertexColor;
 in vec2 texCoord0;
 
 in vec3 v_PlagueWorldPos;
-in vec2 v_PlagueMotion;
+in vec3 v_MotionCurrentClip;
+in vec3 v_MotionPreviousClip;
 in float v_PlagueBlockLight;
 in float v_PlagueSkyLight;
 
@@ -67,5 +68,9 @@ void main() {
     gMaterialOut = vec4(labPbr.smoothness, labPbr.f0, labPbr.materialBlue,
                         v_PlagueBlockLight);
     gAoOut       = vec4(labPbr.ao, labPbr.emission, labPbr.pomShadow, 0.0);
-    gMotionOut   = v_PlagueMotion;
+    // Divide after interpolation; 0.5 converts NDC to UVs. Behind the previous eye,
+    // two UV spans force every [0,1] lookup out of bounds, including when previous w is zero.
+    gMotionOut = v_MotionPreviousClip.z > 0.0
+            ? (v_MotionCurrentClip.xy / v_MotionCurrentClip.z
+               - v_MotionPreviousClip.xy / v_MotionPreviousClip.z) * 0.5 : vec2(2.0);
 }

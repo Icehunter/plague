@@ -1,0 +1,91 @@
+#version 450
+
+// Keep independent bounce estimates for surfaces that take turns covering a stationary cell.
+// This runs after the first blur so colour retains its existing filtered feedback lineage;
+// direction and moments retain their raw lineage. Cached entries never feed the spatial filter.
+
+#define PLAGUE_GI 0 //[0 1] compile "Bounce Light (Experimental)" {0="Off" 1="On"}
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:gi_grid.glsl>
+#moj_import <fornax_runtime:gi_history_test.glsl>
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Inputs precede outputs in graph order. Append new inputs and move every output binding with
+// them; a partial change silently exchanges unrelated storage images.
+layout(rgba16f, set = 0, binding = 2) uniform readonly image2D u_CurrentLight;
+layout(rgba16f, set = 0, binding = 3) uniform readonly image2D u_CurrentDir;
+layout(rgba16f, set = 0, binding = 4) uniform readonly image2D u_CurrentMoments;
+layout(rgba16f, set = 0, binding = 5) uniform readonly image2D u_CurrentSurface;
+layout(rgba16f, set = 0, binding = 6) uniform readonly image2D u_CacheLight;
+layout(rgba16f, set = 0, binding = 7) uniform readonly image2D u_CacheDir;
+layout(rgba16f, set = 0, binding = 8) uniform readonly image2D u_CacheMoments;
+layout(rgba16f, set = 0, binding = 9) uniform readonly image2D u_CacheSurface;
+layout(rgba32f, set = 0, binding = 10) uniform readonly image2D u_CacheTransform;
+layout(set = 0, binding = 11) uniform sampler2D u_Depth;
+layout(rgba16f, set = 0, binding = 12) uniform writeonly image2D u_OutCacheLight;
+layout(rgba16f, set = 0, binding = 13) uniform writeonly image2D u_OutCacheDir;
+layout(rgba16f, set = 0, binding = 14) uniform writeonly image2D u_OutCacheMoments;
+layout(rgba16f, set = 0, binding = 15) uniform writeonly image2D u_OutCacheSurface;
+layout(rgba32f, set = 0, binding = 16) uniform writeonly image2D u_OutCacheTransform;
+
+#moj_import <fornax_runtime:lighting_history.glsl>
+#moj_import <fornax_runtime:gi_surface_cache.glsl>
+
+void plagueGiCacheWrite(ivec2 tap, vec4 light, vec4 direction, vec4 moments, vec4 surface) {
+    imageStore(u_OutCacheLight, tap, light);
+    imageStore(u_OutCacheDir, tap, direction);
+    imageStore(u_OutCacheMoments, tap, moments);
+    imageStore(u_OutCacheSurface, tap, surface);
+}
+
+void main() {
+    ivec2 cell = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(u_CurrentSurface);
+    if (any(greaterThanEqual(cell, size))) return;
+    if (cell.y == 0 && cell.x < 4) {
+        imageStore(u_OutCacheTransform, cell, u_InvProjModelViewNoJitter[cell.x]);
+    }
+    if (cell.y == 0 && cell.x == 4) {
+        imageStore(u_OutCacheTransform, cell, plagueLightingClock());
+    }
+
+    vec4 surface = imageLoad(u_CurrentSurface, cell);
+    vec4 moments = imageLoad(u_CurrentMoments, cell);
+    // Positive raw moment alpha marks a new observation. TIER_NONE may display held light, but cannot
+    // turn that stale answer into a new cache entry or reset any retained entry's unseen age.
+    bool observed = moments.a > 0.0 && moments.b > 0.0 && dot(surface.xyz, surface.xyz) > 1e-6;
+    vec3 position = vec3(0.0);
+    float tolerance = 0.0;
+    int written = 0;
+    if (observed) {
+        vec2 uv = plagueGiCellUv(vec2(cell), vec2(size));
+        position = plagueGiHistoryPosition(uv, texture(u_Depth, uv).r);
+        tolerance = max(PLAGUE_GI_HISTORY_PLANE * length(position), PLAGUE_GI_HISTORY_PLANE_FLOOR);
+        moments.a = 0.0;
+        plagueGiCacheWrite(cell, imageLoad(u_CurrentLight, cell), imageLoad(u_CurrentDir, cell), moments, surface);
+        written = 1;
+    }
+
+    if (plagueGiCacheTransformMatches()) {
+        for (int entry = 0; entry < PLAGUE_GI_CACHE_ENTRIES && written < PLAGUE_GI_CACHE_ENTRIES; ++entry) {
+            ivec2 oldTap = plagueGiCacheTexel(cell, size, entry);
+            vec4 oldMoments = imageLoad(u_CacheMoments, oldTap);
+            vec4 oldSurface = imageLoad(u_CacheSurface, oldTap);
+            if (oldMoments.b <= 0.0 || dot(oldSurface.xyz, oldSurface.xyz) <= 1e-6) continue;
+            oldMoments.a += 1.0;
+            if (oldMoments.a >= PLAGUE_GI_CACHE_MAX_GAP) continue;
+            if (observed && plagueGiHistorySurfaceMatches(oldSurface, normalize(surface.xyz), position, tolerance)) continue;
+            plagueGiCacheWrite(plagueGiCacheTexel(cell, size, written), imageLoad(u_CacheLight, oldTap),
+                               imageLoad(u_CacheDir, oldTap), oldMoments, oldSurface);
+            ++written;
+        }
+    }
+    // Every slot is overwritten, including on camera changes; ping-pong never revives an entry
+    // that was cleared in its other bank.
+    for (int entry = written; entry < PLAGUE_GI_CACHE_ENTRIES; ++entry) {
+        plagueGiCacheWrite(plagueGiCacheTexel(cell, size, entry), vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0));
+    }
+}

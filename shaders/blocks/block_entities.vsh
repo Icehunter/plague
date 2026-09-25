@@ -21,7 +21,8 @@ out vec2 texCoord0;
 
 // Camera-relative, matching terrain.vsh's convention so the resolve agrees with both.
 out vec3 v_PlagueWorldPos;
-out vec2 v_PlagueMotion;
+out vec3 v_MotionCurrentClip;
+out vec3 v_MotionPreviousClip;
 out float v_PlagueBlockLight;
 out float v_PlagueSkyLight;
 
@@ -43,11 +44,12 @@ void main() {
     // Screen-space motion for TAA reprojection. Camera motion only (see entities.vsh) — a chest lid
     // swinging in a still world reads as stationary, a smaller error than screen-wide smear.
     vec4 currentClip = gl_Position;
-    vec4 previousClip = u_PrevProjectionMatrix * u_PrevModelViewMatrix * vec4(worldPos, 1.0);
+    // Globals rotate camera-relative positions; translation must change to the previous camera.
+    vec4 previousClip = u_PrevProjectionMatrix * u_PrevModelViewMatrix
+            * vec4(worldPos + u_CameraDelta.xyz, 1.0);
 
-    // Each frame's jitter is baked into its own projection, so subtracting cancels it exactly —
-    // otherwise the jitter itself reads as motion, the wobble TAA exists to remove.
-    vec2 currentNdc = (currentClip.xy / currentClip.w) - u_JitterOffset;
-    vec2 previousNdc = (previousClip.xy / previousClip.w) - u_PrevJitterOffset;
-    v_PlagueMotion = (currentNdc * 0.5 + 0.5) - (previousNdc * 0.5 + 0.5);
+    // Preserve homogeneous coordinates through interpolation: divided vertex motion picks the
+    // wrong history pixel on slanted faces. Removing jitter times w is linear in clip space.
+    v_MotionCurrentClip = vec3(currentClip.xy - u_JitterOffset * currentClip.w, currentClip.w);
+    v_MotionPreviousClip = vec3(previousClip.xy - u_PrevJitterOffset * previousClip.w, previousClip.w);
 }

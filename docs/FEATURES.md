@@ -58,8 +58,33 @@ covers what the pack does, not the engine under it.
   Full opaque alcove walls clip the visible source area continuously. Other silhouettes retain
   four shadow samples per face. Static light textures work on overflow atlas pages as well as
   the base page; animated overflow sprites remain unsupported.
-  Visible emission and received light share the calibrated scale; Off keeps the legacy lighting.
+  Visible emission and received light share the calibrated scale in either local-light mode;
+  switching both modes off keeps legacy lighting.
   The owner has checked the direct-light appearance in game; its GPU cost remains high.
+- *Experiment, off by default, not yet checked in game:* Ray Tracing → Traced Block Light sends one
+  Metal ray per cell of a 512x512 grid toward a glowing block, drawn in proportion to its share, at
+  a fresh point on its face each frame, so grates, fences and leaves shadow at their true shape.
+  Independent of Local Coloured Light: per pixel, the traced answer is used where a ray answered
+  that cell; where none did, Local Coloured Light's own voxel probes are used if that option is on,
+  otherwise it waits for a valid trace without restoring the merged block-light map. The grid
+  averages answers over up to 24 frames with a per-cell
+  age counter and a drift watch, then hands the fraction to the same filter and multiply the voxel
+  probes use. Needs a ray-tracing tier; without one its direct light is unavailable. Switching
+  traced shadows does not change visible lamp emission brightness.
+- *Experiment, off by default, not yet checked in game:* Ray Tracing → Bounce Light works with any
+  lighting setup and adds one bounce on top: one ray per grid cell, and at the hit a sun ray and a
+  lamp ray, so a lit wall lights the floor in front of it and a lamp's light reaches a second
+  surface. Averaged over up to 24 frames per cell against last frame's once-spread light, with
+  the luminance's first two moments kept beside it, then spread by four variance-guided steps
+  (one, two, four and eight cells) that stop on facing, on distance from the cell's plane and
+  on a brightness gap measured in the cell's own standard deviations. History is kept when the
+  point seen at the old spot lies in the cell's plane, so walls at a grazing angle hold it while
+  walking. Stationary views also retain four separate surface estimates per cell through changing
+  cutout coverage; these expire after 24 unobserved frames and clear when the camera changes.
+  Commanded time jumps discard stale bounce light and exposure history immediately.
+  Longer AA cycles or more than four recurring surfaces can still exhaust that cache. Bounce
+  Light Strength scales the lamp share of the bounce only. There is no emission
+  term at the hit and no second bounce.
 - *Experiment, default Quarter block:* Debug → Local Light Source Size sets how much of each lit
   face casts light: Quarter block, Half block or Full face. Smaller gives sharper shadows from
   thin blocks such as a fence post or a hopper; Full face is the softest. The light's total energy
@@ -119,8 +144,12 @@ covers what the pack does, not the engine under it.
 - Two real tiers: Fancy at full resolution and Fast at half resolution with a joint-bilateral
   upsample. Fast is a quarter of the rays, not a coarser ray. Controls for strength, distance and
   step budget.
-- World Reflections fills missing above-water reflections from nearby world geometry, on by
-  default. Needs reflective water and SSR on. Voxel Reach sets its window: 1 to 16 chunks in
+- World Reflections fills missing opaque and water reflections from nearby world geometry, on by
+  default while the view is above water. Needs SSR on; water also needs Reflective mode. Positive
+  opaque screen hits keep their existing image and confidence. Opaque recovery uses one sample per
+  8x8 SSR pixels and rejects incompatible neighbouring surfaces; mirror detail can look coarse and
+  thin or sharply bumped reflections can remain unresolved. Its cost
+  rises with visible reflective area and nearby lights. Voxel Reach sets its window: 1 to 16 chunks in
   one-chunk steps, default 4. Both controls sit under Reflections; the coverage overlay is on
   Debug.
 

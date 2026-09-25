@@ -96,14 +96,6 @@ void main() {
         return;
     }
 
-    // Claim a slot. Past the cap the entry is dropped rather than written somewhere nothing reads,
-    // and the count is left at the cap so a reader never walks past the end.
-    uint slot = atomicAdd(lights.words[0], 1u);
-    if (slot >= PLAGUE_GI_MAX_LIGHTS) {
-        atomicMin(lights.words[0], PLAGUE_GI_MAX_LIGHTS);
-        return;
-    }
-
     // The list holds window-grid-local blocks: the cell's own coordinates less the grid's first
     // corner. Half a block puts the light at the cell's centre rather than its corner.
     ivec3 cell = ivec3(sources.words[base], sources.words[base + 1u], sources.words[base + 2u]);
@@ -137,6 +129,14 @@ void main() {
     // layout.
     uint radiusCount = uint(PLAGUE_LOCAL_REACH) | (16u << 8) | ((run & 0x7FFu) << 16);
 
+    // Reserve only after every rejection. Reset clears the count, not the records: reserving
+    // before the distance check counts an unwritten slot containing a previous frame's lamp.
+    // The shadow chooser then traces toward a source absent from the current lighting sum.
+    uint slot = atomicAdd(lights.words[0], 1u);
+    if (slot >= PLAGUE_GI_MAX_LIGHTS) {
+        atomicMin(lights.words[0], PLAGUE_GI_MAX_LIGHTS);
+        return;
+    }
     uint entry = 1u + slot * PLAGUE_GI_LIGHT_WORDS;
     lights.words[entry] = floatBitsToUint(local.x);
     lights.words[entry + 1u] = floatBitsToUint(local.y);

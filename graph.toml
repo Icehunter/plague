@@ -178,9 +178,9 @@ storage = true
 history = true
 filter = "linear"
 
-# --- Bounce-light test view ------------------------------------------------------------------
-# A 256x256 grid of one bounce ray per cell. The grid is fixed, not a fraction of the screen: the
-# ray count is declared once on the trace pass below and a scaled target would not match it.
+# --- Bounce light and traced lamp shadows ----------------------------------------------------
+# A 512x512 grid of one ray per cell. The grid is fixed, not a fraction of the screen: the ray
+# count is declared once on each trace pass below and a scaled target would not match it.
 
 
 # Eight floats a ray, 262144 rays: the layout the engine's ray_query pass reads and writes.
@@ -208,6 +208,27 @@ stride_bytes = 36
 count = 262144
 enabled_if = "PLAGUE_GI != 0"
 
+# A lamp ray from each bounce hit, so the glowing blocks' light bounces once.
+[targets.giLampRequests]
+kind = "buffer"
+stride_bytes = 32
+count = 262144
+enabled_if = "PLAGUE_GI != 0"
+
+[targets.giLampHits]
+kind = "buffer"
+stride_bytes = 36
+count = 262144
+enabled_if = "PLAGUE_GI != 0"
+
+# One vec4 a cell: what every glowing block in reach sends the bounce hit, summed by gi_lamp_seed
+# so the resolve does not walk the list a second time.
+[targets.giLampShade]
+kind = "buffer"
+stride_bytes = 16
+count = 262144
+enabled_if = "PLAGUE_GI != 0"
+
 [targets.giBounceRaw]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
@@ -215,7 +236,45 @@ width = 512
 height = 512
 storage = true
 # history = true IS the ping-pong: the resolve reads its own previous frame to average the noise
-# one ray per cell leaves behind.
+# one ray per cell leaves behind. Alpha counts the frames a cell has gathered.
+history = true
+filter = "linear"
+
+# Each grid cell's own surface: rgb the normal, a the plane's offset (normal dot the camera-relative
+# point). Its history is last frame's surface, which the history test compares against. Reading
+# this frame's depth at last frame's spot instead fails whenever the view turns, because that spot
+# then shows a different wall.
+[targets.giSurfaceRaw]
+enabled_if = "PLAGUE_GI != 0 || PLAGUE_LOCAL_SHADOWS != 0"
+format = "rgba16f"
+width = 512
+height = 512
+storage = true
+history = true
+filter = "nearest"
+
+# The first two moments of the bounce's luminance, averaged over frames beside it: r the mean, g
+# the mean of the square, b the samples gathered. Alpha is positive for an answered ray, zero
+# for an ordinary hold, or negative elapsed frames for a held cache answer.
+# The cache uses that flag so held answers cannot refresh expiry. history = true is ping-pong.
+[targets.giMomentsRaw]
+enabled_if = "PLAGUE_GI != 0"
+format = "rgba16f"
+width = 512
+height = 512
+storage = true
+history = true
+filter = "linear"
+
+# Traced lamp visibility, one ray a cell a frame, averaged over frames by gi_light_resolve. r the
+# fraction of the lamp a cell can see, g frames gathered, b the drift watch, a this frame's answer.
+# gi_light_upsample hands r and g to the voxel chain at the screen's size.
+[targets.giLightVisRaw]
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0"
+format = "rgba16f"
+width = 512
+height = 512
+storage = true
 history = true
 filter = "linear"
 
@@ -227,47 +286,21 @@ filter = "linear"
 [targets.analyticLightList]
 kind = "buffer"
 
+# The traced lamp shadows' rays, from the surface to a glowing block. Read by the traced-shadow
+# passes only, so gated on their option rather than the bounce's.
 [targets.giLightRequests]
 kind = "buffer"
 stride_bytes = 32
 count = 262144
-enabled_if = "PLAGUE_GI != 0"
+enabled_if = "PLAGUE_LOCAL_SHADOWS != 0"
 
 [targets.giLightHits]
 kind = "buffer"
 stride_bytes = 36
 count = 262144
-enabled_if = "PLAGUE_GI != 0"
+enabled_if = "PLAGUE_LOCAL_SHADOWS != 0"
 
 [targets.giBounce]
-format = "rgba16f"
-width = 512
-height = 512
-storage = true
-filter = "linear"
-
-# Light straight from the glowing blocks, kept apart from the bounce beside it.
-#
-# Averaged over frames but never blurred across neighbours. The ray goes at a point on the lamp's
-# surface, a different one each frame, so the average IS the fraction of the lamp a cell can see and
-# the soft edge comes out of it. Spreading it sideways as well would smear that edge over the room.
-#
-# Only the GI passes read the raw history. The giDirect target below stays on either way, so the
-# world resolve reads plain black from it when the bounce is off.
-[targets.giDirectRaw]
-enabled_if = "PLAGUE_GI != 0"
-format = "rgba16f"
-width = 512
-height = 512
-storage = true
-history = true
-filter = "linear"
-
-# The same light after one narrow pass over its neighbours. One yes-or-no a frame leaves a cell
-# holding one of a handful of answers, which reads as speckle however long the frame average runs.
-# One cell either side is about three pixels on screen: enough to settle that, far short of the
-# spreading the bounce beside it takes, which would smear the shadow back into a blob.
-[targets.giDirect]
 format = "rgba16f"
 width = 512
 height = 512
@@ -294,8 +327,19 @@ height = 512
 storage = true
 filter = "linear"
 
-# Between the two spreading steps. Nothing outside gi_blur_wide reads these.
+# Between the spreading steps: after step one, two and four. Alpha carries each cell's variance
+# from one step to the next. giBounceMid keeps history because the resolve averages against last
+# frame's once-spread light rather than the raw grid.
 [targets.giBounceMid]
+enabled_if = "PLAGUE_GI != 0"
+format = "rgba16f"
+width = 512
+height = 512
+storage = true
+history = true
+filter = "linear"
+
+[targets.giBounceDirMid]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
 width = 512
@@ -303,7 +347,82 @@ height = 512
 storage = true
 filter = "linear"
 
-[targets.giBounceDirMid]
+# Four independent recurring surfaces per stationary GI cell, stacked vertically. Four matches
+# the active TAA coverage cycle; longer AA cycles evict their least recently observed surface.
+# Cache moments.a is an unseen-frame count, unlike giMomentsRaw.a's signed observation flag. These are
+# history-only inputs to gi_resolve: current geometry/blur never sees an inactive cached surface.
+[targets.giCacheLight]
+enabled_if = "PLAGUE_GI != 0"
+format = "rgba16f"
+width = 512
+height = 2048
+storage = true
+history = true
+filter = "nearest"
+
+[targets.giCacheDir]
+enabled_if = "PLAGUE_GI != 0"
+format = "rgba16f"
+width = 512
+height = 2048
+storage = true
+history = true
+filter = "nearest"
+
+[targets.giCacheMoments]
+enabled_if = "PLAGUE_GI != 0"
+format = "rgba16f"
+width = 512
+height = 2048
+storage = true
+history = true
+filter = "nearest"
+
+[targets.giCacheSurface]
+enabled_if = "PLAGUE_GI != 0"
+format = "rgba16f"
+width = 512
+height = 2048
+storage = true
+history = true
+filter = "nearest"
+
+# Four exact inverse camera columns plus a lighting-clock texel. The latter invalidates all GI
+# history on time jumps, even when geometry stays fixed. Full float preserves the clock fraction.
+[targets.giCacheTransform]
+enabled_if = "PLAGUE_GI != 0"
+format = "rgba32f"
+width = 5
+height = 1
+storage = true
+history = true
+filter = "nearest"
+
+[targets.giBounceStep2]
+enabled_if = "PLAGUE_GI != 0"
+format = "rgba16f"
+width = 512
+height = 512
+storage = true
+filter = "linear"
+
+[targets.giBounceDirStep2]
+enabled_if = "PLAGUE_GI != 0"
+format = "rgba16f"
+width = 512
+height = 512
+storage = true
+filter = "linear"
+
+[targets.giBounceStep4]
+enabled_if = "PLAGUE_GI != 0"
+format = "rgba16f"
+width = 512
+height = 512
+storage = true
+filter = "linear"
+
+[targets.giBounceDirStep4]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
 width = 512
@@ -467,6 +586,34 @@ scale = 0.5
 filter = "linear"
 enabled_if = "SSR_QUALITY == 1"
 
+# Same resolution as the corresponding SSR rays. The blur binds these even with World
+# Reflections off, but that compile arm never samples their unwritten contents.
+[targets.voxelOpaqueReflection]
+format = "rgba16f"
+scale = 1.0
+enabled_if = "SSR_QUALITY == 2"
+
+[targets.voxelOpaqueReflectionHalf]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+enabled_if = "SSR_QUALITY == 1"
+
+# Full-resolution recovery measured 29 to 66 ms in native one-light fixtures at 3456x2234.
+# Eighth-linear sampling spends 1/64 as many world rays; a separate conservative reconstruction
+# preserves receiver boundaries before the existing roughness filter. This is scene-dependent cost.
+[targets.voxelOpaqueRaw]
+format = "rgba16f"
+scale = 0.125
+filter = "linear"
+enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_QUALITY == 2"
+
+[targets.voxelOpaqueRawFast]
+format = "rgba16f"
+scale = 0.0625
+filter = "linear"
+enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_QUALITY == 1"
+
 # Fast's temporal accumulation buffer. The history lives at HALF res, not full: accumulating at full
 # res would mean running the blur at full res, which is the 1.84 ms this tier exists to avoid.
 [targets.ssrHalf]
@@ -503,6 +650,20 @@ enabled_if = "SSR_QUALITY != 0"
 inputs = ["builtin.depth"]
 outputs = []
 
+# Source radiance must precede opaque world recovery as well as the primary local-light pass.
+[[pass]]
+name = "voxel_local_sources"
+type = "compute"
+shader = "shaders/compute/voxel_local_sources.comp"
+# Fills the per-cell radiance the direct light, the traced lamp shadows and the bounce all read,
+# so it has to run whenever any of the three does.
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0 || PLAGUE_GI != 0"
+dispatch = [64, 1, 1]
+inputs = ["globals", "packOptions", "voxelSourceWindow", "voxelSectionState", "voxelFaceTexture",
+          "builtin.blockAtlas", "builtin.materialAtlas", "builtin.blockAtlasPages",
+          "builtin.materialAtlasPages", "voxelPalette"]
+outputs = ["voxelLocalRadiance"]
+
 # NAME IS LOAD-BEARING: the engine supplies Hi-Z level count in u_Param2 only for passes named exactly
 # ssr_trace_fancy/ssr_trace_fast/ssr_trace_water. Rename one and u_Param2 silently stays 0, corrupting every ray.
 [[pass]]
@@ -523,6 +684,50 @@ enabled_if = "SSR_QUALITY == 1"
 inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHistory.history", "hiz"]
 outputs = ["ssrRawHalf"]
 
+# The resolve_hdr prefix is the existing engine ABI for current sun, moon and fog parameters.
+# Both receivers use the same world/material lighting as water recovery; only SSR misses trace.
+[[pass]]
+name = "resolve_hdr_opaque_reflection_fancy"
+type = "fullscreen"
+shader = "shaders/post/voxel_opaque_reflection.fsh"
+enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_QUALITY == 2"
+inputs = ["builtin.gNormal", "builtin.depth", "builtin.depth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
+          "ssrRaw", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
+          "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance",
+          "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw", "builtin.gMaterial"]
+outputs = ["voxelOpaqueRaw"]
+
+[[pass]]
+name = "resolve_hdr_opaque_reflection_fast"
+type = "fullscreen"
+shader = "shaders/post/voxel_opaque_reflection.fsh"
+enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_QUALITY == 1"
+inputs = ["builtin.gNormal", "builtin.depth", "builtin.depth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
+          "ssrRawHalf", "sunShadowMap", "builtin.blockAtlas", "voxelFaceTexture",
+          "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
+          "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance",
+          "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw", "builtin.gMaterial"]
+outputs = ["voxelOpaqueRawFast"]
+
+[[pass]]
+name = "opaque_reflection_upsample"
+type = "fullscreen"
+shader = "shaders/post/voxel_opaque_upsample.fsh"
+enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_QUALITY == 2"
+inputs = ["voxelOpaqueRaw", "builtin.depth", "builtin.gNormal", "builtin.gMaterial", "ssrRaw"]
+outputs = ["voxelOpaqueReflection"]
+
+[[pass]]
+name = "opaque_reflection_upsample_fast"
+type = "fullscreen"
+shader = "shaders/post/voxel_opaque_upsample.fsh"
+enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_QUALITY == 1"
+inputs = ["voxelOpaqueRawFast", "builtin.depth", "builtin.gNormal", "builtin.gMaterial", "ssrRawHalf"]
+outputs = ["voxelOpaqueReflectionHalf"]
+
 # Not renamed to `ssr_blur_fancy`: unlike the traces (engine-dictated names), this name is free, but
 # renaming would invalidate profiler comparisons made against it.
 [[pass]]
@@ -530,7 +735,7 @@ name = "ssr_blur"
 type = "fullscreen"
 shader = "shaders/post/ssr_blur.fsh"
 enabled_if = "SSR_QUALITY == 2"
-inputs = ["ssrRaw", "ssr.history", "builtin.gMotion", "builtin.depth", "builtin.gMaterial", "builtin.gNormal"]
+inputs = ["ssrRaw", "ssr.history", "builtin.gMotion", "builtin.depth", "builtin.gMaterial", "builtin.gNormal", "voxelOpaqueReflection"]
 outputs = ["ssr"]
 
 # Same shader as ssr_blur; converts tap spacing through the source/depth texture-size ratio so the
@@ -540,7 +745,7 @@ name = "ssr_blur_fast"
 type = "fullscreen"
 shader = "shaders/post/ssr_blur.fsh"
 enabled_if = "SSR_QUALITY == 1"
-inputs = ["ssrRawHalf", "ssrHalf.history", "builtin.gMotion", "builtin.depth", "builtin.gMaterial", "builtin.gNormal"]
+inputs = ["ssrRawHalf", "ssrHalf.history", "builtin.gMotion", "builtin.depth", "builtin.gMaterial", "builtin.gNormal", "voxelOpaqueReflectionHalf"]
 outputs = ["ssrHalf"]
 
 [[pass]]
@@ -663,13 +868,13 @@ outputs = ["consolidatedGbuf"]
 # Direct/off are mutually exclusive writers; Off copies the cloud mask without tracing lights.
 [targets.voxelSourceWindow]
 kind = "buffer"
-enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_GI != 0"
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0 || PLAGUE_GI != 0"
 
 # Engine-owned: boxes of nearby players, mobs and items, so local light can shadow against them.
 # EntityOccluderBuffer in the engine holds the layout; only voxel_local_direct reads it.
 [targets.entityOccluders]
 kind = "buffer"
-enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0"
 
 [targets.voxelLocalRadiance]
 kind = "buffer"
@@ -697,36 +902,35 @@ format = "rgba16f"
 scale = 1.0
 filter = "linear"
 
-[targets.voxelLocalVisAccum]
-enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
+# The voxel probe's own accumulated visibility, ping-ponged frame to frame. Traced shadows keep
+# their own average in giLightVisRaw; the merge pass below blends the two into voxelLocalVisAccum.
+[targets.voxelLocalVisVoxel]
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0"
 format = "rgba16f"
 scale = 1.0
 history = true
 filter = "linear"
 
+# The merge pass's own output: the traced answer where a ray answered, else the voxel probe's, at
+# the screen's size. Written fresh every frame from the two historied grids above, so it needs no
+# ping-pong of its own.
+[targets.voxelLocalVisAccum]
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0"
+format = "rgba16f"
+scale = 1.0
+filter = "linear"
+
 [targets.voxelLocalUnshadowed]
-enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0"
 format = "rgba16f"
 scale = 1.0
 filter = "nearest"
 
 [[pass]]
-name = "voxel_local_sources"
-type = "compute"
-shader = "shaders/compute/voxel_local_sources.comp"
-# The bounce light needs the same per-cell radiance, so this runs for either feature.
-enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_GI != 0"
-dispatch = [64, 1, 1]
-inputs = ["globals", "packOptions", "voxelSourceWindow", "voxelSectionState", "voxelFaceTexture",
-          "builtin.blockAtlas", "builtin.materialAtlas", "builtin.blockAtlasPages",
-          "builtin.materialAtlasPages", "voxelPalette"]
-outputs = ["voxelLocalRadiance"]
-
-[[pass]]
 name = "voxel_local_direct"
 type = "fullscreen"
 shader = "shaders/post/voxel_local_direct.fsh"
-enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0"
 inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "voxelOccupancy",
           "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelLocalRadiance",
           "builtin.gMotion", "builtin.blockAtlas", "voxelFaceTexture", "cloudShadowMask",
@@ -738,6 +942,8 @@ outputs = ["voxelLocalUnshadowed"]
 name = "voxel_local_visibility"
 type = "fullscreen"
 shader = "shaders/post/voxel_local_visibility.fsh"
+# The voxel probe's own visibility. Runs whenever LL is on, traced or not: the merge pass below
+# falls back to it wherever a ray gave no answer.
 enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
 inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "voxelOccupancy",
           "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelLocalRadiance",
@@ -752,8 +958,100 @@ name = "voxel_local_accum"
 type = "fullscreen"
 shader = "shaders/post/voxel_local_accum.fsh"
 enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
-inputs = ["voxelLocalVisibility", "voxelLocalVisAccum.history", "builtin.gMotion", "builtin.depth",
+inputs = ["voxelLocalVisibility", "voxelLocalVisVoxel.history", "builtin.gMotion", "builtin.depth",
           "builtin.gNormal"]
+outputs = ["voxelLocalVisVoxel"]
+
+# The list of glowing blocks and the traced lamp shadows sit here, before voxel_local_combine
+# reads the visibility they fill. Declared later they would fill it after it was read, and the
+# combine would multiply by a frame-old answer with nothing to report it.
+[[pass]]
+# Known to the engine by name: it sizes analyticLightList and dispatches the scan behind these.
+# The bounce and the traced lamp shadows both read the list.
+name = "light_list_reset"
+type = "compute"
+shader = "shaders/compute/light_list_reset.comp"
+enabled_if = "PLAGUE_LOCAL_SHADOWS != 0 || PLAGUE_GI != 0"
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions"]
+outputs = ["analyticLightList"]
+
+[[pass]]
+name = "light_list_build"
+type = "compute"
+shader = "shaders/compute/light_list_build.comp"
+enabled_if = "PLAGUE_LOCAL_SHADOWS != 0 || PLAGUE_GI != 0"
+# THE ENGINE REPLACES THIS. It knows the pass by name and sizes a cube of groups around the camera
+# from the live voxel window, so the value here is never the one that runs. The shader's own
+# local_size of 4 by 4 by 4 is the half of this the engine does read, through the group count it
+# divides by, so that one is a contract and this one is a placeholder.
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "voxelLocalRadiance"]
+outputs = ["analyticLightList"]
+
+[[pass]]
+# Each grid cell's surface this frame, for next frame's history test in both grids.
+name = "gi_surface"
+type = "compute"
+shader = "shaders/compute/gi_surface.comp"
+enabled_if = "PLAGUE_GI != 0 || PLAGUE_LOCAL_SHADOWS != 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal"]
+outputs = ["giSurfaceRaw"]
+
+[[pass]]
+# Traced lamp shadows. One ray a cell from the surface to a glowing block; the light itself stays
+# exact and per pixel in voxel_local_direct, and only how much of it got through is measured here.
+name = "gi_light_seed"
+type = "compute"
+shader = "shaders/compute/gi_light_seed.comp"
+enabled_if = "PLAGUE_LOCAL_SHADOWS != 0"
+dispatch = [1024, 1, 1]
+# giLightVisRaw.history is read only for imageSize: its extent is the grid this pass lays its rays
+# out over, appended last so the light requests output is the only binding it moves.
+inputs = ["globals", "packOptions", "analyticLightList", "builtin.depth", "builtin.gNormal",
+          "giLightVisRaw.history"]
+outputs = ["giLightRequests"]
+
+[[pass]]
+# Visibility: this asks whether anything stands between the surface and the light, so a traversal
+# may stop at the first thing it meets.
+name = "gi_light_trace"
+type = "ray_query"
+enabled_if = "PLAGUE_LOCAL_SHADOWS != 0"
+inputs = ["giLightRequests"]
+outputs = ["giLightHits"]
+
+[pass.ray_query]
+# The mesh tier only. The voxel tier has no leaf or glass texture and answers a leaf block as solid,
+# so a ray it answers flips between lit and shadowed against the mesh tier's answer on the next
+# frame, which is sparkle on every canopy. Unanswered rays hold last frame's result instead.
+min_tier = "hardware_mesh"
+kind = "visibility"
+rays = 262144
+
+[[pass]]
+# Averages the yes-or-no answers over frames, per cell, with an age counter and a drift watch.
+name = "gi_light_resolve"
+type = "compute"
+shader = "shaders/compute/gi_light_resolve.comp"
+enabled_if = "PLAGUE_LOCAL_SHADOWS != 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "giLightRequests", "giLightHits", "builtin.depth",
+          "builtin.gNormal", "builtin.gMotion", "giLightVisRaw.history", "giSurfaceRaw.history"]
+outputs = ["giLightVisRaw"]
+
+[[pass]]
+# The merge: the traced answer at the screen's size where a ray answered this cell, else the voxel
+# probe's own accumulated visibility, else nothing found. Writes voxelLocalVisAccum, so its filter
+# and its multiply in voxel_local_combine run unchanged either way.
+name = "gi_light_upsample"
+type = "fullscreen"
+shader = "shaders/post/gi_light_upsample.fsh"
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0"
+inputs = ["giLightVisRaw", "builtin.depth", "builtin.gNormal", "voxelLocalVisVoxel"]
 outputs = ["voxelLocalVisAccum"]
 
 [[pass]]
@@ -763,7 +1061,7 @@ outputs = ["voxelLocalVisAccum"]
 name = "voxel_local_combine"
 type = "fullscreen"
 shader = "shaders/post/voxel_local_combine.fsh"
-enabled_if = "PLAGUE_LOCAL_LIGHTING != 0"
+enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0"
 inputs = ["voxelLocalUnshadowed", "builtin.depth", "builtin.gNormal", "cloudShadowMask",
           "voxelLocalVisAccum"]
 outputs = ["voxelLocalDirect"]
@@ -772,7 +1070,7 @@ outputs = ["voxelLocalDirect"]
 name = "voxel_local_off"
 type = "fullscreen"
 shader = "shaders/post/voxel_local_off.fsh"
-enabled_if = "PLAGUE_LOCAL_LIGHTING == 0"
+enabled_if = "PLAGUE_LOCAL_LIGHTING == 0 && PLAGUE_LOCAL_SHADOWS == 0"
 inputs = ["cloudShadowMask"]
 outputs = ["voxelLocalDirect"]
 
@@ -875,6 +1173,8 @@ outputs = ["giRayHits"]
 # a hit has no albedo to read, so an answer from any other tier tells this pass nothing it can use.
 min_tier = "hardware_mesh"
 kind = "closest_hit"
+# Shade the exact texel accepted by the ray's alpha test; half UVs lose several texels on large atlases.
+atlas_uv_encoding = "texel_u16"
 rays = 262144
 
 [[pass]]
@@ -898,54 +1198,40 @@ inputs = ["giShadowRequests"]
 outputs = ["giShadowHits"]
 
 [pass.ray_query]
+# The mesh tier only. The voxel tier has no leaf or glass texture and answers a leaf block as solid,
+# so a ray it answers flips between lit and shadowed against the mesh tier's answer on the next
+# frame, which is sparkle on every canopy. Unanswered rays hold last frame's result instead.
+min_tier = "hardware_mesh"
 kind = "visibility"
 rays = 262144
 
 [[pass]]
-# Known to the engine by name: it sizes analyticLightList and dispatches the scan behind these.
-name = "light_list_reset"
+# A lamp ray from every point the bounce landed on, so lamp light bounces once. Reads the bounce
+# hits and the list; writes the rays and the light each hit would receive.
+name = "gi_lamp_seed"
 type = "compute"
-shader = "shaders/compute/light_list_reset.comp"
-enabled_if = "PLAGUE_GI != 0"
-dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions"]
-outputs = ["analyticLightList"]
-
-[[pass]]
-name = "light_list_build"
-type = "compute"
-shader = "shaders/compute/light_list_build.comp"
-enabled_if = "PLAGUE_GI != 0"
-# THE ENGINE REPLACES THIS. It knows the pass by name and sizes a cube of groups around the camera
-# from the live voxel window, so the value here is never the one that runs. The shader's own
-# local_size of 4 by 4 by 4 is the half of this the engine does read, through the group count it
-# divides by, so that one is a contract and this one is a placeholder.
-dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "voxelLocalRadiance"]
-outputs = ["analyticLightList"]
-
-[[pass]]
-name = "gi_light_seed"
-type = "compute"
-shader = "shaders/compute/gi_light_seed.comp"
+shader = "shaders/compute/gi_lamp_seed.comp"
 enabled_if = "PLAGUE_GI != 0"
 dispatch = [1024, 1, 1]
 # giBounceRaw.history is read only for imageSize: its extent is the grid this pass lays its rays
-# out over, appended last so the light requests output is the only binding it moves.
-inputs = ["globals", "packOptions", "analyticLightList", "builtin.depth", "builtin.gNormal",
+# out over, appended last so the two outputs are the only bindings it moves.
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "analyticLightList",
           "giBounceRaw.history"]
-outputs = ["giLightRequests"]
+outputs = ["giLampRequests", "giLampShade"]
 
 [[pass]]
-# Visibility: this asks whether anything stands between the surface and the light, so a traversal
-# may stop at the first thing it meets.
-name = "gi_light_trace"
+# Visibility: whether anything stands between the hit and the lamp.
+name = "gi_lamp_trace"
 type = "ray_query"
 enabled_if = "PLAGUE_GI != 0"
-inputs = ["giLightRequests"]
-outputs = ["giLightHits"]
+inputs = ["giLampRequests"]
+outputs = ["giLampHits"]
 
 [pass.ray_query]
+# The mesh tier only. The voxel tier has no leaf or glass texture and answers a leaf block as solid,
+# so a ray it answers flips between lit and shadowed against the mesh tier's answer on the next
+# frame, which is sparkle on every canopy. Unanswered rays hold last frame's result instead.
+min_tier = "hardware_mesh"
 kind = "visibility"
 rays = 262144
 
@@ -956,11 +1242,15 @@ shader = "shaders/compute/gi_resolve.comp"
 enabled_if = "PLAGUE_GI != 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
+# Positions 10 and 11 are the lamp hits and the lamp light at each hit. Position 5 is last
+# frame's light after its first spreading step, which is what the resolve averages against.
 inputs = ["globals", "packOptions", "giRayHits", "giShadowHits", "builtin.blockAtlas",
-          "giBounceRaw.history", "builtin.gMotion", "builtin.depth", "atmoSkyView", "giRayRequests",
-          "analyticLightList", "giLightHits", "builtin.gNormal", "atmoTransmittance",
-          "giBounceDirRaw.history", "giDirectRaw.history"]
-outputs = ["giBounceRaw", "giBounceDirRaw", "giDirectRaw"]
+          "giBounceMid.history", "builtin.gMotion", "builtin.depth", "atmoSkyView", "giRayRequests",
+          "giLampHits", "giLampShade", "builtin.gNormal", "atmoTransmittance",
+          "giBounceDirRaw.history", "giMomentsRaw.history", "giSurfaceRaw.history",
+          "giCacheLight.history", "giCacheDir.history", "giCacheMoments.history",
+          "giCacheSurface.history", "giCacheTransform.history"]
+outputs = ["giBounceRaw", "giBounceDirRaw", "giMomentsRaw"]
 
 [[pass]]
 name = "gi_blur"
@@ -970,8 +1260,23 @@ enabled_if = "PLAGUE_GI != 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "giBounceRaw", "builtin.depth", "giBounceDirRaw",
-          "giDirectRaw"]
-outputs = ["giBounceMid", "giBounceDirMid", "giDirect"]
+          "giMomentsRaw", "builtin.gNormal"]
+outputs = ["giBounceMid", "giBounceDirMid"]
+
+[[pass]]
+# Commit the current estimate after its first filter, retaining raw bearing/moment lineage.
+# A camera change clears all older entries; the ordinary previous-frame motion path stays intact.
+name = "gi_cache_update"
+type = "compute"
+shader = "shaders/compute/gi_cache_update.comp"
+enabled_if = "PLAGUE_GI != 0"
+# One 16x16 invocation group per part of the 512x512 GI grid, each invocation writes four slots.
+# Do not derive dispatch from the 2048-high output; update this if the GI grid extent changes.
+dispatch = [32, 32, 1]
+inputs = ["globals", "packOptions", "giBounceMid", "giBounceDirRaw", "giMomentsRaw", "giSurfaceRaw",
+          "giCacheLight.history", "giCacheDir.history", "giCacheMoments.history",
+          "giCacheSurface.history", "giCacheTransform.history", "builtin.depth"]
+outputs = ["giCacheLight", "giCacheDir", "giCacheMoments", "giCacheSurface", "giCacheTransform"]
 
 [[pass]]
 # Second spreading step, taps two cells apart. Separate pass rather than a wider loop in the first:
@@ -982,7 +1287,34 @@ shader = "shaders/compute/gi_blur_wide.comp"
 enabled_if = "PLAGUE_GI != 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
-inputs = ["globals", "packOptions", "giBounceMid", "builtin.depth", "giBounceDirMid"]
+inputs = ["globals", "packOptions", "giBounceMid", "builtin.depth", "giBounceDirMid",
+          "builtin.gNormal"]
+outputs = ["giBounceStep2", "giBounceDirStep2"]
+
+[[pass]]
+# Third step, four cells apart.
+name = "gi_blur_step4"
+type = "compute"
+shader = "shaders/compute/gi_blur_step4.comp"
+enabled_if = "PLAGUE_GI != 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "giBounceStep2", "builtin.depth", "giBounceDirStep2",
+          "builtin.gNormal"]
+outputs = ["giBounceStep4", "giBounceDirStep4"]
+
+[[pass]]
+# Fourth and last step, eight cells apart. Four steps at one, two, four and eight cells reach
+# fifteen cells either side, about a sixteenth of the screen, which is what one ray a cell needs
+# spread over before the grain is gone.
+name = "gi_blur_step8"
+type = "compute"
+shader = "shaders/compute/gi_blur_step8.comp"
+enabled_if = "PLAGUE_GI != 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "giBounceStep4", "builtin.depth", "giBounceDirStep4",
+          "builtin.gNormal"]
 outputs = ["giBounce", "giBounceDir"]
 
 [[pass]]
@@ -995,8 +1327,8 @@ shader = "shaders/post/gbuffer_resolve.fsh"
 # pass's own comment.
 # rtShadowComposite (u_Input18) holds direct and wide ambient shadow from one combined pass;
 # both use the world-position RT/raster handoff through the shared shadow filter.
-# u_Input19 stays reserved (bound to builtin.depth), so no input numbers shift.
-inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "builtin.depth", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial", "rtShadowComposite", "builtin.depth", "giBounce", "giBounceDir", "giDirect"]
+# u_Input19 and u_Input22 stay reserved (bound to builtin.depth), so no input numbers shift.
+inputs = ["builtin.gNormal", "consolidatedGbuf", "builtin.depth", "builtin.lightmap", "sunShadowMap", "ssao", "builtin.gMotion", "builtin.celestials", "builtin.noise", "ssrPrefilter", "builtin.waterDepth", "causticsTexture", "builtin.depth", "moonAlbedo", "moonNormal", "voxelLocalDirect", "atmoSkyView", "atmoAerial", "rtShadowComposite", "builtin.depth", "giBounce", "giBounceDir", "builtin.depth"]
 outputs = ["sceneHdrUnfogged"]
 
 # resolve_hdr is the name Fornax expects for the pass that reads render distance, debug view and
@@ -2569,7 +2901,8 @@ dispatch = [1, 1, 1]
 # stable across option flips. history = true because the per-frame self-blend in
 # exposure_measure.fsh IS the adaptation smoothing, not a separate pass.
 [targets.exposure]
-format = "r32f"
+# r is measured luminance, gba the previous lighting clock; consumers still read only r.
+format = "rgba32f"
 scale = 0.0
 history = true
 
@@ -2678,25 +3011,25 @@ outputs = ["builtin.output"]
 # Shared geometry buffers for water reflection recovery and the separate coverage overlay.
 [targets.voxelOccupancy]
 kind = "buffer"
-enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0"
 
 [targets.voxelPayload]
 kind = "buffer"
-enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0"
 
 [targets.voxelPalette]
 kind = "buffer"
-enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_GI != 0"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0 || PLAGUE_GI != 0"
 
 # Optional baked face UV and tint buffer for water reflection recovery.
 
 [targets.voxelFaceTexture]
 kind = "buffer"
-enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_GI != 0"
+enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0 || PLAGUE_GI != 0"
 
 [targets.voxelBrickSummary]
 kind = "buffer"
-enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0"
+enabled_if = "PLAGUE_VOXEL_COVERAGE != 0 || PLAGUE_VOXEL_REFLECTIONS != 0 || PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0"
 
 [targets.voxelCoverage]
 format = "rgba8"
@@ -2726,7 +3059,7 @@ outputs = ["builtin.output"]
 # even when water and reflections are off.
 [targets.voxelSectionState]
 kind = "buffer"
-enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC != 0 || PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_GI != 0"
+enabled_if = "PLAGUE_SOURCE_DIAGNOSTIC != 0 || PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0 || PLAGUE_GI != 0"
 
 [targets.voxelSourceSummary]
 kind = "buffer"
@@ -2758,7 +3091,9 @@ type = "fullscreen"
 shader = "shaders/post/gi_debug_view.fsh"
 enabled_if = "PLAGUE_GI != 0 && PLAGUE_GI_VIEW != 0"
 blend = "translucent"
-inputs = ["giBounce", "builtin.gAlbedo", "builtin.depth"]
+# F10 captures every declared input, including the diagnostic-only samplers. Keep this list
+# 2D-only: the capture facility rejects a whole pass if even one input is a layered texture.
+inputs = ["giBounce", "builtin.gAlbedo", "builtin.depth", "giBounceDir", "giMomentsRaw", "giBounceRaw", "giBounceDirRaw", "builtin.gNormal", "builtin.gMotion", "sceneHdrComposited", "sceneHdrTemporal", "giSurfaceRaw", "sceneHdrUnfogged"]
 outputs = ["builtin.output"]
 
 [[pass]]

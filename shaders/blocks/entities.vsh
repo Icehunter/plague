@@ -37,7 +37,8 @@ out vec2 texCoord0;
 // fragment stage needs it to write gNormal at all.
 out vec3 v_PlagueNormal;
 out vec3 v_PlagueWorldPos;
-out vec2 v_PlagueMotion;
+out vec3 v_MotionCurrentClip;
+out vec3 v_MotionPreviousClip;
 out float v_PlagueBlockLight;
 out float v_PlagueSkyLight;
 
@@ -78,11 +79,12 @@ void main() {
     v_PlagueNormal = normalize(mat3(inverse(u_ModelViewMatrix)) * viewNormal);
 
     vec4 currentClip = ProjMat * viewPos;
-    vec4 previousClip = u_PrevProjectionMatrix * u_PrevModelViewMatrix * vec4(worldPos, 1.0);
+    // Globals rotate camera-relative positions; translation must change to the previous camera.
+    vec4 previousClip = u_PrevProjectionMatrix * u_PrevModelViewMatrix
+            * vec4(worldPos + u_CameraDelta.xyz, 1.0);
 
-    // Each frame's jitter is baked into its own projection, so subtracting cancels it exactly —
-    // otherwise the jitter itself reads as motion, the wobble TAA exists to remove.
-    vec2 currentNdc = (currentClip.xy / currentClip.w) - u_JitterOffset;
-    vec2 previousNdc = (previousClip.xy / previousClip.w) - u_PrevJitterOffset;
-    v_PlagueMotion = (currentNdc * 0.5 + 0.5) - (previousNdc * 0.5 + 0.5);
+    // Preserve homogeneous coordinates through interpolation: divided vertex motion picks the
+    // wrong history pixel on slanted faces. Removing jitter times w is linear in clip space.
+    v_MotionCurrentClip = vec3(currentClip.xy - u_JitterOffset * currentClip.w, currentClip.w);
+    v_MotionPreviousClip = vec3(previousClip.xy - u_PrevJitterOffset * previousClip.w, previousClip.w);
 }
