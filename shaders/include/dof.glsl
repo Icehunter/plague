@@ -21,6 +21,12 @@
 // matching the exposure adaptation in this pack.
 #define u_DofFocusSpeed 0.10 //[0.02..0.50 step 0.02] runtime "Focus Speed"
 
+// Opt-in, default off: while the camera is perfectly still, the engine re-renders each
+// frame from a different point on the lens and the picture converges to a true camera
+// exposure. Experimental: interactions with ray traced lighting and upscalers are
+// unproven, so it never arms itself unasked.
+#define u_DofApertureStills 0 //[0 1] runtime "True Camera Stills" {0="Off" 1="On"}
+
 // Distance mode: no focus tracking, the world past a set distance goes soft. The lens and
 // focus sliders above do nothing while it is on; Distance Blur Size below sets the far
 // softness, still under Blur Size Limit.

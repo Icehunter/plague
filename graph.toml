@@ -3009,6 +3009,23 @@ enabled_if = "DOF_ENABLED && !BLOOM_ENABLED"
 inputs = ["sceneHdrRefracted"]
 outputs = ["sceneHdrGlare"]
 
+# The photo-still accumulator. NAME IS LOAD-BEARING: the engine supplies the aperture frame
+# index (u_Param2) and active flag (u_Param3) only for a pass named exactly dof_accumulate;
+# renamed, the params silently stay zero and the still never converges. Ungated target: the
+# ungated tonemap reads it under its DOF_ENABLED #ifdef, the dofFilled pattern.
+[targets.dofAccum]
+format = "rgba16f"
+scale = 1.0
+history = true
+
+[[pass]]
+name = "dof_accumulate"
+type = "fullscreen"
+shader = "shaders/post/dof_accumulate.fsh"
+enabled_if = "DOF_ENABLED"
+inputs = ["sceneHdrGlare", "dofAccum.history"]
+outputs = ["dofAccum"]
+
 # --- Depth of field --------------------------------------------------------------------------------
 # Half-resolution bokeh gather (Jimenez 2014 SIGGRAPH course design): a 1x1 autofocus accumulator,
 # a 1/16-scale tile map of the largest blur disc, the half-res gather over a golden-angle spiral,
@@ -3163,7 +3180,7 @@ shader = "shaders/post/tonemap.fsh"
 # Inputs are positional — append only, never insert.
 inputs = ["sceneHdrRefracted", "builtin.depth", "bloomFinal", "builtin.waterDepth", "exposure",
           "underwaterBlurred", "builtin.noise", "waterVolumeShaftsResolved", "builtin.gAo",
-          "heatBlurred", "dofFilled", "dofFocus", "sceneHdrGlare"]
+          "heatBlurred", "dofFilled", "dofFocus", "sceneHdrGlare", "dofAccum"]
 outputs = ["builtin.output"]
 
 # NO SNOW ACCUMULATION / COMPUTE PASS, deliberately: a deferred blend can only paint colour, not

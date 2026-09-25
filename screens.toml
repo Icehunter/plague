@@ -756,6 +756,7 @@ elements = [
     "u_DofFStop|requires:DOF_ENABLED",
     "u_DofMaxBlur|requires:DOF_ENABLED",
     "u_DofFocusSpeed|requires:DOF_ENABLED",
+    "u_DofApertureStills|requires:DOF_ENABLED",
     "u_DofDistanceMode|requires:DOF_ENABLED",
     "u_DofDistanceStart|requires:DOF_ENABLED",
     "u_DofDistanceFade|requires:DOF_ENABLED",
@@ -1818,6 +1819,13 @@ How fast the picture settles on a new subject when you look somewhere else.
 
 Lower is slower and calmer, like an eye taking a moment to adjust; higher snaps to the new \
 subject almost at once."""
+
+u_DofApertureStills = """
+Stand perfectly still and the picture slowly becomes a true camera photo: real lens blur \
+with nothing faked. Move and it returns to the normal blur at once.
+
+Experimental: with ray traced lighting it can shimmer while it settles, and the held item \
+can wobble. Off keeps the normal blur everywhere."""
 
 u_DofDistanceMode = """
 Blurs by distance alone instead of following where you look: everything past a set distance \

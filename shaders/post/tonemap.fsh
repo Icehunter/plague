@@ -35,6 +35,7 @@ uniform sampler2D u_HeatBlurred; // heatBlurred: half-resolution scene Gaussian,
 uniform sampler2D u_DofFilled; // dofFilled: half-res bokeh, rgb colour, a = gather blend; zero-cleared when DOF is gated off
 uniform sampler2D u_DofFocus; // dofFocus: 1x1 smoothed focus distance in blocks, 0.0 if unrun
 uniform sampler2D u_SceneHdrGlare; // sceneHdrGlare: scene with glare baked in (bloom_apply); zero-cleared when DOF is gated off
+uniform sampler2D u_DofAccum; // dofAccum: the photo-still aperture accumulation, a = confidence; zero-cleared when DOF is gated off
 
 // Only u_Param3 is read here; the trailing sun/celestial fields other passes append are left
 // undeclared, since the engine binds the full u_PassParams buffer regardless of block coverage.
@@ -449,6 +450,15 @@ void main() {
     float dofFocusDist = texture(u_DofFocus, vec2(0.5)).r;
     // Defensive: dof_focus runs earlier in this same frame and always writes >= 0.5.
     if (dofFocusDist > 0.0) {
+        // While the aperture accumulation is live, its running average becomes the BASE
+        // image: at frame zero it equals the current frame, so parking is seamless, and
+        // showing raw sub-frames instead reads as camera wobble. The synthetic blur below
+        // still applies on top and fades out by the accumulation's own confidence.
+        vec4 dofAccumSample = texture(u_DofAccum, frameUv);
+        bool dofAccumLive = dofAccumSample.a > 0.002 && !any(isnan(dofAccumSample.rgb));
+        if (dofAccumLive) {
+            hdr = max(dofAccumSample.rgb, vec3(0.0));
+        }
         // Nearest surface, water included, matching dof_focus/dof_tile/dof_downsample: the
         // whole chain must rank a water pixel the same way or the composite and the blur
         // disagree along every water edge.
@@ -469,6 +479,11 @@ void main() {
         float dofBlend = max(dofFarBlend, clamp(2.0 * dofSample.a, 0.0, 1.0));
         if (any(isnan(dofSample.rgb))) {
             dofBlend = 0.0;
+        }
+        if (dofAccumLive) {
+            // As the accumulation converges to the true camera image, the synthetic blur
+            // laid over it fades away rather than doubling the defocus.
+            dofBlend *= 1.0 - clamp(dofAccumSample.a, 0.0, 1.0);
         }
         hdr = mix(hdr, max(dofSample.rgb, vec3(0.0)), dofBlend);
         dofOutlineKeep = 1.0 - dofBlend;
