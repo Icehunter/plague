@@ -34,7 +34,7 @@ const float PLAGUE_ATLAS_GHOST_DIST = 32.0;
 
 // Read BY NAME by the engine (gates the water pre-pass on SSR_WATER_MODE/SSR_QUALITY) — a contract,
 // not a pack choice. Every declaring file must match byte-identically.
-#define SSR_QUALITY 2 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
+#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
 
 #define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 

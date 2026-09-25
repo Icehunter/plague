@@ -45,8 +45,8 @@
 
 #define u_FogSharpness 1.0 //[0.50..2.00 step 0.05] runtime "Fog Sharpness"
 
-// fit: tools/derive_fog.py
-#define u_FogHeight 26.0 //[6.0..96.0 step 1.0] runtime "Fog Height"
+// fit: tools/derive_fog.py gave 26.0; 16.0 is the owner's played choice.
+#define u_FogHeight 16.0 //[6.0..96.0 step 1.0] runtime "Fog Height"
 
 // Faint haze left on far peaks above the fog layer, so high terrain reads as distant air rather
 // than cut-out shapes. fit: tools/derive_fog.py
@@ -71,7 +71,7 @@
 
 #define u_FogRainResponse 1.0 //[0.00..2.00 step 0.05] runtime "Rain Fog"
 
-// fit: tools/derive_fog.py
+// fit: tools/derive_fog.py gave 26.0; 16.0 is the owner's played choice.
 #define u_FogRainDepth 0.98 //[0.00..2.00 step 0.02] runtime "Rain Fog Height"
 
 // Fades out as the ground dries rather than vanishing with the weather.
@@ -125,7 +125,7 @@
 // Fine tuning. Also gated behind "Advanced Fog Settings"; off, the shipped defaults hold.
 // -------------------------------------------------------------------------------------------------
 
-// fit: tools/derive_fog.py
+// fit: tools/derive_fog.py gave 26.0; 16.0 is the owner's played choice.
 #define u_FogClimbRise 0.44 //[0.00..1.00 step 0.02] runtime "Fog Seen From Above"
 
 // Below Min sky light a nearby surface counts as underground and gets no fog; above Max it fogs

@@ -23,7 +23,7 @@ layout(std140) uniform u_PassParams {
 };
 
 #define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "World Reflections" {0="Off" 1="On"}
-#define SSR_QUALITY 2 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
+#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
 #define SSR_WATER_MODE 2 //[0 1 2] compile "Water Surface" {0="Vanilla" 1="Shaded" 2="Reflective"}
 
 const int WATER_MARCH_SAMPLES = 30;

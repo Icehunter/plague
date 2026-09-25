@@ -10,7 +10,7 @@
 // voxel_local_combine's own depth and normal aware filter and its multiply run unchanged either way.
 
 #define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
-#define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="On"}
+#define PLAGUE_LOCAL_LIGHTING 0 //[0 1] compile "Local Coloured Light" {0="Off" 1="On"}
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:gi_grid.glsl>
 #moj_import <fornax_runtime:geometric_normal.glsl>

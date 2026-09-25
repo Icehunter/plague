@@ -38,7 +38,7 @@ layout(std140) uniform u_PassParams {
     vec3  u_SunDirection;
 };
 
-#define SSR_QUALITY 2 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
+#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
 #define u_SsrMaxDistance 32.0 //[16.0..256.0 step 4.0] runtime "Reflection Distance"
 #define u_SsrTraceQuality 64.0 //[16.0..96.0 step 4.0] runtime "Reflection Quality"
 

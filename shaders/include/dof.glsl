@@ -10,16 +10,16 @@
 
 // How zoomed-in the pretend lens is; longer lenses melt the background more.
 #define u_DofFocalLength 50.0 //[15.0..135.0 step 5.0] runtime "Focal Length"
-// How wide the lens opens; lower numbers let in more light and blur more. Default f/2.0 picked
-// against live captures: f/2.8 at 50 mm reads too subtle at 1080p half resolution.
-#define u_DofFStop 2.0 //[0.95..16.0 step 0.05] runtime "F-Stop"
+// How wide the lens opens; lower numbers let in more light and blur more. Default f/1.0,
+// the owner's played setting: the widest dream-lens look at 50 mm.
+#define u_DofFStop 1.0 //[0.95..16.0 step 0.05] runtime "F-Stop"
 // Hard cap on disc radius in half-resolution pixels: a safety rail for the near field, which
 // grows without bound as objects approach the lens. 20 from the tools/verify_dof.py renders,
 // where larger discs at 64 taps start to grain.
 #define u_DofMaxBlur 20.0 //[4.0..32.0 step 1.0] runtime "Blur Size Limit"
 // Per-frame blend toward the newly measured focus distance; frame-rate dependent by choice,
 // matching the exposure adaptation in this pack.
-#define u_DofFocusSpeed 0.10 //[0.02..0.50 step 0.02] runtime "Focus Speed"
+#define u_DofFocusSpeed 0.32 //[0.02..0.50 step 0.02] runtime "Focus Speed"
 
 // Opt-in, default off: while the camera is perfectly still, the engine re-renders each
 // frame from a different point on the lens and the picture converges to a true camera
@@ -30,17 +30,17 @@
 // Distance mode: no focus tracking, the world past a set distance goes soft. The lens and
 // focus sliders above do nothing while it is on; Distance Blur Size below sets the far
 // softness, still under Blur Size Limit.
-#define u_DofDistanceMode 0 //[0 1] runtime "Blur By Distance" {0="Off" 1="On"}
-// Where the softness begins, in chunks. Default 6: close to 100 blocks, so a build the
-// player stands in stays sharp while the horizon softens.
-#define u_DofDistanceStart 6.0 //[1.0..16.0 step 1.0] runtime "Distance Blur Start"
-// Chunks from the start to full size. Default 4 spreads the onset over 64 blocks so no
+#define u_DofDistanceMode 1 //[0 1] runtime "Blur By Distance" {0="Off" 1="On"}
+// Where the softness begins, in chunks. Default 2, the owner's played setting: the
+// softness begins just past the near build.
+#define u_DofDistanceStart 2.0 //[1.0..16.0 step 1.0] runtime "Distance Blur Start"
+// Chunks from the start to full size. Default 2 spreads the onset over 32 blocks so no
 // sharp ring shows where the blur begins.
-#define u_DofDistanceFade 4.0 //[1.0..16.0 step 1.0] runtime "Distance Blur Fade"
-// Far softness in half-res pixels: a haze, not a photo-mode disc. 5 keeps far builds
-// readable and sits near what the f/2 lens gives the far field; Blur Size Limit still caps
-// it. Ramping to the cap reads as a wall of fog on a hillside.
-#define u_DofDistanceBlur 5.0 //[1.0..12.0 step 1.0] runtime "Distance Blur Size"
+#define u_DofDistanceFade 2.0 //[1.0..16.0 step 1.0] runtime "Distance Blur Fade"
+// Far softness in half-res pixels: a haze, not a photo-mode disc. Default 2, the owner's
+// played setting: a whisper of haze that keeps far builds readable; Blur Size Limit still
+// caps it. Ramping to the cap reads as a wall of fog on a hillside.
+#define u_DofDistanceBlur 2.0 //[1.0..12.0 step 1.0] runtime "Distance Blur Size"
 
 // How strongly small bright spots keep their shine inside the blur. 0.4 picked off the
 // offline disc render: glints still read as discs while flat fields stay an exact average.

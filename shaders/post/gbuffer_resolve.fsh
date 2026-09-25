@@ -31,7 +31,7 @@
 #moj_import <fornax_runtime:end_sky.glsl>
 #moj_import <fornax_runtime:surface_lighting.glsl>
 
-#define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="On"}
+#define PLAGUE_LOCAL_LIGHTING 0 //[0 1] compile "Local Coloured Light" {0="Off" 1="On"}
 #define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
 
 uniform sampler2D u_GNormal; // builtin.gNormal
@@ -190,7 +190,7 @@ uniform sampler2D u_GiBounceDir; // giBounceDir, which way that light arrives an
 // SSR_QUALITY is declared byte-identically in ssr_trace.fsh, ssr_blur.fsh, terrain.fsh and the
 // water shaders (option-scanner merge contract), and the ENGINE also reads this exact name to
 // gate the water pre-pass.
-#define SSR_QUALITY 2 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
+#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
 #define u_SsrStrength 1.15 //[0.0..1.5 step 0.05] runtime "Reflection Strength"
 
 // The ENGINE reads this exact name to cancel vanilla's sky pass (GraphRunner.packOwnsSky). Off:

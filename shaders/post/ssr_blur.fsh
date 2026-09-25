@@ -38,7 +38,7 @@ layout(std140) uniform u_PassParams {
     vec3  u_SunDirection;
 };
 
-#define SSR_QUALITY 2 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
+#define SSR_QUALITY 1 //[0 1 2] compile "Reflections" {0="Off" 1="High" 2="Epic"}
 
 // High because one mirror ray per pixel is a thin guess. The depth check below is a guess too:
 // it cannot tell the pixel, or the thing it reflected, is the same one as last frame.

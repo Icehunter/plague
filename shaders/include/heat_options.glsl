@@ -12,9 +12,9 @@
 #define u_HeatShimmerEmissive 1.0 //[0.0..1.0 step 1.0] runtime "Shimmer Over Lava & Fire"
 #define u_HeatShimmerNether 1.0 //[0.0..1.0 step 1.0] runtime "Nether Air Shimmer"
 
-// Independent of Heat Shimmer Strength above, which scales the wave/emissive drive only. First
-// guess, tune once seen live.
-#define u_NetherHeatAmbient 0.45 //[0.00..2.00 step 0.05] runtime "Nether Shimmer Strength"
+// Independent of Heat Shimmer Strength above, which scales the wave/emissive drive only.
+// 0.2 tuned in the owner's own sessions.
+#define u_NetherHeatAmbient 0.2 //[0.00..2.00 step 0.05] runtime "Nether Shimmer Strength"
 
 // Chunks. Ramps in over the 8 blocks past this point.
 #define u_NetherHeatDistance 1.0 //[0.10..4.00 step 0.10] runtime "Nether Shimmer Start"

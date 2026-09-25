@@ -6,7 +6,7 @@
 #moj_import <fornax_runtime:material_options.glsl>
 #moj_import <fornax_runtime:voxel_lightmap.glsl>
 
-#define PLAGUE_LOCAL_LIGHTING 1 //[0 1] compile "Local Coloured Light" {0="Off" 1="On"}
+#define PLAGUE_LOCAL_LIGHTING 0 //[0 1] compile "Local Coloured Light" {0="Off" 1="On"}
 #ifndef PLAGUE_LOCAL_SHADOWS
 #define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
 #endif

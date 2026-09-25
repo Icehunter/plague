@@ -64,11 +64,11 @@
 // ray by first-hit distance, and per-deck targets lose that ordering.
 #define u_CloudTierCumulus 2 //[0 1 2 3] runtime "Cumulus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
 #define u_CloudTierStratus 2 //[0 1 2 3] runtime "Stratus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
-#define u_CloudTierStratocumulus 2 //[0 1 2 3] runtime "Stratocumulus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
-#define u_CloudTierNimbostratus 2 //[0 1 2 3] runtime "Nimbostratus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
-#define u_CloudTierAltocumulus 2 //[0 1 2 3] runtime "Altocumulus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
-#define u_CloudTierCirrus 2 //[0 1 2 3] runtime "Cirrus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
-#define u_CloudTierCirrocumulus 2 //[0 1 2 3] runtime "Cirrocumulus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
+#define u_CloudTierStratocumulus 1 //[0 1 2 3] runtime "Stratocumulus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
+#define u_CloudTierNimbostratus 1 //[0 1 2 3] runtime "Nimbostratus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
+#define u_CloudTierAltocumulus 1 //[0 1 2 3] runtime "Altocumulus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
+#define u_CloudTierCirrus 1 //[0 1 2 3] runtime "Cirrus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
+#define u_CloudTierCirrocumulus 1 //[0 1 2 3] runtime "Cirrocumulus Quality" {0="Off" 1="Medium" 2="High" 3="Epic"}
 
 // Distance over which a deck's budget halves again, in chunks, on the ray's own horizontal reach.
 // A deck 30 blocks overhead still runs kilometres sideways, which a vertical metric cannot see.
