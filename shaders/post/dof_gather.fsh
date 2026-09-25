@@ -30,7 +30,8 @@ void main() {
     // Per-pixel rotation trades the spiral's banding for noise, which the eye
     // forgives and the postfilter smooths. The A channel is builtin.noise's per-texel
     // white noise; R is 16-cell value noise and would rotate whole blotches together.
-    float phi = texture(u_Noise, gl_FragCoord.xy / vec2(textureSize(u_Noise, 0))).a * 6.2831853;
+    float noise = texture(u_Noise, gl_FragCoord.xy / vec2(textureSize(u_Noise, 0))).a;
+    float phi = noise * 6.2831853;
 
     vec2 halfTexel = 1.0 / vec2(textureSize(u_DofHalf, 0));
 
@@ -40,25 +41,31 @@ void main() {
     float fgWeight = 0.0;
     float nearCoverage = 0.0;
 
-    // Level choice sized for a small bright source, not just tap spacing: a disc forms
-    // only when taps actually land on the source, so the level's footprint must grow with
-    // the disc area the 64 taps are spread over. Thresholds from the tools/verify_dof.py
-    // lantern render of a 2x2 source: level footprint 2^level px needs to stay near
-    // radius / 5, or the disc resolves as speckle. Coarser levels soften disc rims, the
-    // accepted price for solid discs at photo-mode radii. textureLod, not texture: the
-    // fetch sits in divergent control flow where implicit derivatives are undefined.
-    int dofLevel = radius < 4.0 ? 0 : (radius < 9.0 ? 1 : (radius < 18.0 ? 2 : 3));
+    // Level threshold jitter, per pixel, so a level switch dissolves into grain the
+    // postfilter smooths instead of drawing a contour along the CoC ramp. Plus or minus
+    // 30 percent: the widest spread that keeps the verify_dof.py disc render inside its
+    // flatness bound. Shares the rotation noise; acceptable for per-texel white noise.
+    float levelJitter = 0.7 + 0.6 * noise;
 
     for (int i = 0; i < PLAGUE_DOF_TAPS; ++i) {
         vec2 offset = plagueDofVogel(i, phi) * radius;
         float tapDistPx = length(offset);
         vec2 tapUv = texCoord + offset * halfTexel;
+        // The TAP's own disc size picks the pyramid level: a disc forms only when taps
+        // land on its source, so the footprint must grow with that disc. The switch
+        // points live in dof.glsl with the tap count, one pair per quality arm; coarser
+        // levels soften disc rims, the accepted price for solid discs. Keyed per tap, not per
+        // pixel: the spiral, sized by the dilated tile, crosses regions of very different
+        // blur, and one level per pixel leaves far bright sources sparse or near content
+        // smeared. The estimate reads the quarter level's CoC, smooth enough to route by.
+        // textureLod, not texture: divergent control flow has no implicit derivatives.
+        float tapCocEst = abs(textureLod(u_DofQuarter, tapUv, 0.0).a) * levelJitter;
         vec4 tap;
-        if (dofLevel == 0) {
+        if (tapCocEst < PLAGUE_DOF_LEVEL_T0) {
             tap = textureLod(u_DofHalf, tapUv, 0.0);
-        } else if (dofLevel == 1) {
+        } else if (tapCocEst < PLAGUE_DOF_LEVEL_T1) {
             tap = textureLod(u_DofQuarter, tapUv, 0.0);
-        } else if (dofLevel == 2) {
+        } else if (tapCocEst < PLAGUE_DOF_LEVEL_T2) {
             tap = textureLod(u_DofEighth, tapUv, 0.0);
         } else {
             tap = textureLod(u_DofSixteenth, tapUv, 0.0);
@@ -75,19 +82,27 @@ void main() {
             fgWeight += contribution;
             nearCoverage += contribution;
         } else {
-            background += tap.rgb * contribution;
-            bgWeight += contribution;
+            // Light from behind this pixel's own surface is blocked at the lens, so taps
+            // clearly farther drop out of the background. The 1 px margin and the
+            // half-px-per-px ramp keep taps at the pixel's own depth untouched while a
+            // sky at the cap fades out within a few px of CoC difference.
+            float behind = clamp((tapCoc - center.a - 1.0) * 0.5, 0.0, 1.0);
+            background += tap.rgb * contribution * (1.0 - behind);
+            bgWeight += contribution * (1.0 - behind);
         }
     }
 
-    // 4/taps normalisation reaches full coverage when a quarter of the spiral is
-    // near-field, chosen on the offline disc render so a half-covered silhouette
-    // edge already reads as foreground.
-    nearCoverage = clamp(nearCoverage * (4.0 / float(PLAGUE_DOF_TAPS)), 0.0, 1.0);
+    // Coverage is the plain fraction of the spiral the near field reaches: the share of
+    // the lens opening the close object blocks. The composite doubles it, so a silhouette
+    // edge at half coverage meets the fully blurred inside without a step.
+    nearCoverage = clamp(nearCoverage / float(PLAGUE_DOF_TAPS), 0.0, 1.0);
 
     vec3 bg = (bgWeight > 1e-4) ? background / bgWeight : center.rgb;
     vec3 fg = (fgWeight > 1e-4) ? foreground / fgWeight : bg;
-    vec3 colour = mix(bg, fg, nearCoverage);
+    // Twice the fraction for the colour: within the blocked share of the opening the
+    // light is entirely foreground, so at half coverage the blurred colour is all fg
+    // while the composite still blends by the fraction itself.
+    vec3 colour = mix(bg, fg, clamp(nearCoverage * 2.0, 0.0, 1.0));
 
     // Alpha carries ONLY the near-field coverage. The far blend is recomputed from full-res
     // depth in the composite; packing both into one channel let bilinear magnification smear

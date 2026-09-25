@@ -26,6 +26,10 @@ void main() {
     // Defensive: dof_focus runs earlier in this same frame and always writes >= 0.5, so 0
     // appears only if the graph reorders; 16 blocks is a neutral focus for that frame.
     if (focus <= 0.0) focus = 16.0;
+    // Half-res width in pixels: this pass runs at 1/16 scale, so half res is 8 of its
+    // texels. Target sizes round per scale, so this can sit under one percent off the
+    // true half width at odd resolutions; the dilate absorbs the difference.
+    float pxPerMm = (8.0 / u_PassTexelSize.x) / PLAGUE_DOF_SENSOR_MM;
     float maxAbs = 0.0;
     for (int y = 0; y < 8; ++y) {
         for (int x = 0; x < 8; ++x) {
@@ -40,8 +44,6 @@ void main() {
                 vec4 h = u_InvProjModelView * vec4(uv * 2.0 - 1.0, depth, 1.0);
                 dist = length(h.xyz / h.w);
             }
-            // Half-res width in pixels: this pass runs at 1/16 scale, so half res is 8 texels each.
-            float pxPerMm = (8.0 / u_PassTexelSize.x) / PLAGUE_DOF_SENSOR_MM;
             maxAbs = max(maxAbs, abs(plagueDofCoc(dist, focus, pxPerMm)));
         }
     }

@@ -463,7 +463,10 @@ void main() {
         // keeps a crisp edge; the gather alpha carries only near-field coverage, which must
         // be allowed to blur over a sharp background, so the two combine by max.
         float dofFarBlend = clamp(abs(dofCoc) - 0.5, 0.0, 1.0);
-        float dofBlend = max(dofFarBlend, dofSample.a);
+        // Twice the coverage: the gather colour is already all foreground at half
+        // coverage, so doubling keeps the outside of a silhouette continuous with the
+        // fully blurred inside instead of stepping at the edge.
+        float dofBlend = max(dofFarBlend, clamp(2.0 * dofSample.a, 0.0, 1.0));
         if (any(isnan(dofSample.rgb))) {
             dofBlend = 0.0;
         }

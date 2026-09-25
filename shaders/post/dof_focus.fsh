@@ -18,8 +18,8 @@ void main() {
     // not the bed behind it, and every other DOF pass ranks pixels the same way.
     float depth = max(texture(u_Depth, vec2(0.5)).r, texture(u_WaterDepth, vec2(0.5)).r);
 
-    // Sky focuses at optical infinity; 512 blocks is far enough that the
-    // far-field CoC is within 2 percent of its asymptote at any strength setting.
+    // Sky focuses at optical infinity; 512 blocks stands in for it, and every other
+    // DOF pass clamps sky to this same distance so both sides share one CoC.
     float target;
     if (depth <= 0.0) {
         target = 512.0;

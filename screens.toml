@@ -241,6 +241,7 @@ sliders = [
     "u_AuroraRedOnset", "u_AuroraRedWidth", "u_AuroraVioletExtent", "u_NebulaDrift", "u_NebulaIonisedOnset", "u_NebulaIonisedWidth", "u_NebulaStarGlow", "u_ShootingStarBrightness", "u_ShootingStarSize", "u_ShootingStarThickness", "u_ShootingStarTrail", "u_StarBrightness", "u_StarColorSpread", "u_StarDensity", "u_StarMagnitudeFalloff",
     "u_BloomFalloff",
     "u_DofFocalLength", "u_DofFStop", "u_DofMaxBlur", "u_DofFocusSpeed",
+    "u_DofDistanceStart", "u_DofDistanceFade", "u_DofDistanceBlur", "u_DofHighlightBoost",
 ]
 
 
@@ -749,10 +750,16 @@ elements = [
 title = "Focus Blur"
 elements = [
     "DOF_ENABLED",
+    "DOF_QUALITY|requires:DOF_ENABLED",
+    "u_DofHighlightBoost|requires:DOF_ENABLED",
     "u_DofFocalLength|requires:DOF_ENABLED",
     "u_DofFStop|requires:DOF_ENABLED",
     "u_DofMaxBlur|requires:DOF_ENABLED",
     "u_DofFocusSpeed|requires:DOF_ENABLED",
+    "u_DofDistanceMode|requires:DOF_ENABLED",
+    "u_DofDistanceStart|requires:DOF_ENABLED",
+    "u_DofDistanceFade|requires:DOF_ENABLED",
+    "u_DofDistanceBlur|requires:DOF_ENABLED",
 ]
 
 [screens.tonemap]
@@ -1776,6 +1783,18 @@ way a camera lens does. Bright points in the blur grow into soft round discs.
 The picture follows where you look: aim at something and it comes into focus while the rest \
 melts away. Turning it off saves some frame rate and memory."""
 
+DOF_QUALITY = """
+How finely the blur is sampled.
+
+Photo doubles the samples so small bright spots keep their shape as discs, the way a good \
+lens draws them. It costs some frame rate; Fast is right for normal play."""
+
+u_DofHighlightBoost = """
+How strongly small bright spots keep their shine inside the blur.
+
+Higher grows them into the little discs a camera lens makes; 0 is a plain average. Very \
+high values can flicker a little when moving."""
+
 u_DofFocalLength = """
 How zoomed-in the pretend camera lens is, in millimetres, like a real lens.
 
@@ -1799,6 +1818,29 @@ How fast the picture settles on a new subject when you look somewhere else.
 
 Lower is slower and calmer, like an eye taking a moment to adjust; higher snaps to the new \
 subject almost at once."""
+
+u_DofDistanceMode = """
+Blurs by distance alone instead of following where you look: everything past a set distance \
+goes soft, like a photo of a tiny model world.
+
+The lens and focus settings above do nothing while this is on. Distance Blur Size sets how \
+soft the far world gets."""
+
+u_DofDistanceStart = """
+Where the softness begins, in chunks.
+
+Everything nearer stays sharp."""
+
+u_DofDistanceFade = """
+How many chunks past the start the softness takes to reach full size.
+
+Longer fades blend in more gently."""
+
+u_DofDistanceBlur = """
+How soft the far world gets in this mode.
+
+Small values read as gentle haze; large ones melt the distance the way a close-up photo \
+does. Blur Size Limit still caps it."""
 
 
 
