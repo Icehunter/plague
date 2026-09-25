@@ -1314,9 +1314,16 @@ u_FogOpacityView = """
 A test view for finding where a hazy look is coming from. It draws the fog's own strength \
 instead of the normal scene.
 
+On:
 Red: edge fog.
 Green: distance fog.
 Blue: how far away that spot is.
+
+Sun Horizon: how far terrain past the shadow map is blocking the sun from the fog.
+Red: how open the sun is here.
+Green: whether this spot's cell is loaded yet, only meaningful where blue is on.
+Blue: whether this spot is close enough for the check to answer at all.
+
 Turn this off to see the normal scene."""
 
 u_FogEnableDistance = """

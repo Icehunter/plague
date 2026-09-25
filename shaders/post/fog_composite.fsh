@@ -16,7 +16,7 @@
 #moj_import <fornax_runtime:atmo_transport.glsl>
 #moj_import <fornax_runtime:fog_aerial.glsl>
 
-#define u_FogOpacityView 0 //[0 1] runtime "Fog Thickness View" {0="Off" 1="On"}
+#define u_FogOpacityView 0 //[0 1 2] runtime "Fog Thickness View" {0="Off" 1="On" 2="Sun Horizon"}
 
 // Positional graph ABI: the scene and its depth are read together, before any later composition.
 uniform sampler2D u_SceneHdrUnfogged; // sceneHdrUnfogged
@@ -32,6 +32,7 @@ uniform sampler2DShadow u_SunShadowMap; // sunShadowMap
 uniform sampler2D u_SunShadowMapRaw; // sunShadowMapRaw
 uniform sampler2D u_RtTerrainShadowDepth; // rtTerrainShadowDepth
 uniform sampler2D u_SunEntityShadowMapRaw; // sunEntityShadowMapRaw
+uniform sampler2D u_FogSunHorizon; // fogSunHorizon
 #define G_DEPTH u_Depth
 #define WATER_DEPTH_TEX u_WaterDepth
 #define NOISE_TEX u_Noise
@@ -41,11 +42,18 @@ uniform sampler2D u_SunEntityShadowMapRaw; // sunEntityShadowMapRaw
 #define ENTITY_SHADOW_RAW_MAP u_SunEntityShadowMapRaw
 #moj_import <fornax_runtime:shadow_handoff.glsl>
 #ifdef SHADOWS
+#moj_import <fornax_runtime:fog_sun_horizon.glsl>
+// The bake answers where the map cannot: terrain past the box footprint. The map keeps full
+// authority where it measured; ShadowCamera's depth extent already holds far casters there.
+#define PLAGUE_ATMO_SHADOW_UNKNOWN(posBlocks, lightDir) vec2(plagueFogSunHorizonVisibility(posBlocks, lightDir), 0.0)
 #moj_import <fornax_runtime:atmo_shadow.glsl>
 float plagueAtmoSunShadow(vec3 posBlocks, vec3 sunDir) {
     return plagueAtmoShadowAt(posBlocks, sunDir).x;
 }
 bool plagueAtmoShadowCovers(vec3 posBlocks, vec3 sunDir) {
+    // Outside the box the horizon bake still answers through the unknown fallback, one jittered
+    // check per march cell. The per-pixel jitter dithers the horizon edge the same way it breaks
+    // up shaft edges, at an eighth of the checks the full count would cost.
     return plagueAtmoShadowBoxCovers(posBlocks, sunDir);
 }
 #endif
@@ -181,6 +189,12 @@ void main() {
         vec4 fogAerial;
         float fogNearT;
         vec3 fogSky;
+#ifdef SHADOWS
+        // Set by the border block below, read after fogTerms is built: fogSky itself also feeds
+        // fog_aerial.glsl's fogCeiling brightness cap, so gating it here would clip fog that is
+        // genuinely lit. Default is the identity: no gating.
+        float borderSunVis = 1.0;
+#endif
 #if PLAGUE_UNDERWATER
         // The dispatcher sets air and border opacity to zero for a submerged eye. Neutral air
         // skips the discarded march; water tint, veil and horizon closure still run below.
@@ -219,6 +233,21 @@ void main() {
             fogAerial.rgb = plagueStormDarkenSky(fogAerial.rgb, fogDir.y, dot(fogDir, sunDirTrue),
                                                  sunDirTrue.y, rainFactor,
                                                  clamp(u_FrameState.z, 0.0, 1.0));
+#ifdef SHADOWS
+            // Border fog in front of terrain that hides the light must not take the sun-side glow.
+            // The horizon bake answers per fragment; the mix that uses borderSunVis lands after
+            // fogTerms is built, so the march's own fogSky never sees the gate.
+            vec3 borderLightDir = plagueAtmoShadowLightDirection();
+            // The march's own shadowsSun test: past sunset the gate light is the moon, and the
+            // moon-lit night keeps today's border. Only the sun's glow is being gated.
+            if (dot(borderLightDir, sunDirTrue) >= 0.0) {
+                // 4 blocks, one cell, makes flat ground read occludedTan -1 (fully open at a
+                // horizon sun) while moving a ridge horizon 100 blocks out by only 0.04 of
+                // tangent; the lift stands for the air column the border represents, not the
+                // ground it lands on.
+                borderSunVis = plagueFogSunHorizonVisibility(worldPos + vec3(0.0, 4.0, 0.0), borderLightDir);
+            }
+#endif
         }
 #if PLAGUE_UNDERWATER
         } else {
@@ -239,10 +268,36 @@ void main() {
                                                  vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
                                                  vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
                                                       plagueChunksToBlocks(u_WaterDarknessDepth)), lighting, atmColorMult);
+#ifdef SHADOWS
+        // A blocked border keeps the march's own gated fog colour for the same ray, so the
+        // silhouette stays hue continuous and the cell-grid transition has nothing contrasting to
+        // show. A sky swatch from any other azimuth pastes a foreign colour over the mountain.
+        fogTerms.borderColor = mix(fogTerms.atmColor, fogTerms.borderColor, borderSunVis);
+#endif
         // No cap on the in-water leg: this fogs the whole eye-to-fragment ray. The water term is
         // the only thing that seals the horizon underwater, since the border curve
         // (d/renderDistance)^16 gives nothing below ~160 blocks.
         if (u_FogOpacityView > 0.5) {
+#ifdef SHADOWS
+            // With SHADOWS off this arm compiles away and value 2 falls through to the thickness
+            // view below, since the horizon bake and its gate do not exist to show.
+            if (u_FogOpacityView > 1.5) {
+                // Red is the gate's answer at this fragment, green whether its cell validated,
+                // blue whether it is inside the bake's reach. Green is masked by blue: a texel
+                // read from outside the bake's reach belongs to another cell entirely, so it is
+                // meaningless there. A lit blotch with green 0 (and blue 1) is a stale cell;
+                // green 1 and red 1 is a genuinely open horizon.
+                vec3 horizonLightDir = plagueAtmoShadowLightDirection();
+                float r = plagueFogSunHorizonVisibility(worldPos + vec3(0.0, 4.0, 0.0), horizonLightDir);
+                vec3 absPos = u_CameraAbs + worldPos;
+                ivec2 horizonCell = ivec2(floor(absPos.xz)) >> 2;
+                float g = texelFetch(u_FogSunHorizon, ivec2(horizonCell.x & 127, horizonCell.y & 127), 0).x
+                        > -900.0 ? 1.0 : 0.0;
+                float b = max(abs(worldPos.x), abs(worldPos.z)) <= 240.0 ? 1.0 : 0.0;
+                fragColor = vec4(r, g * b, b, 1.0);
+                return;
+            }
+#endif
             // Red edge fog, green distance fog, blue how far the pixel is as a share of the
             // render distance. Blue is there so strength and distance can be read off one still.
             fragColor = vec4(clamp(fogTerms.border, 0.0, 1.0),

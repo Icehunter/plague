@@ -18,7 +18,8 @@
 // tile-index bits per axis. The tag makes a read self-validating, so no window anchor has to reach
 // the shader: a cell outside the uploaded window fails it and reads as not covered. Word 1: surface
 // temperature behind the classification (signed 16-bit, 1/256 steps), downfall 0..255, a byte of
-// biome tags. Word 2: biome nominal temperature. See plagueClimateColumn.
+// biome tags. Word 2: biome nominal temperature, and in bits 16..31 the column's surface height with
+// 2048 added, the engine's HEIGHT_BIAS. See plagueClimateColumn.
 const int PLAGUE_PRECIP_WORDS_PER_CELL = 4;
 const int PLAGUE_PRECIP_CELL_STRIDE_LOG2 = 2;
 const int PLAGUE_PRECIP_GRID = 128;
@@ -126,6 +127,24 @@ bool plagueClimateColumn(vec2 worldXZ, out float temperatureSurface, out float t
     downfall = float((word1 >> 16) & 0xFF) / 255.0;
     tags = (word1 >> 24) & 0xFF;
     temperatureBiome = plagueClimateTemperature(word2);
+    return true;
+#else
+    return false;
+#endif
+}
+
+/** One cell's surface height in absolute world Y, or false outside the uploaded window. */
+bool plagueSurfaceHeightCell(ivec2 cell, out float height) {
+    height = 0.0;
+#ifdef PLAGUE_PRECIP_CLIPMAP
+    int base = plaguePrecipSlot(cell) * PLAGUE_PRECIP_WORDS_PER_CELL;
+    int word0 = PLAGUE_PRECIP_CLIPMAP(base);
+    if ((word0 & PLAGUE_PRECIP_VALID_MASK) == 0
+            || (word0 & 0xFFFF0000) != plaguePrecipTag(cell)) {
+        return false;
+    }
+    // 2048 is the engine clipmap format's own height offset, room for the negative build depth.
+    height = float(((PLAGUE_PRECIP_CLIPMAP(base + 2) >> 16) & 0xFFFF) - 2048);
     return true;
 #else
     return false;

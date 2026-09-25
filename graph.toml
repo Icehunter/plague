@@ -442,8 +442,9 @@ kind = "buffer"
 
 # Engine-filled (Fornax PrecipCoarseClipmapBuffer): 4-block cells over a 512-block window, four
 # words per column: none/rain/snow record; surface temperature behind that decision, downfall,
-# biome tags; biome nominal temperature. No stride or count: the engine sizes it, and skips the
-# upload for a pack that never declares this target.
+# biome tags; biome nominal temperature and, word 2 bits 16..31, the column's surface height with
+# 2048 added. No stride or count: the engine sizes it, and skips the upload for a pack that never
+# declares this target.
 [targets.precipCoarseClipmap]
 kind = "buffer"
 
@@ -478,6 +479,17 @@ height = 108
 filter = "linear"
 storage = true
 
+# Sun-horizon bake, fog_sun_horizon.comp: one texel per 4-block cell of the coarse weather
+# clipmap window, two lines of the terrain horizon envelope toward the active light. r/g the
+# surface-fit ridge's height and distance, b/a the elevated-fit ridge's height and distance;
+# height -1000 is the unvalidated sentinel. Read with texelFetch; linear would blend the
+# toroidal wrap seam.
+[targets.fogSunHorizon]
+format = "rgba16f"
+width = 128
+height = 128
+storage = true
+
 # 34 slices of 32 x 32 screen froxels: 32 depth slices, the sky along each froxel's ray, and the
 # frame's transmittance chroma. One texture, because the resolve has one sampler left.
 [targets.atmoAerial]
@@ -488,9 +500,10 @@ filter = "linear"
 storage = true
 
 # First in the frame: nothing before them needs the sky; the resolve needs the sky-view table.
-# Each reads the true sun from u_SkyCelestial, never u_SunDirection, so none is on the engine's
-# per-pass-name uniform list and its silent permanent-noon default. local_size makes the engine
-# derive group counts from the first output; dispatch is the required placeholder.
+# The atmosphere tables read the true sun from u_SkyCelestial and the horizon bake reads the
+# light camera's own axis, never u_SunDirection, so none is on the engine's per-pass-name
+# uniform list and its silent permanent-noon default. local_size makes the engine derive group
+# counts from the first output; dispatch is the required placeholder.
 [[pass]]
 name = "atmo_transmittance"
 type = "compute"
@@ -519,6 +532,16 @@ local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "atmoTransmittance", "atmoMultiScatter"]
 outputs = ["atmoSkyView"]
+
+[[pass]]
+name = "fog_sun_horizon"
+type = "compute"
+enabled_if = "SHADOWS"
+shader = "shaders/compute/fog_sun_horizon.comp"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "precipCoarseClipmap"]
+outputs = ["fogSunHorizon"]
 
 [[pass]]
 name = "atmo_aerial"
@@ -1340,7 +1363,8 @@ type = "fullscreen"
 shader = "shaders/post/fog_composite.fsh"
 inputs = ["sceneHdrUnfogged", "builtin.depth", "consolidatedGbuf", "builtin.waterDepth",
           "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "atmoAerial", "builtin.noise",
-          "sunShadowMap", "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw"]
+          "sunShadowMap", "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw",
+          "fogSunHorizon"]
 outputs = ["sceneHdr"]
 
 # Tileable grayscale focusing pattern, sampled by two rotated flowing layers with mirror-repeat UVs.

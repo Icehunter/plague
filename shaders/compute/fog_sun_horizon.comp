@@ -1,0 +1,83 @@
+#version 450
+
+// Per cell of the engine's coarse weather clipmap, two lines of the terrain horizon envelope
+// toward the active light: (h1, d1) exact for a surface query, (h2, d2) for the fog march's
+// elevated samples. A single line collapses on a continuous slope; two lines close that.
+// tools/render_fog_horizon_holes_repro.py is the record.
+
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+
+layout(std430, set = 0, binding = 1) readonly buffer PrecipCoarseClipmap {
+    int words[];
+} precipCoarseClipmap;
+#define PLAGUE_PRECIP_CLIPMAP(slot) precipCoarseClipmap.words[slot]
+#moj_import <fornax_runtime:precip_field.glsl>
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+layout(rgba16f, set = 0, binding = 2) uniform writeonly image2D u_OutSunHorizon;
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (pixel.x >= PLAGUE_PRECIP_GRID || pixel.y >= PLAGUE_PRECIP_GRID) return;
+
+    // The arithmetic shift floors across zero, matching the engine's own cell stride. The engine
+    // anchors on the player body position, this on u_CameraAbs; the tag check below rejects any
+    // cell the two anchors disagree on, so those cells read as unvalidated and fall back to lit.
+    int baseX = ((int(floor(u_CameraAbs.x)) >> 4) << 2) - PLAGUE_PRECIP_GRID / 2;
+    int baseZ = ((int(floor(u_CameraAbs.z)) >> 4) << 2) - PLAGUE_PRECIP_GRID / 2;
+    ivec2 cell = ivec2(baseX + ((pixel.x - baseX) & (PLAGUE_PRECIP_GRID - 1)),
+                       baseZ + ((pixel.y - baseZ) & (PLAGUE_PRECIP_GRID - 1)));
+
+    float h0;
+    if (!plagueSurfaceHeightCell(cell, h0)) {
+        // World heights reach -64, so -1000 is unreachable and exact in the rgba16f lane; the
+        // height lane's sentinel marks an unvalidated cell, since all four lanes carry the
+        // envelope.
+        imageStore(u_OutSunHorizon, pixel, vec4(-1000.0, 4.0, -1000.0, 4.0));
+        return;
+    }
+
+    // Fornax's light camera uses a flat (orthographic) view and looks away from the light.
+    // Reading its depth row backward gives the real light direction, the same source the march's
+    // own shadow check reads (atmo_lut.glsl's plagueAtmoShadowLightDirection).
+    vec3 axis = -vec3(u_SunViewProj[0].z, u_SunViewProj[1].z, u_SunViewProj[2].z);
+    float axisLength = length(axis);
+    bool validAxis = axisLength > 0.0 && !isinf(axisLength) && !isnan(axisLength);
+    vec3 lightDir = validAxis ? axis / axisLength : vec3(0.0);
+    vec2 flatDir = lightDir.xz;
+    if (length(flatDir) < 1e-3) {
+        // An overhead light clears every ridge; the same sentinel as an unvalidated cell.
+        imageStore(u_OutSunHorizon, pixel, vec4(-1000.0, 4.0, -1000.0, 4.0));
+        return;
+    }
+
+    vec2 az = normalize(flatDir);
+    // Each line starts on an inert floor, 512 blocks (the window span) below h0. Only a tap
+    // below that minus 45 degree cone fails to beat it, and such a tap blocks no light, so the
+    // line only ever reports a ridge that matters.
+    float h1 = h0 - 512.0;
+    float d1 = 512.0;
+    float h2 = h0 - 512.0;
+    float d2 = 512.0;
+    // Every cell to the window edge; a strided tap list stepped clean over an 8 block ridge in
+    // the tools/render_fog_sun_bleed_repro.py model, so the bake taps them all instead. A tap
+    // past the window fails its tag and is skipped.
+    for (int d = 1; d < PLAGUE_PRECIP_GRID; d++) {
+        ivec2 tapCell = cell + ivec2(round(az * float(d)));
+        float h;
+        if (!plagueSurfaceHeightCell(tapCell, h)) continue;
+        float dist = float(d) * 4.0;
+        // Line 1: argmax against the surface query height (h0 + 4.0), the border gate's own
+        // lift, so a fragment standing on its cell reads its exact horizon.
+        if ((h - (h0 + 4.0)) / dist > (h1 - (h0 + 4.0)) / d1) { h1 = h; d1 = dist; }
+        // Line 2: argmax against 32.0, the reference height tools/render_fog_horizon_holes_repro.py
+        // found keeps the fog march's elevated samples within 0.0016 of the exact horizon.
+        if ((h - (h0 + 32.0)) / dist > (h2 - (h0 + 32.0)) / d2) { h2 = h; d2 = dist; }
+    }
+
+    // Heights up to 320 and distances up to 508 are integers, exact in the rgba16f lane's half
+    // precision (exact to 2048), so the envelope stores without rounding.
+    imageStore(u_OutSunHorizon, pixel, vec4(h1, d1, h2, d2));
+}
