@@ -12,7 +12,8 @@ layout(std430, set = 0, binding = 1) readonly buffer SectionState { uint stateWo
 layout(std430, set = 0, binding = 2) readonly buffer SourceSummary { uint sourceWords[]; };
 layout(rgba16f, set = 0, binding = 3) uniform writeonly image2D u_SourceStatus;
 
-int plagueSourceMod(int a, int d) { return ((a % d) + d) % d; }
+// `%` only sees non-negative operands here: a negative left operand is not portable across drivers.
+int plagueSourceMod(int a, int d) { return a >= 0 ? a % d : d - 1 - ((-1 - a) % d); }
 
 vec4 plagueSourceStatus(int slot) {
     // RGB is a status color, not light. Alpha: 0=current, 1=unknown coverage, 2=unavailable.

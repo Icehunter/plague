@@ -23,7 +23,8 @@ layout(rgba16f, set = 0, binding = 9) uniform writeonly image2D u_SourceFaces;
 
 #moj_import <fornax_runtime:voxel_atlas_pages.glsl>
 
-int plagueFaceMod(int a, int d) { return ((a % d) + d) % d; }
+// `%` only sees non-negative operands here: a negative left operand is not portable across drivers.
+int plagueFaceMod(int a, int d) { return a >= 0 ? a % d : d - 1 - ((-1 - a) % d); }
 
 bool plagueFaceCurrent(int base) {
     int d = u_VoxelWindow.w;

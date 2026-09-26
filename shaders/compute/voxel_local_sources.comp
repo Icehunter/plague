@@ -29,7 +29,8 @@ layout(std430, set = 0, binding = 10) writeonly buffer LocalRadiance { uint loca
 
 #moj_import <fornax_runtime:voxel_local_layout.glsl>
 
-int plagueLocalSourceMod(int a,int b) { return ((a%b)+b)%b; }
+// `%` only sees non-negative operands here: a negative left operand is not portable across drivers.
+int plagueLocalSourceMod(int a,int b) { return a>=0 ? a%b : b-1-((-1-a)%b); }
 bool plagueLocalSourceHeaderCurrent() {
     int d=u_VoxelWindow.w;
     return d>0 && d<=33 && sourceWindowWords.length()==PLAGUE_LOCAL_RAW_WORDS

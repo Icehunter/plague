@@ -29,7 +29,8 @@ bool plagueCoverageInterval(vec3 o, vec3 d, vec3 lo, vec3 hi, out float a, out f
     return b > a;
 }
 
-int plagueCoverageMod(int a, int b) { return ((a % b) + b) % b; }
+// `%` only sees non-negative operands here: a negative left operand is not portable across drivers.
+int plagueCoverageMod(int a, int b) { return a >= 0 ? a % b : b - 1 - ((-1 - a) % b); }
 
 float plagueVoxelSkipEmptySection(inout ivec3 cell, ivec3 stepDir, vec3 delta, inout vec3 next) {
     ivec3 steps = ivec3(0);

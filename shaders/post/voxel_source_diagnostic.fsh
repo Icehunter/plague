@@ -9,7 +9,8 @@ uniform sampler2D u_VoxelSourceStatus; // section status written by the compute 
 in vec2 texCoord;
 out vec4 fragColor;
 
-int plagueSourceMod(int a, int d) { return ((a % d) + d) % d; }
+// `%` only sees non-negative operands here: a negative left operand is not portable across drivers.
+int plagueSourceMod(int a, int d) { return a >= 0 ? a % d : d - 1 - ((-1 - a) % d); }
 
 void main() {
     fragColor = vec4(0.0);
