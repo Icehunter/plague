@@ -1197,8 +1197,8 @@ history = true
 
 # One sun ray a screen pixel, read straight through with no history and no filter, so a lattice or
 # a set of separate rails keeps its own outline instead of landing on one light-space texel. The
-# count is a literal sized for a 1728x1084 window; a larger one leaves the tail of the screen
-# without a ray, and the composite pass falls back to the raster map there.
+# count follows the window, so a larger window or a 4K still keeps every row traced instead of
+# falling back to the raster map past a fixed literal.
 #
 # sunShadowHits is read by resolve_hdr_rt_shadow, whose own gate is "SHADOWS || RT_SHADOWS", wider
 # than the trace that fills it. Its gate has to match that wider condition or the pack refuses to
@@ -1207,13 +1207,13 @@ history = true
 [targets.sunShadowRequests]
 kind = "buffer"
 stride_bytes = 32
-count = 2097152
+count = "render"
 enabled_if = "RT_SHADOWS"
 
 [targets.sunShadowHits]
 kind = "buffer"
 stride_bytes = 36
-count = 2097152
+count = "render"
 enabled_if = "SHADOWS || RT_SHADOWS"
 
 [[pass]]
@@ -1221,9 +1221,11 @@ name = "sun_shadow_seed"
 type = "compute"
 shader = "shaders/compute/sun_shadow_seed.comp"
 enabled_if = "RT_SHADOWS"
-# A buffer-only output has no extent to derive a dispatch from, so the count is a literal and the
-# group size comes from the shader's own local_size_x of 256: 8192 groups times 256 is 2097152.
-dispatch = [8192, 1, 1]
+# The request buffer is count = "render", so the engine sizes this dispatch from it every frame:
+# one group of the shader's own local_size_x of 256 per 256 pixels, whatever the window. The
+# dispatch below is the placeholder every compute pass carries; local_size is what runs.
+dispatch = [1, 1, 1]
+local_size = [256, 1]
 inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal"]
 outputs = ["sunShadowRequests"]
 
@@ -1238,7 +1240,7 @@ outputs = ["sunShadowHits"]
 
 [pass.ray_query]
 kind = "visibility"
-rays = 2097152
+rays = "render"
 # The mesh tier is the only one that alpha-tests real lattice and rail triangles against their
 # baked texture coordinates. Naming it as the floor makes that shape fidelity a fact about the
 # pass, not a hope about which machine runs it.

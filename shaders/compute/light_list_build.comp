@@ -132,6 +132,10 @@ void main() {
     // Reserve only after every rejection. Reset clears the count, not the records: reserving
     // before the distance check counts an unwritten slot containing a previous frame's lamp.
     // The shadow chooser then traces toward a source absent from the current lighting sum.
+    // Past the cap the list holds whichever candidates the atomic reached first, and that set
+    // changes from one frame to the next: where the scan radius holds more lamps than the cap, a
+    // lamp drops out for a frame and returns. gi_light_resolve keeps a cell's history across a
+    // frame none of its lamps were listed rather than restarting it as lit.
     uint slot = atomicAdd(lights.words[0], 1u);
     if (slot >= PLAGUE_GI_MAX_LIGHTS) {
         atomicMin(lights.words[0], PLAGUE_GI_MAX_LIGHTS);

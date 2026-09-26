@@ -99,19 +99,24 @@ void main() {
         imageStore(u_Out, cell, vec4(1.0, 0.0, 0.0, 1.0));
         return;
     }
-    // No lamp can light this surface, so no ray was needed. Mark this as answered;
-    // otherwise the merge may substitute voxel visibility for a deliberate zero-light result.
-    if (!(reach > 0.0)) {
-        imageStore(u_Out, cell, vec4(1.0, 1.0, 0.0, 1.0));
-        return;
-    }
-
     // Whatever was at that spot last frame has to be the same surface, or this blends one
     // surface's shadow onto another and drags it along as the view moves.
     ivec2 corner; vec4 weights;
     float kept = plagueGiHistoryWeights(uv, depth, n, size, corner, weights);
     vec4 previous = kept > 0.0
             ? plagueGiHistoryGather(u_History, corner, weights, size) : vec4(1.0, 0.0, 0.0, 1.0);
+
+    // No ray was asked for this cell. With history, the frame carries no new answer: the list
+    // holds at most PLAGUE_GI_MAX_LIGHTS of the lamps in reach of the camera, and which ones make
+    // the cut is decided by an atomic race each frame, so a cell can go a frame with none of its
+    // lamps listed and be back under them the next. A cell without history that no listed lamp
+    // reaches is not a shadowed cell: fully lit, age zero, so a lamp coming into reach starts a
+    // fresh count. Marked as answered either way; otherwise the merge may substitute voxel
+    // visibility for a deliberate zero-light result.
+    if (!(reach > 0.0)) {
+        imageStore(u_Out, cell, vec4(kept > 0.0 ? previous.rgb : vec3(1.0, 0.0, 0.0), 1.0));
+        return;
+    }
 
     // The tier first. A buffer nothing traced reads back all zeros, and zero is a legal distance,
     // so no other word can tell an answer from untouched memory. While acceleration data is
