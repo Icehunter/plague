@@ -30,6 +30,20 @@ uniform sampler2D u_GMaterial; // builtin.gMaterial: r = smoothness, g = F0, b =
 uniform sampler2D u_GMotion; // builtin.gMotion: reprojects the hit into last frame
 uniform sampler2D u_SceneHistory_history; // sceneHistory.history: last frame's finished image
 uniform sampler2D u_Hiz; // hiz: full mip chain, read with explicit levels
+// Appended last: positional inputs, append never insert. Both arms, ssr_trace_fancy and
+// ssr_trace_fast, share this one file.
+uniform sampler2D u_MirrorHdr; // mirrorHdr: the player's own reflection, already lit
+uniform sampler2D u_MirrorDepth; // builtin.mirrorDepth: reversed-Z, 0.0 = no reflection here
+// player_mirror_trace.glsl's own opt-in contract: declare u_MirrorDepth (above) before importing.
+#moj_import <fornax_runtime:player_mirror_trace.glsl>
+// Appended again: positional inputs, append never insert. The two wall families' own depth
+// textures are read through plagueMirrorMarchGeneral's explicit sampler argument, not the opt-in
+// u_MirrorDepth name above. That name belongs to the floor alone: one caller reads three different
+// mirror depths in the same frame, so no single fixed name could serve all three.
+uniform sampler2D u_MirrorXHdr; // mirrorXHdr: the player's own X-wall reflection, already lit
+uniform sampler2D u_MirrorXDepth; // builtin.mirrorXDepth: reversed-Z, 0.0 = no reflection here
+uniform sampler2D u_MirrorZHdr; // mirrorZHdr: the player's own Z-wall reflection, already lit
+uniform sampler2D u_MirrorZDepth; // builtin.mirrorZDepth: reversed-Z, 0.0 = no reflection here
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -116,8 +130,122 @@ void main() {
         return;
     }
 
-    // A ray pointing back at the camera has nothing resolvable in screen space.
+    // --- The player's own reflection, opaque consumer -----------------------------------------
+    //
+    // Reached only past SSR's own smoothness gate above, and correctly so: a mirror image is a
+    // specular reflection, and a fully matte surface does not produce one. Sitting past that gate
+    // is the physics, not a limitation of this placement.
+    //
+    // Three routes, chosen by the geometric normal (already decoded above) and disjoint by
+    // construction: a unit normal cannot read as up (|n.y| > 0.95) and as either horizontal axis
+    // (|n.x| or |n.z| > 0.95) at the same time, so at most one of the three tests below can pass
+    // for any one receiver (tools/verify_player_mirror_walls.py measures this: 0 of 25600
+    // receivers routed to more than one mirror). A facing lane of 0 means no wall was found on
+    // that axis at all, WallPlaneProbe's own "0 = invalid" convention. sign(n.x) can never equal
+    // exactly 0.0 for a normal this close to axis-aligned, so the routing test below already
+    // excludes it without a separate check, but the guard is named explicitly anyway.
+    bool mirrorHit = false;
+    vec3 mirrorColour = vec3(0.0);
+    float mirrorConfidence = 0.0;
+    float mirrorDistance = 1e30;
+
+    // Floor: receiver within 0.05 block of the standing plane w. Solid tops sit at an exact
+    // height, not wave-displaced like the water consumer's 1.0-block tolerance: a slab one step
+    // down sits at a different height and must not borrow the plane. The render plane
+    // must be valid, not the -1e4 sentinel.
+    float mirrorStandPlane = u_PlayerMirrorState.w;
+    float mirrorRenderPlane = u_PlayerMirrorState.y;
+    float receiverAltitude = u_CameraAbs.y + origin.y;
+    if (u_PlayerMirrorState.x > 0.5 && mirrorStandPlane > -1000.0
+            && geometricNormal.y > 0.95
+            && abs(receiverAltitude - mirrorStandPlane) < 0.05) {
+        // Reflecting about the standing plane is the same as reflecting about the render plane,
+        // the same standing plane when it validated, so this is normally a no-op shift, then
+        // translating y by 2*(w - y). player_mirror_trace.glsl's own doc has the general form.
+        vec3 mirrorShift = vec3(0.0, 2.0 * (mirrorStandPlane - mirrorRenderPlane), 0.0);
+        // Coverage reject first: this receiver's own surface point, shifted the same way,
+        // projected through the mirror's own guarded frustum, lands where the planar identity
+        // says the mirror covers it. A cleared texel there means nothing reflects here.
+        vec3 coverageProj = projectMirrorGuarded(origin - mirrorShift);
+        if (coverageProj.x >= 0.0 && coverageProj.x < 1.0
+                && coverageProj.y >= 0.0 && coverageProj.y < 1.0 && coverageProj.z > 0.0
+                && texture(u_MirrorDepth, coverageProj.xy).r > 0.0) {
+            vec3 rPrime = mirror;
+            rPrime.y = -rPrime.y;
+            vec3 hitWorld;
+            vec2 hitUv;
+            if (plagueMirrorMarchGeneral(origin, rPrime, mirrorStandPlane, mirrorRenderPlane,
+                    1.0, 0, u_MirrorDepth, hitWorld, hitUv)) {
+                vec4 mirrorSample = texture(u_MirrorHdr, hitUv);
+                vec2 mdist = abs(hitUv - 0.5) * 2.0;
+                float mirrorEdge = clamp(1.0 - pow(max(mdist.x, mdist.y), 8.0), 0.0, 1.0);
+                mirrorHit = true;
+                mirrorDistance = length(hitWorld - origin);
+                // Un-premultiply: mirrorHdr is linear-filtered and a cleared texel is vec4(0), see
+                // ssr_trace_water.fsh's own identical comment for the mechanism.
+                mirrorColour = mirrorSample.rgb / max(mirrorSample.a, 1e-4);
+                mirrorConfidence = clamp(mirrorSample.a, 0.0, 1.0) * mirrorEdge;
+            }
+        }
+    // X wall: the receiver's own X sits within 0.05 block of the wall's own plane. This plane is
+    // already camera-relative, WallPlaneProbe's own publish contract, with no u_CameraAbs term,
+    // unlike the floor's absolute standing plane above. The receiver's geometric normal must both
+    // read as horizontal on the X axis and point the same way the wall's own recorded face does.
+    // No shift: a wall mirror has one consumer only, itself, so hC == hR always.
+    } else if (u_PlayerMirrorWalls.x != 0.0 && abs(geometricNormal.x) > 0.95
+            && sign(geometricNormal.x) == u_PlayerMirrorWalls.x
+            && abs(origin.x - u_PlayerMirrorWalls.y) < 0.05) {
+        vec3 coverageProj = projectMirrorGuardedWall(origin);
+        if (coverageProj.x >= 0.0 && coverageProj.x < 1.0
+                && coverageProj.y >= 0.0 && coverageProj.y < 1.0 && coverageProj.z > 0.0
+                && texture(u_MirrorXDepth, coverageProj.xy).r > 0.0) {
+            vec3 rPrime = mirror;
+            rPrime.x = -rPrime.x;
+            vec3 hitWorld;
+            vec2 hitUv;
+            if (plagueMirrorMarchGeneral(origin, rPrime, u_PlayerMirrorWalls.y, u_PlayerMirrorWalls.y,
+                    u_PlayerMirrorWalls.x, 1, u_MirrorXDepth, hitWorld, hitUv)) {
+                vec4 mirrorSample = texture(u_MirrorXHdr, hitUv);
+                vec2 mdist = abs(hitUv - 0.5) * 2.0;
+                float mirrorEdge = clamp(1.0 - pow(max(mdist.x, mdist.y), 8.0), 0.0, 1.0);
+                mirrorHit = true;
+                mirrorDistance = length(hitWorld - origin);
+                mirrorColour = mirrorSample.rgb / max(mirrorSample.a, 1e-4);
+                mirrorConfidence = clamp(mirrorSample.a, 0.0, 1.0) * mirrorEdge;
+            }
+        }
+    // Z wall: same shape as the X wall, its own plane/facing lanes and axis.
+    } else if (u_PlayerMirrorWalls.z != 0.0 && abs(geometricNormal.z) > 0.95
+            && sign(geometricNormal.z) == u_PlayerMirrorWalls.z
+            && abs(origin.z - u_PlayerMirrorWalls.w) < 0.05) {
+        vec3 coverageProj = projectMirrorGuardedWall(origin);
+        if (coverageProj.x >= 0.0 && coverageProj.x < 1.0
+                && coverageProj.y >= 0.0 && coverageProj.y < 1.0 && coverageProj.z > 0.0
+                && texture(u_MirrorZDepth, coverageProj.xy).r > 0.0) {
+            vec3 rPrime = mirror;
+            rPrime.z = -rPrime.z;
+            vec3 hitWorld;
+            vec2 hitUv;
+            if (plagueMirrorMarchGeneral(origin, rPrime, u_PlayerMirrorWalls.w, u_PlayerMirrorWalls.w,
+                    u_PlayerMirrorWalls.z, 2, u_MirrorZDepth, hitWorld, hitUv)) {
+                vec4 mirrorSample = texture(u_MirrorZHdr, hitUv);
+                vec2 mdist = abs(hitUv - 0.5) * 2.0;
+                float mirrorEdge = clamp(1.0 - pow(max(mdist.x, mdist.y), 8.0), 0.0, 1.0);
+                mirrorHit = true;
+                mirrorDistance = length(hitWorld - origin);
+                mirrorColour = mirrorSample.rgb / max(mirrorSample.a, 1e-4);
+                mirrorConfidence = clamp(mirrorSample.a, 0.0, 1.0) * mirrorEdge;
+            }
+        }
+    }
+
+    // A ray pointing back at the camera has nothing resolvable in screen space. The player mirror
+    // is a separate lookup, not a screen-space one, so it can still answer here.
     if (dot(rayDir, viewDir) < -0.9) {
+        if (mirrorHit) {
+            fragColor = vec4(mirrorColour, mirrorConfidence);
+            return;
+        }
         fragColor = vec4(0.0);
         return;
     }
@@ -190,7 +318,14 @@ void main() {
         }
     }
 
+    // Every zero-confidence miss below can still be answered by the player mirror: it is a
+    // separate lookup, not a screen-space one, so an SSR miss/backface/off-screen-history reject
+    // does not mean there is nothing to show here.
     if (hitS < 0.0) {
+        if (mirrorHit) {
+            fragColor = vec4(mirrorColour, mirrorConfidence);
+            return;
+        }
         fragColor = vec4(0.0); // miss: zero colour AND zero confidence, never a fabricated fallback
         return;
     }
@@ -201,6 +336,10 @@ void main() {
     // (e.g. a roof's sunlit top standing in for its unrendered underside).
     vec3 hn = texture(u_GNormal, hit.xy).xyz;
     if (dot(hn, hn) > 1e-6 && dot(normalize(hn), rayDir) > 0.0) {
+        if (mirrorHit) {
+            fragColor = vec4(mirrorColour, mirrorConfidence);
+            return;
+        }
         fragColor = vec4(0.0);
         return;
     }
@@ -214,6 +353,10 @@ void main() {
     historyUv -= 0.5 * u_JitterOffset;
 #endif
     if (historyUv.x < 0.0 || historyUv.x > 1.0 || historyUv.y < 0.0 || historyUv.y > 1.0) {
+        if (mirrorHit) {
+            fragColor = vec4(mirrorColour, mirrorConfidence);
+            return;
+        }
         fragColor = vec4(0.0);
         return;
     }
@@ -232,6 +375,18 @@ void main() {
     vec2 cdist = abs(hit.xy - 0.5) * 2.0;
     float edgeFade = clamp(1.0 - pow(max(cdist.x, cdist.y), 8.0), 0.0, 1.0);
     float lengthFade = 1.0 - clamp(hitS, 0.0, 1.0) * 0.35;
+
+    // Nearest wins between the real Hi-Z hit and the player mirror: a block between the receiver
+    // and its own reflection must occlude it, the same physical fact ssr_trace_water.fsh's own
+    // arbitration enforces.
+    if (mirrorHit) {
+        vec3 ssrHitWorld = worldPosAt(hit.xy, hit.z);
+        float ssrDistance = length(ssrHitWorld - origin);
+        if (mirrorDistance < ssrDistance) {
+            fragColor = vec4(mirrorColour, mirrorConfidence);
+            return;
+        }
+    }
 
     fragColor = vec4(color, edgeFade * lengthFade);
 }

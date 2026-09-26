@@ -152,6 +152,10 @@ covers what the pack does, not the engine under it.
   rises with visible reflective area and nearby lights. Voxel Reach sets its window: 1 to 16 chunks in
   one-chunk steps, default 4. Both controls sit under Reflections; the coverage overlay is on
   Debug.
+- The player shows up in reflections: in water, on shiny floors and on shiny walls, whenever
+  Reflections are on. Three `player_mirror` passes draw the player, three `player_mirror_resolve`
+  passes light that picture with sun and shadow, and the reflection passes use it before falling
+  back to the screen or the sky. Normal maps are not used on the reflected player.
 
 ## Water
 

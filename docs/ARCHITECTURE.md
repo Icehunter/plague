@@ -70,10 +70,10 @@ and look still need to be checked on the owner's own machine before tuning it fu
 `sky.glsl` retains the shared palette estimates used for surface ambient, water illumination and
 forward particle/banner fog, plus the scattering sky's warmth and weather grading. Their controls remain live; removing the alternate dome does not retire them.
 
-### 1. Geometry: 7 passes
+### 1. Geometry: 10 passes
 
 `terrain`, `entities`, `block_entities`, `particles`, `particles_translucent`, `banner_patterns`,
-`shadow_entities`.
+`shadow_entities`, `player_mirror`, `player_mirror_x`, `player_mirror_z`.
 
 Each is a `program` stem under `shaders/blocks/` with a `.vsh` and a `.fsh` beside each other. These
 run as Minecraft draws the world, and they fill the G-buffer: albedo in linear space, normals, and
@@ -82,6 +82,12 @@ inside `terrain.fsh` are the exception, and they exist because those draws canno
 resolve.
 
 `shadow_entities` writes the shadow map, which is depth-only.
+
+`player_mirror`, `player_mirror_x` and `player_mirror_z` draw the player's reflection in the
+floor or water, in walls facing along X, and in walls facing along Z. Each writes its own
+half-size target (normal, colour, material), not the entities G-buffer. The engine draws the player
+for them (`PlayerMirrorCaster`) and owns those targets. They read no runtime option, like every other
+geometry pass, and run when `SSR_QUALITY != 0`.
 
 The terrain position decoder matches Fornax's fixed-point vertex codes: 2048 steps per block,
 offset by -8. It recovers the integer from UNORM before scaling, so adjacent section origins

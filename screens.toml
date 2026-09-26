@@ -828,6 +828,9 @@ elements = [
     "u_FogOpacityView",
     "PLAGUE_AIR_SHADOW_DEBUG",
     "u_AirShadowProbeDistance|requires:PLAGUE_AIR_SHADOW_DEBUG",
+
+    "<group:Player Mirror>",
+    "u_MirrorDebug",
 ]
 
 [yacl]
@@ -1325,6 +1328,26 @@ Green: whether this spot's cell is loaded yet, only meaningful where blue is on.
 Blue: whether this spot is close enough for the check to answer at all.
 
 Turn this off to see the normal scene."""
+
+u_MirrorDebug = """
+A test view for the player's reflection. The reflection is painted with the chosen part of its \
+light, since that light shows up nowhere else.
+
+Sun Visibility: white where the sun reaches the reflection, black where it is in shadow.
+Albedo: the plain colour, with no light at all.
+Sky Light: white where the sky reaches, black where it is closed in.
+Block Light: white where a nearby light reaches, black where none does.
+Sun Probe: the same sun test, taken a little off the body first. White here while Sun Visibility \
+is black means the body is shading itself. Black in both means the problem is earlier.
+Real Height: how high each point sits above the water or floor. Red means below it, which should \
+never happen. Green goes from dark to bright over the first 2.5 blocks, about one player tall. \
+Blue is higher than that.
+Shadow Chain: three shadow checks at once. Red is one plain shadow test: bright is lit, dark is \
+shaded. Green means the point is inside the shadow map; black means it is not, and the reflection \
+should then be fully lit. Blue shows the sun's direction: near white is a normal day sun, near \
+black points down, and even grey means no direction came through.
+
+Turn this off to see the normal reflection."""
 
 u_FogEnableDistance = """
 The haze that builds up with distance, so far-off hills look softer and further away.

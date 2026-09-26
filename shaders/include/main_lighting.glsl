@@ -138,6 +138,14 @@ float plagueMoonPhaseInfluence(float moonPhase, float sunVisibility2) {
 }
 
 // -------------------------------------------------------------------------------------------------
+// Declared here, not in gbuffer_resolve.fsh, so there is one declaration instead of two that could
+// drift apart. gbuffer_resolve.fsh references this declaration instead of declaring its own.
+//
+// The pack's own measured ground estimate, not a physical constant: authored against
+// tools/verify_conductor_hue.py's fixtures for the environment-specular term this colour feeds.
+const vec3 PLAGUE_ENV_GROUND = vec3(0.085, 0.090, 0.070);
+
+// -------------------------------------------------------------------------------------------------
 // Held light (2.7). The stronger of the two hands selects one strength; the light sits at a small
 // fixed offset below the eye and falls off as inverse-square distance, floored so the near field
 // can't blow out. Coloured identically to placed block light, taking that colour as a parameter

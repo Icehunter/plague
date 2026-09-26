@@ -14,6 +14,11 @@ uniform sampler2D u_WaterDepth; // builtin.waterDepth: reversed-Z, 0.0 = no wate
 uniform sampler2D u_SceneHdr; // sceneHdr: the finished opaque scene, this frame
 uniform sampler2D u_GNormal; // builtin.gNormal: for backface rejection at the hit
 uniform sampler2D u_Depth; // builtin.depth: opaque scene depth, what the ray tests against
+// Appended last: positional inputs, append never insert.
+uniform sampler2D u_MirrorHdr; // mirrorHdr: the player's own reflection, already lit
+uniform sampler2D u_MirrorDepth; // builtin.mirrorDepth: reversed-Z, 0.0 = no reflection here
+// player_mirror_trace.glsl's own opt-in contract: declare u_MirrorDepth (above) before importing.
+#moj_import <fornax_runtime:player_mirror_trace.glsl>
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -233,7 +238,93 @@ void main() {
         }
     }
 
-    if (!hit) {
+    // --- The player's own reflection, water consumer ------------------------------------------
+    //
+    // Gated twice on u_PlayerMirrorState.x for safety: the engine's own falling-edge clear already
+    // handles the common case where the gate just turned off, and this is a second, independent
+    // check against a stale valid=1 the clear somehow missed. Also gated on the water plane
+    // specifically being valid (.z, not the sentinel -1e4; the render plane .y may be the standing
+    // plane, which this consumer does not want), and on this pixel's own reconstructed surface
+    // sitting within one block of the water plane. This is the guard against a river at another
+    // level: a waterfall's pool and the river below it are both water but sit at different
+    // heights, and nothing should pull the player's mirror onto the wrong sheet. 1.0 comfortably
+    // covers the wave field's own displacement bound (PLAGUE_WAVE_DISPLACEMENT_LIMIT = 0.78
+    // blocks, water_waves.glsl) with margin.
+    bool mirrorHit = false;
+    vec3 mirrorColour = vec3(0.0);
+    float mirrorConfidence = 0.0;
+    float mirrorDistance = 1e30;
+    float surfaceAltitude = u_CameraAbs.y + origin.y;
+    float mirrorWaterPlane = u_PlayerMirrorState.z;
+    float mirrorRenderPlane = u_PlayerMirrorState.y;
+    if (u_PlayerMirrorState.x > 0.5 && mirrorWaterPlane > -1000.0
+            && abs(surfaceAltitude - mirrorWaterPlane) <= 1.0) {
+        // Reflecting about the water plane is the same as reflecting about the render plane, the
+        // standing plane when it validated, see WaterPlaneProbe.combine's own doc, then
+        // translating y by 2*(h_water - h_render). Zero when they are the same plane already.
+        vec3 mirrorShift = vec3(0.0, 2.0 * (mirrorWaterPlane - mirrorRenderPlane), 0.0);
+        // Coverage reject first: this water pixel's own surface point, shifted the same way,
+        // projected through the mirror's own guarded frustum, lands where the planar identity
+        // says the mirror covers it. tools/verify_player_mirror.py confirms this reject never
+        // drops a true hit. A cleared texel there means nothing reflects here, so skip the march
+        // entirely.
+        vec3 coverageProj = projectMirrorGuarded(origin - mirrorShift);
+        if (coverageProj.x >= 0.0 && coverageProj.x < 1.0
+                && coverageProj.y >= 0.0 && coverageProj.y < 1.0 && coverageProj.z > 0.0
+                && texture(u_MirrorDepth, coverageProj.xy).r > 0.0) {
+            // R': this pixel's own reflected ray, sent back down across the plane. This is exactly
+            // the offline model's r_prime, which is why marching it against the mirror's own depth
+            // finds the same body the ray would have hit had the mirror truly stood behind glass.
+            vec3 rPrime = mirror;
+            rPrime.y = -rPrime.y;
+            vec3 hitWorld;
+            vec2 hitUv;
+            if (plagueMirrorMarchShifted(origin, rPrime, mirrorWaterPlane, mirrorRenderPlane,
+                    hitWorld, hitUv)) {
+                vec4 mirrorSample = texture(u_MirrorHdr, hitUv);
+                vec2 mdist = abs(hitUv - 0.5) * 2.0;
+                float mirrorEdge = clamp(1.0 - pow(max(mdist.x, mdist.y), 8.0), 0.0, 1.0);
+                mirrorHit = true;
+                mirrorDistance = length(hitWorld - origin);
+                // Un-premultiply: mirrorHdr is linear-filtered and a cleared texel is vec4(0), so a
+                // sample near the mirror's own edge blends a lit (colour, 1) texel with a (0, 0) one
+                // and arrives premultiplied (rgb = alpha * colour). Dividing it back out here, before
+                // mirrorConfidence weights the same alpha in again below, avoids darkening the
+                // fringe by roughly alpha squared.
+                mirrorColour = mirrorSample.rgb / max(mirrorSample.a, 1e-4);
+                mirrorConfidence = clamp(mirrorSample.a, 0.0, 1.0) * mirrorEdge;
+            }
+        }
+    }
+
+    if (hit) {
+        // Nearest wins between the screen-space result and the mirror result: a block between the
+        // water and the player's own reflection must occlude it, the same physical fact any other
+        // occluder enforces. Distance is Euclidean from origin, valid for both candidates since
+        // `mirror` and its y-negated r_prime are both unit length, so each `t`/`length()` pair is a
+        // real distance along its own ray.
+        float screenDistance = length(hitScenePos - origin);
+        if (mirrorHit && mirrorDistance < screenDistance) {
+            fragColor = vec4(mirrorColour, mirrorConfidence);
+            return;
+        }
+        vec3 colour = texture(u_SceneHdr, hitScreen.xy).rgb;
+        float depthFeather = 1.0 - smoothstep(0.7 * hitThickness, hitThickness, hitBehind);
+        vec2 cdist = abs(hitScreen.xy - 0.5) * 2.0;
+        float edgeFade = clamp(1.0 - pow(max(cdist.x, cdist.y), 8.0), 0.0, 1.0);
+        fragColor = vec4(colour, edgeFade * depthFeather);
+        return;
+    }
+
+    // Decided before the reject/backface/sky/miss fallbacks below: a genuine mirror hit is a real
+    // reflection, worth more than any of those heuristic guesses at what the screen-space march
+    // could not confirm.
+    if (mirrorHit) {
+        fragColor = vec4(mirrorColour, mirrorConfidence);
+        return;
+    }
+
+    {
 #if PLAGUE_VOXEL_REFLECTIONS == 0
         // These colour guesses failed the hit test; with voxel tracing on, the geometry query
         // answers instead of mixing a guess into bright sky. Below: no clean hit but a rejected
@@ -279,14 +370,4 @@ void main() {
         fragColor = vec4(0.0); // miss: the probe fallback owns what the screen cannot show
         return;
     }
-
-    vec3 colour = texture(u_SceneHdr, hitScreen.xy).rgb;
-
-    // Confidence, faded at the thickness edge: a hard cutoff there flickers pixel to pixel
-    // wherever the leftover sits on the threshold, which is every nearly edge-on outline.
-    float depthFeather = 1.0 - smoothstep(0.7 * hitThickness, hitThickness, hitBehind);
-    vec2 cdist = abs(hitScreen.xy - 0.5) * 2.0;
-    float edgeFade = clamp(1.0 - pow(max(cdist.x, cdist.y), 8.0), 0.0, 1.0);
-
-    fragColor = vec4(colour, edgeFade * depthFeather);
 }

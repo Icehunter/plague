@@ -109,6 +109,49 @@ program = "shaders/blocks/shadow_entities"
 inputs = []
 outputs = []
 
+# The player's own reflection. The engine supplies both ends: PlayerMirrorCaster submits the player
+# under the camera's own projection, and PlayerMirrorTargets is the half-resolution MRT this
+# program writes into. No inputs or outputs here for the same reason shadow_entities has none: this
+# is a geometry pass, so it reads no runtime option and touches no other pass's target.
+# player_mirror_resolve.fsh reads the MRT this writes, and both ssr_trace (opaque) and
+# ssr_trace_water fold it into their own reflections, all by builtin name.
+#
+# Gated on SSR_QUALITY alone: the water trace keeps its own stricter SSR_WATER_MODE gate on top,
+# but the opaque trace has no water-specific option to key on. The engine's consumer-driven check
+# (GraphRunner.wantsPlayerMirrorConsumed) follows whichever readers are enabled, so this gate
+# cannot draw the caster into a target nothing reads.
+[[pass]]
+name = "player_mirror"
+type = "geometry"
+slot = "player_mirror"
+program = "shaders/blocks/player_mirror"
+enabled_if = "SSR_QUALITY != 0"
+inputs = []
+outputs = []
+
+# The player's own reflection against the vertical wall beside them, X and Z axes: same shape as
+# player_mirror above in every respect, see that pass's own comment. A dedicated engine pass,
+# PlayerMirrorCaster.forSlot(...), submits the player under the camera's own projection into each
+# axis's own half-resolution MRT, PlayerMirrorTargets.forSlot(...), gated on the identical
+# SSR_QUALITY literal so a claim here can never draw into a target nothing reads.
+[[pass]]
+name = "player_mirror_x"
+type = "geometry"
+slot = "player_mirror_x"
+program = "shaders/blocks/player_mirror_x"
+enabled_if = "SSR_QUALITY != 0"
+inputs = []
+outputs = []
+
+[[pass]]
+name = "player_mirror_z"
+type = "geometry"
+slot = "player_mirror_z"
+program = "shaders/blocks/player_mirror_z"
+enabled_if = "SSR_QUALITY != 0"
+inputs = []
+outputs = []
+
 # --- Ambient occlusion --------------------------------------------------------------------------
 # Targets ungated though passes are gated: the resolve reads `ssao` unconditionally, and
 # gate-consistency refuses an ungated pass reading a gated target.
@@ -687,6 +730,43 @@ inputs = ["globals", "packOptions", "voxelSourceWindow", "voxelSectionState", "v
           "builtin.materialAtlasPages", "voxelPalette"]
 outputs = ["voxelLocalRadiance"]
 
+# Lights the player's own reflection. Reads no runtime option: it reconstructs the real surface
+# from the mirror MRT the player_mirror geometry pass supplies, and writes one lit HDR colour
+# ssr_trace and ssr_trace_water both fold in. Placed ahead of ssr_trace_fancy and ssr_trace_fast:
+# its own inputs are engine-provided builtins already available at this point in the frame, and
+# both opaque trace arms need mirrorHdr populated before they run. Gated on SSR_QUALITY alone,
+# matching player_mirror's own gate and [targets.mirrorHdr]'s own; see either's comment for why.
+[[pass]]
+name = "player_mirror_resolve"
+type = "fullscreen"
+shader = "shaders/post/player_mirror_resolve.fsh"
+enabled_if = "SSR_QUALITY != 0"
+inputs = ["builtin.mirrorAlbedo", "builtin.mirrorNormal", "builtin.mirrorMaterial",
+          "builtin.mirrorDepth", "sunShadowMap", "sunShadowMapRaw"]
+outputs = ["mirrorHdr"]
+
+# Lights the player's own X and Z wall reflections: same shape as player_mirror_resolve above,
+# reading each axis's own family of builtins and writing its own HDR target. Placed right after
+# the floor's own resolve, still ahead of ssr_trace_fancy and ssr_trace_fast, for the same reason:
+# both opaque trace arms need every mirror target populated before they run.
+[[pass]]
+name = "player_mirror_resolve_x"
+type = "fullscreen"
+shader = "shaders/post/player_mirror_resolve_x.fsh"
+enabled_if = "SSR_QUALITY != 0"
+inputs = ["builtin.mirrorXAlbedo", "builtin.mirrorXNormal", "builtin.mirrorXMaterial",
+          "builtin.mirrorXDepth", "sunShadowMap", "sunShadowMapRaw"]
+outputs = ["mirrorXHdr"]
+
+[[pass]]
+name = "player_mirror_resolve_z"
+type = "fullscreen"
+shader = "shaders/post/player_mirror_resolve_z.fsh"
+enabled_if = "SSR_QUALITY != 0"
+inputs = ["builtin.mirrorZAlbedo", "builtin.mirrorZNormal", "builtin.mirrorZMaterial",
+          "builtin.mirrorZDepth", "sunShadowMap", "sunShadowMapRaw"]
+outputs = ["mirrorZHdr"]
+
 # NAME IS LOAD-BEARING: the engine supplies Hi-Z level count in u_Param2 only for passes named exactly
 # ssr_trace_fancy/ssr_trace_fast/ssr_trace_water. Rename one and u_Param2 silently stays 0, corrupting every ray.
 [[pass]]
@@ -694,7 +774,11 @@ name = "ssr_trace_fancy"
 type = "fullscreen"
 shader = "shaders/post/ssr_trace.fsh"
 enabled_if = "SSR_QUALITY == 2"
-inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHistory.history", "hiz"]
+# mirrorHdr/builtin.mirrorDepth appended, then mirrorXHdr/builtin.mirrorXDepth/mirrorZHdr/
+# builtin.mirrorZDepth appended again: positional inputs, append never insert.
+inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHistory.history", "hiz",
+          "mirrorHdr", "builtin.mirrorDepth",
+          "mirrorXHdr", "builtin.mirrorXDepth", "mirrorZHdr", "builtin.mirrorZDepth"]
 outputs = ["ssrRaw"]
 
 # Reads FULL-res depth/Hi-Z despite writing to a half-res target: ssr_trace.fsh derives step size
@@ -704,7 +788,10 @@ name = "ssr_trace_fast"
 type = "fullscreen"
 shader = "shaders/post/ssr_trace.fsh"
 enabled_if = "SSR_QUALITY == 1"
-inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHistory.history", "hiz"]
+# Same appended tail as ssr_trace_fancy above: positional inputs, append never insert.
+inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHistory.history", "hiz",
+          "mirrorHdr", "builtin.mirrorDepth",
+          "mirrorXHdr", "builtin.mirrorXDepth", "mirrorZHdr", "builtin.mirrorZDepth"]
 outputs = ["ssrRawHalf"]
 
 # The resolve_hdr prefix is the existing engine ABI for current sun, moon and fog parameters.
@@ -2523,12 +2610,40 @@ enabled_if = "SSR_WATER_MODE > 0"
 inputs = ["waterEnvironmentSeed"]
 outputs = []
 
+# Half-resolution, matching PlayerMirrorTargets' own resolution: the resolve reads one lit HDR
+# texel per mirror texel, no more. Linear filter: both ssr_trace_water's shifted march and
+# ssr_trace's opaque march sample this at arbitrary UVs while walking a reflected ray, not at texel
+# centres. Gated on SSR_QUALITY alone: the water trace keeps its own stricter SSR_WATER_MODE gate,
+# but the opaque trace has no water-specific option to key on, and the engine's consumer-driven
+# check follows whichever readers are actually enabled regardless of this target's own gate.
+[targets.mirrorHdr]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+enabled_if = "SSR_QUALITY != 0"
+
+# The X and Z wall siblings of mirrorHdr above: same format, scale, filter and gate, one target
+# per axis. ssr_trace's own opaque march samples these at arbitrary UVs too.
+[targets.mirrorXHdr]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+enabled_if = "SSR_QUALITY != 0"
+
+[targets.mirrorZHdr]
+format = "rgba16f"
+scale = 0.5
+filter = "linear"
+enabled_if = "SSR_QUALITY != 0"
+
 [[pass]]
 name = "ssr_trace_water"
 type = "fullscreen"
 shader = "shaders/post/ssr_trace_water.fsh"
 enabled_if = "SSR_WATER_MODE > 1 && SSR_QUALITY != 0"
-inputs = ["builtin.waterNormal", "builtin.waterDepth", "sceneHdr", "builtin.gNormal", "builtin.depth"]
+# mirrorHdr/builtin.mirrorDepth appended last: positional inputs, append never insert.
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "sceneHdr", "builtin.gNormal", "builtin.depth",
+          "mirrorHdr", "builtin.mirrorDepth"]
 outputs = ["ssrWaterRaw"]
 
 # Optional engine buffer: real sky and block light, four cells per R32UI word.

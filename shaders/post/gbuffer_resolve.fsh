@@ -1406,7 +1406,8 @@ int debugView = int(u_Param3 + 0.5);
     // stepped conductor luma 4.7x between polished and worn texels under one sky. 0.80, not 1.0,
     // stays conservative for the rest; numbers fitted in tools/verify_conductor_hue.py.
     const float PLAGUE_ENV_SKY = 0.80;
-    const vec3 PLAGUE_ENV_GROUND = vec3(0.085, 0.090, 0.070);
+    // PLAGUE_ENV_GROUND is declared in main_lighting.glsl, already imported above, shared with
+    // plagueDoLighting's own ground bounce fill so there is one ground albedo number, not two.
     float sharpShare = reflSmoothness * reflSmoothness;
     sharpShare = sharpShare * (2.0 - sharpShare);
 
