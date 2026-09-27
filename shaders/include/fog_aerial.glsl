@@ -16,12 +16,10 @@ PlagueFogTerms plagueFogTermsAerialPath(vec3 worldPos, vec3 borderPos,
                                     float skyLight, float cameraSkyLight,
                                     float renderDistance, vec4 aerial, float transmittanceNear,
                                     vec3 skyAlongRay, vec3 transmittance, PlagueFogDrive drive,
-                                    float borderDensity, float uwDepthFloor,
-                                    float uwFogStartBlocks, float uwDistanceFogBlocks,
-                                    float uwDepthFogBlocks, vec3 uwTintBase, vec3 uwDarkness,
+                                    float borderDensity, float waterClarity,
                                     PlagueLighting lighting, vec3 atmColorMult) {
     PlagueFogTerms terms = PlagueFogTerms(vec3(0.0), vec3(0.0), vec3(0.0), 0.0,
-                                          vec3(0.0), 0.0, vec3(1.0));
+                                          vec3(1.0), vec3(0.0));
 
     float rayLength = length(worldPos);
     if (rayLength < 1e-4) {
@@ -79,21 +77,19 @@ PlagueFogTerms plagueFogTermsAerialPath(vec3 worldPos, vec3 borderPos,
                                       borderFraction));
     float rawBorder = plagueBorderFog(borderDist, borderRenderDistance, borderDensityScaled) * borderGate
                     * u_FogEnableEdge;
-    float atmLuma = dot(terms.atm, vec3(0.2126, 0.7152, 0.0722));
-    terms.border = max(0.0, (rawBorder - atmLuma) / max(1.0 - atmLuma, 1e-4));
-
+    // No air on a submerged ray: dropped before the border reads it, so the edge curve keeps its
+    // full reach under water and closes on the water's own far radiance (plagueFogWaterTerms).
 #if PLAGUE_UNDERWATER
     if (u_WaterState.x > 0.5) {
         terms.atm = vec3(0.0);
-        terms.border = 0.0;
     }
 #endif
+    float atmLuma = dot(terms.atm, vec3(0.2126, 0.7152, 0.0722));
+    terms.border = max(0.0, (rawBorder - atmLuma) / max(1.0 - atmLuma, 1e-4));
 
     terms.borderColor = skyAlongRay * atmColorMult;
 
-    plagueFogWaterTerms(terms, worldPos, rayLength, renderDistance, lighting, uwDepthFloor,
-                        uwFogStartBlocks, uwDistanceFogBlocks, uwDepthFogBlocks, uwTintBase,
-                        uwDarkness);
+    plagueFogWaterTerms(terms, worldPos, rayLength, lighting, waterClarity);
     return terms;
 }
 
@@ -102,15 +98,12 @@ PlagueFogTerms plagueFogTermsAerialPath(vec3 worldPos, vec3 borderPos,
 PlagueFogTerms plagueFogTermsAerial(vec3 worldPos, float skyLight, float cameraSkyLight,
                                     float renderDistance, vec4 aerial, float transmittanceNear,
                                     vec3 skyAlongRay, vec3 chroma, PlagueFogDrive drive,
-                                    float borderDensity, float uwDepthFloor,
-                                    float uwFogStartBlocks, float uwDistanceFogBlocks,
-                                    float uwDepthFogBlocks, vec3 uwTintBase, vec3 uwDarkness,
+                                    float borderDensity, float waterClarity,
                                     PlagueLighting lighting, vec3 atmColorMult) {
     vec3 transmittance = pow(vec3(clamp(aerial.a, 0.0, 1.0)), chroma);
     return plagueFogTermsAerialPath(worldPos, worldPos, skyLight, cameraSkyLight,
             renderDistance, aerial, transmittanceNear, skyAlongRay, transmittance, drive,
-            borderDensity, uwDepthFloor, uwFogStartBlocks, uwDistanceFogBlocks, uwDepthFogBlocks,
-            uwTintBase, uwDarkness, lighting, atmColorMult);
+            borderDensity, waterClarity, lighting, atmColorMult);
 }
 
 #endif // PLAGUE_FOG_AERIAL

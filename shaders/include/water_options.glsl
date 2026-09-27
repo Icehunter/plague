@@ -14,8 +14,9 @@
 // reason above. Defaults reproduce the old compile-time 100%/60% stops exactly.
 #define u_WaveStrength 1.0 //[0.0..2.0 step 0.1] runtime "Wave Strength"
 #define u_WaveSpeed 1.0 //[0.0..4.0 step 0.05] runtime "Wave Speed"
+// Scales the whole water medium (water_medium.glsl), above and below the surface alike: absorption,
+// scattering and the depth fall-off of sky light move together, so the water stays one water.
 #define u_WaterClarity 1.0 //[0.25..3.0 step 0.05] runtime "Water Clarity"
-#define u_WaterTintSaturation 0.45 //[0.0..1.0 step 0.05] runtime "Surface Water Saturation"
 #define u_WaterReflectionStrength 1.0 //[0.0..1.5 step 0.05] runtime "Water Reflection Strength"
 #define u_WaterSunGlitterStrength 1.0 //[0.0..2.0 step 0.05] runtime "Surface Sun Glitter"
 // The lens-splash warp when the camera crosses the surface (tonemap.fsh's plagueWaterCameraUv).
@@ -53,33 +54,13 @@
 // in open water on its own.
 #define u_WaterMoteAmount 2.0 //[0.0..2.0 step 0.05] runtime "Floating Water Specks"
 
-// --- Under the surface: colour and darkness ----------------------------------------------------------
-// Declared here since underwater.glsl (its consumer) is transitively reachable from terrain.fsh and
-// so cannot declare runtime options itself. u_DepthDarkness: the darkening floor at depth, 1.0
-// disables it. Raised from 0.10 to 0.60 — 0.10 shipped-on crushed shallow water at noon; 0.60 still
-// lets the near-black deep-water look through at night and in storms.
-#define u_DepthDarkness 0.60 //[0.0..1.0 step 0.05] runtime "Deep Water Darkness"
-#define u_WaterTintR 0.50 //[0.0..1.0 step 0.01] runtime "Water Tint Red"
-#define u_WaterTintG 0.80 //[0.0..1.0 step 0.01] runtime "Water Tint Green"
-#define u_WaterTintB 1.00 //[0.0..1.0 step 0.01] runtime "Water Tint Blue"
-#define u_WaterDistanceDarkness 0.55 //[0.0..1.0 step 0.05] runtime "Darker with Distance"
-#define u_WaterDepthDarkness 0.10 //[0.0..1.0 step 0.05] runtime "Darker with Depth"
-#define u_WaterDarknessDepth 1 //[0..12 step 1] runtime "How Deep Before It Darkens"
-
-// --- Under the surface: how far you can see ----------------------------------------------------------
-// Byte-identical to underwater_refraction.fsh's own declaration (option scanner merge rule).
-#define u_UnderwaterFogStart 1 //[0..12 step 1] runtime "Underwater Fog Start Depth"
-// Chunks, not blocks, matching vanilla's own render-distance slider unit. Bare integer value list
-// (not a `min..max` range) so the settings UI displays the literal token rather than a raw double —
-// checked against Fornax's OptionAnnotation.java. Converted to blocks in exactly one place,
-// underwater.glsl's plagueChunksToBlocks.
-#define u_WaterDistanceFog 4 //[0..12 step 1] runtime "Fog with Distance Underwater"
-#define u_WaterDepthFog 2 //[0..12 step 1] runtime "Fog with Depth Underwater"
-
+// --- Under the surface: colour, darkness and reach -----------------------------------------------------
+// No sliders. The colour, the loss with distance and depth, and how far a view ray carries are all
+// the medium's own (water_medium.glsl); Water Clarity above scales the lot.
 // --- Under the surface: defocus blur -----------------------------------------------------------------
 #define u_UwBlurStart 1 //[0..12 step 1] runtime "Underwater Blur Start"
-// Deliberately decoupled from u_WaterDistanceFog above: sharing one number meant Water Fog End and
-// blur distance fought over a single slider.
+// Its own number rather than a share of the water's reach: a blur distance tied to visibility left
+// one slider doing two jobs.
 #define u_UwBlurEnd 3 //[1..12 step 1] runtime "Underwater Blur End"
 // Byte-identical to tonemap.fsh's own declaration (option scanner merge rule).
 #define u_UwBlurRadius 28.0 //[0.0..80.0 step 2.0] runtime "Underwater Blur Size"

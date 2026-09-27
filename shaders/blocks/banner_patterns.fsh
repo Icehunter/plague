@@ -49,7 +49,7 @@ out vec4 fragColor;
 // (PlaguePackLoadsTest.noDeferredGeometryShaderDeclaresARuntimeOption) honest about that.
 #define u_ScreenBrightness 0.5 //[0.0..1.0 step 0.05] runtime "Screen Brightness"
 // Byte-identical to shaders/include/water_options.glsl's declaration, same forward-pass reason as above.
-#define u_DepthDarkness 0.60 //[0.0..1.0 step 0.05] runtime "Deep Water Darkness"
+#define u_WaterClarity 1.0 //[0.25..3.0 step 0.05] runtime "Water Clarity"
 
 void main() {
     // Every line to the end of this block is core/entity.fsh verbatim, so any difference from here on
@@ -134,12 +134,12 @@ void main() {
                                            u_CameraSkyLight.x,
                                            renderDistance, u_CameraAbs.y, fogDither,
                                            fogSky, fogLighting, fogSunDir,
-                                           u_FogDensity, u_FogBorderDensity, u_DepthDarkness);
+                                           u_FogDensity, u_FogBorderDensity, u_WaterClarity);
         vec3 fogOverWhite = plagueApplyFog(vec3(1.0), v_PlagueWorldPos, fogSkyAccess,
                                            u_CameraSkyLight.x,
                                            renderDistance, u_CameraAbs.y, fogDither,
                                            fogSky, fogLighting, fogSunDir,
-                                           u_FogDensity, u_FogBorderDensity, u_DepthDarkness);
+                                           u_FogDensity, u_FogBorderDensity, u_WaterClarity);
 
         // Kept per-channel (not scalar) because underwater tint decays per channel.
         vec3 opacity = clamp(vec3(1.0) - (fogOverWhite - fogOverBlack), 0.0, 1.0);

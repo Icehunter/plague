@@ -560,20 +560,9 @@ int debugView = int(u_Param3 + 0.5);
         // A submerged no-hit ray is a water ray at full length, not a sky ray to paint over: it
         // takes the water path instead of building and throwing away the dome and everything on it.
         if (u_WaterState.x > 0.5) {
-            float uwRenDis = u_Param2 > 1.0 ? u_Param2 : max(u_RenderFog.y, 32.0);
-            // Same darkening the geometry and closed-volume veils take; all three sites must agree
-            // or the disagreement shows as a seam where they meet.
-            vec3 uwVeil = plagueWaterFogColor(lighting)
-                        * plagueWaterVeilDarkness(viewRay * uwRenDis,
-                                                  plagueChunksToBlocks(u_WaterDistanceFog),
-                                                  plagueChunksToBlocks(u_WaterDarknessDepth),
-                                                  u_WaterDistanceDarkness, u_WaterDepthDarkness)
-                        * plagueAuthoredToLinear(
-                              plagueUnderwaterMult(uwRenDis, uwRenDis, u_DepthDarkness, lighting, vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB))
-                                      * 0.85);
-            skyOut = plagueUnderwaterClosedRadiance(viewRay, uwVeil, lighting.sunFactor,
-                                                    plagueChunksToBlocks(u_WaterDistanceFog));
-
+            // The same closed volume the fog dispatcher seals the render edge with, so a loaded
+            // chunk and a missing one meet at one colour.
+            skyOut = plagueWaterClosedRadiance(viewRay, lighting, u_WaterClarity);
         } else
 #endif
         {
@@ -1129,9 +1118,12 @@ int debugView = int(u_Param3 + 0.5);
     }
 
     float uwSunGate = -1.0; // < 0: the standard gates stand (dry fragments, underwater off)
-    // Submerged rock sits in the same scattering medium plagueWaterFogColor already prices for the
-    // eye-to-point veil, so it must not go black the way a dry sealed room does. Reuses
-    // plagueWaterFogColor, so floor and veil share a colour, scaled by the same exp(-depth/24).
+    // The colour of the sun's light left at the block's depth, over the gate's grey mean. Applied
+    // to the sun colour itself, so the gate can stay one scalar for the specular term.
+    vec3 uwSunColourShift = vec3(1.0);
+    // Submerged rock sits in the same scattering medium the veil is made of, so it must not go
+    // black the way a dry sealed room does. The floor is the water's own glow at that depth
+    // (water_medium.glsl), the same sum the veil reads, so floor and veil share a colour.
     //
     // Limits: the floor knows the fragment's depth, not whether the water above reaches open sky,
     // so a sealed flooded cavern reads like a sunlit overhang; and it is a height test, not a water
@@ -1145,14 +1137,19 @@ int debugView = int(u_Param3 + 0.5);
                 ? u_WaterState.z
                 : u_CameraAbs.y + worldPos.y * (uwSurfDist / max(uwFragDist, 1e-4));
         float uwSubmergedDepth = max(uwSurfaceY - uwFragWorldY, 0.0);
-        uwSunGate = exp(-uwSubmergedDepth / 24.0);
+        // The sun's light left at the block's depth, per channel (water_medium.glsl): red is gone
+        // a few blocks down, blue reaches the deep floor.
+        vec3 uwSunLeft = plagueWaterDownwelling(uwSubmergedDepth, u_WaterClarity);
+        uwSunGate = dot(uwSunLeft, vec3(1.0 / 3.0));
+        uwSunColourShift = uwSunLeft / max(uwSunGate, 1e-4);
         // WATER_AMBIENT_FLOOR is a bisection switch, see underwater.glsl. Gated separately from
         // uwSunGate above, which the specular term still needs regardless of this switch's state.
 #if WATER_AMBIENT_FLOOR
-        uwAmbientFloor = plagueWaterFogColor(lighting) * max(uwSunGate, 0.0);
+        uwAmbientFloor = plagueWaterGlowAtDepth(lighting, uwSubmergedDepth, u_WaterClarity);
 #endif
     }
 #endif
+    sunColour *= uwSunColourShift;
     float sunVisibilityHere = shadow * (uwSunGate >= 0.0 ? uwSunGate : skyLight);
     vec3 specular = brdf.specular * sunVisibilityHere * sunColour;
     if (debugView == DBG_CONDUCTOR_DIRECT) {
@@ -1308,13 +1305,7 @@ int debugView = int(u_Param3 + 0.5);
     // The sky arm's override above does not reach a reflected ray, so a missed reflection needs
     // its own closed open-water radiance or it shows a flat patch, or sky and stars.
     if (u_WaterState.x > 0.5) {
-        vec3 uwMirrorVeil = plagueWaterFogColor(lighting)
-                           * plagueAuthoredToLinear(plagueUnderwaterMult(
-                      u_Param2 > 1.0 ? u_Param2 : max(u_RenderFog.y, 32.0),
-                      u_Param2 > 1.0 ? u_Param2 : max(u_RenderFog.y, 32.0),
-                      u_DepthDarkness, lighting, vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB)) * 0.85);
-        skyMiss = plagueUnderwaterClosedRadiance(reflDir, uwMirrorVeil, lighting.sunFactor,
-                                                 plagueChunksToBlocks(u_WaterDistanceFog));
+        skyMiss = plagueWaterClosedRadiance(reflDir, lighting, u_WaterClarity);
     }
 #endif
 

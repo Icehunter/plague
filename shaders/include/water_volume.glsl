@@ -2,15 +2,13 @@
 #define PLAGUE_WATER_VOLUME
 
 #moj_import <fornax_runtime:color.glsl>
+// The medium itself: absorption, scattering, the particle phase and the depth fall-off of sky
+// light. Shared with the veil and the surface so all three describe one water.
+#moj_import <fornax_runtime:water_medium.glsl>
 
 // Shared finite-water transport ABI: the interval target carries geometry only, radiance is
 // evaluated by the later transport pass. Absorption/scattering kept SPLIT so Beer's term can use
 // real total extinction while the source integral adds back only scattered radiance.
-//
-// Absorption: Pope & Fry 1997 (pure water, 630/532.5/465 nm). Scattering: Petzold 1972 (suspended
-// particulates, spectrally near-flat), magnitude in the clear-lake band.
-const vec3 PLAGUE_WATER_SIGMA_S = vec3(0.015);
-const vec3 PLAGUE_WATER_SIGMA_A = vec3(0.2916, 0.0447, 0.01011);
 const float PLAGUE_WATER_INTERVAL_EPSILON = 1e-3;
 const float PLAGUE_WATER_MEDIUM_REVISION = 2.0;
 // Binary16 has a 2^-9 spacing around revision 2.  These exact powers of two reserve the alpha
@@ -166,14 +164,6 @@ PlagueWaterVolumeInterval plagueDecodeWaterVolumeInterval(vec4 encoded) {
     return interval;
 }
 
-vec3 plagueWaterSigmaT(float clarity) {
-    return (PLAGUE_WATER_SIGMA_S + PLAGUE_WATER_SIGMA_A) / max(clarity, 0.05);
-}
-
-vec3 plagueWaterVolumeTransmittance(float distance, float clarity) {
-    return exp(-plagueWaterSigmaT(clarity) * max(distance, 0.0));
-}
-
 // Suspended particulate against depth below the surface: a wind-mixed near-surface layer of roughly
 // constant water, then rising silt toward the bottom. smoothstep, not a linear ramp: the flat start
 // IS the mixed layer. Multiplies SCATTERING ONLY; absorption belongs to the molecules and stays
@@ -210,29 +200,6 @@ vec3 plagueWaterCellWeight(vec3 sigmaT, float distance) {
     vec3 safeSigmaT = max(sigmaT, vec3(1e-8));
     return mix(vec3(max(distance, 0.0)), (vec3(1.0) - exp(-opticalDepth)) / safeSigmaT,
             step(vec3(1e-8), abs(sigmaT)));
-}
-
-// Normalized water-particle phase: a Kopelevich-style small-angle forward lobe mixed with a
-// Cornette-Shanks backscatter lobe (Cornette & Shanks 1992); both published forms, both
-// analytically energy-conserving, so the mix is too.
-//
-// Parameters fitted by tools/fit_water_phase.py against the committed behaviour fixture, tuned for
-// shaft VISIBILITY rather than oceanographic fidelity — energy conservation is the physical
-// constraint kept, side-angle brightness is not Petzold's measured value.
-const float PLAGUE_WATER_PHASE_FORWARD_SHARPNESS = 100.0;
-const float PLAGUE_WATER_PHASE_BACK_G = -0.27;
-const float PLAGUE_WATER_PHASE_FORWARD_WEIGHT = 0.797;
-float plagueWaterParticlePhase(float mu) {
-    const float gCs2 = PLAGUE_WATER_PHASE_BACK_G * PLAGUE_WATER_PHASE_BACK_G;
-    float clampedMu = clamp(mu, -1.0, 1.0);
-    float forwardLobe = PLAGUE_WATER_PHASE_FORWARD_SHARPNESS / (6.283185307179586
-            * (PLAGUE_WATER_PHASE_FORWARD_SHARPNESS * (1.0 - clampedMu) + 1.0)
-            * log(2.0 * PLAGUE_WATER_PHASE_FORWARD_SHARPNESS + 1.0));
-    float backLobe = (3.0 * (1.0 - gCs2))
-            / (8.0 * 3.141592653589793 * (2.0 + gCs2))
-            * ((1.0 + clampedMu * clampedMu)
-            / pow(max(1.0 + gCs2 - 2.0 * PLAGUE_WATER_PHASE_BACK_G * clampedMu, 1e-6), 1.5));
-    return mix(backLobe, forwardLobe, PLAGUE_WATER_PHASE_FORWARD_WEIGHT);
 }
 
 // The direct (celestial shaft) curve: two exponential lobes in sqrt(1 - mu) — a NEAR lobe for the

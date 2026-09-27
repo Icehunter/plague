@@ -2813,7 +2813,10 @@ inputs = ["waterVolumeScatterRaw", "waterVolumeScatter.history", "waterVolumeInt
 outputs = ["waterVolumeScatter"]
 
 # Name-keyed like ssr_trace_water, for the render-distance anchor its fog border needs.
-# Destination absent from inputs: blend-only write (see the convention note on clouds_composite).
+# Reads sceneHdr, the scene before any water, and writes the composed pixel whole: absorption
+# through the water acts per channel on the bed behind it, which a single-alpha blend cannot do.
+# sceneHdr is a different target from the output (scene_hdr_copy made the copy), and nothing
+# writes sceneHdr between that copy and this pass, so the read is not a same-frame cycle.
 [[pass]]
 name = "water_composite"
 type = "fullscreen"
@@ -2824,11 +2827,10 @@ shader = "shaders/post/water_composite.fsh"
 # must not decide whether water has waves. Must match terrain.fsh's forward-arm discard
 # exactly, or both draw water or neither does; verify_graph_resolves.py pins the pair.
 enabled_if = "SSR_WATER_MODE > 0"
-blend = "translucent"
-# 15 samplers. Metal allows 16 per fragment function and refuses the pipeline above that, with
-# nothing in the log but a compile error and a water surface that renders as vanilla flat blue.
-# Inputs are positional: append only, and check this count before adding one.
-inputs = ["builtin.waterNormal", "builtin.waterDepth", "ssrWater", "builtin.depth", "builtin.noise", "glintOcclusion", "foamTexture", "foamNormalTexture", "foamHeightTexture", "waterEnvironment", "moonAlbedo", "moonNormal", "cloudFront", "atmoSkyView", "atmoAerial"]
+# 16 samplers, the most Metal allows per fragment function: one more and it refuses the pipeline,
+# with nothing in the log but a compile error and a water surface that renders as vanilla flat
+# blue. Inputs are positional: append only, and there is no room left to append.
+inputs = ["builtin.waterNormal", "builtin.waterDepth", "ssrWater", "builtin.depth", "builtin.noise", "glintOcclusion", "foamTexture", "foamNormalTexture", "foamHeightTexture", "waterEnvironment", "moonAlbedo", "moonNormal", "cloudFront", "atmoSkyView", "atmoAerial", "sceneHdr"]
 outputs = ["sceneHdrComposited"]
 
 # Placed after the last scene writer, BEFORE bloom and underwater_refraction: accumulating a

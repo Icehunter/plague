@@ -17,8 +17,9 @@
 // two changes could not be told apart. The enclosure gate below is built, cutting outdoor fog on a near
 // fragment with no sky; a far unlit cave sightline still picks up a little haze.
 //
-// Underwater fog rides this dispatcher as a third, outermost PlagueFogTerms term plus a scene tint
-// (underwater.glsl). Both are exact identities above water.
+// Underwater, the same terms carry the water instead of the air: what the eye-to-point leg lets
+// through per channel and what it adds (underwater.glsl), with the edge curve closing on the
+// water's own far radiance. Exact identities above water.
 //
 // The opaque fullscreen fog pass adds up and blends fog using the current depth. The cave/open-sky
 // gate still checks each pixel on its own; using only the camera's sky exposure would jump the
@@ -45,44 +46,25 @@ struct PlagueFogTerms {
     vec3 atm;           // its opacity per channel, 0..1; blue dies before red
     vec3 borderColor;   // the sky along this ray, what the world dissolves into at the edge
     float border;       // its opacity, 0..1, outer of the two air terms
-    vec3 waterColor;    // eye-in-water fog colour (underwater.glsl); vec3(0) above water
-    float water;        // its opacity, 0..1, applied outermost of all
-    vec3 uwTint;        // underwater scene tint; exactly vec3(1.0) above water
+    vec3 waterT;        // what the eye-in-water leg lets through per channel; vec3(1) above water
+    vec3 waterIn;       // the light that leg adds, linear HDR; vec3(0) above water
 };
 
 // Eye-in-water terms, shared with the aerial dispatcher (fog_aerial.glsl). Exact identities above
-// water.
+// water. Underwater there is no air on the ray, so the air term is dropped and the edge curve
+// closes on the water's own far radiance instead of the sky.
 void plagueFogWaterTerms(inout PlagueFogTerms terms, vec3 worldPos, float rayLength,
-                         float renderDistance, PlagueLighting lighting, float uwDepthFloor,
-                         float uwFogStartBlocks, float uwDistanceFogBlocks, float uwDepthFogBlocks,
-                         vec3 uwTintBase, vec3 uwDarkness) {
+                         PlagueLighting lighting, float waterClarity) {
 #if PLAGUE_UNDERWATER
     if (u_WaterState.x > 0.5) {
-        // WATER_VEIL and WATER_ABSORPTION_TINT are separate gates under the same u_WaterState
-        // branch: one shared gate would let turning off "Water Fog" quietly drop the scene tint
-        // too, 30-45% per channel. Named WATER_ABSORPTION_TINT because water_composite.fsh already
-        // declares an unrelated local of the name WATER_TINT.
-#if WATER_VEIL
-        // No dither on the mix factor: its error scales with veil-to-scene contrast, so it peaks
-        // along the veil's own gradient as visible lines. Quantisation is handled once, at the end
-        // of tonemap.fsh. Lamp glow adds with its own falloff rather than lifting the lit scale,
-        // since it is a local source.
-        terms.water = plagueGetWaterFogAniso(worldPos, uwFogStartBlocks,
-                                             uwDistanceFogBlocks, uwDepthFogBlocks);
-        terms.waterColor = plagueWaterFogColor(lighting)
-                         * plagueWaterVeilDarkness(worldPos, uwDistanceFogBlocks, uwDarkness.z,
-                                                   uwDarkness.x, uwDarkness.y)
-                         + plagueWaterLampGlow(lighting, rayLength);
-#endif
-#if WATER_ABSORPTION_TINT
-        // Display-referred ratio, made linear once here. Carries depth: while depth-blind, going
-        // down made the frame brighter, near blocks being lit as if at the surface (measured live,
-        // Y=33 brighter than Y=58).
-        terms.uwTint = plagueAuthoredToLinear(
-                plagueUnderwaterMult(rayLength, renderDistance, uwDepthFloor, lighting,
-                                     uwTintBase) * 0.85)
-                     * plagueWaterDepthDim(worldPos, uwDarkness.z, uwDarkness.y);
-#endif
+        vec3 viewRay = worldPos / max(rayLength, 1e-4);
+        terms.atm = vec3(0.0);
+        terms.borderColor = plagueWaterClosedRadiance(viewRay, lighting, waterClarity);
+        terms.waterT = plagueWaterViewTransmittance(viewRay, rayLength, waterClarity);
+        // The lamp glow adds with its own reach rather than scaling the sky's share: a local
+        // source, not a brighter day.
+        terms.waterIn = plagueWaterViewInScatter(viewRay, rayLength, lighting, waterClarity)
+                      + plagueWaterLampGlow(rayLength, waterClarity);
     }
 #endif
 }
@@ -91,12 +73,10 @@ void plagueFogWaterTerms(inout PlagueFogTerms terms, vec3 worldPos, float rayLen
 PlagueFogTerms plagueFogTermsPath(vec3 worldPos, vec3 borderPos, float skyLight, float cameraSkyLight,
                               float renderDistance, float cameraAltitude, float dither,
                               PlagueSkyColors skyColours, PlagueLighting lighting, vec3 sunDirTrue,
-                              float atmDensity, float borderDensity, float uwDepthFloor,
-                              float uwFogStartBlocks, float uwDistanceFogBlocks,
-                              float uwDepthFogBlocks, vec3 uwTintBase, vec3 uwDarkness,
+                              float atmDensity, float borderDensity, float waterClarity,
                               vec3 atmColorMult) {
     PlagueFogTerms terms = PlagueFogTerms(vec3(0.0), vec3(0.0), vec3(0.0), 0.0,
-                                          vec3(0.0), 0.0, vec3(1.0));
+                                          vec3(1.0), vec3(0.0));
 
     float rayLength = length(worldPos);
     if (rayLength < 1e-4) {
@@ -169,27 +149,22 @@ PlagueFogTerms plagueFogTermsPath(vec3 worldPos, vec3 borderPos, float skyLight,
     // the crossover this term is 0 and atm alone shows; at and past it, the (raw-L)/(1-L) rescale
     // cancels atm and the total is rawBorder. rawBorder hits exactly 1.0 at the cutoff for every
     // reach (fog_model.glsl), so terms.border does too, and the render edge stays hidden.
-    float atmLuma = dot(terms.atm, vec3(0.2126, 0.7152, 0.0722));
-    terms.border = max(0.0, (rawBorder - atmLuma) / max(1.0 - atmLuma, 1e-4));
-
-    // No air between the eye and a submerged fragment, so air and border fog are wrong there, not
-    // just weak. The water term below owns the whole closure.
+    // No air between the eye and a submerged fragment, so the air term is wrong there. Dropped
+    // before the border reads it, so the edge curve keeps its full reach under water and closes on
+    // the water's own far radiance (plagueFogWaterTerms).
 #if PLAGUE_UNDERWATER
     if (u_WaterState.x > 0.5) {
         terms.atm = vec3(0.0);
-        terms.border = 0.0;
     }
 #endif
-
+    float atmLuma = dot(terms.atm, vec3(0.2126, 0.7152, 0.0722));
+    terms.border = max(0.0, (rawBorder - atmLuma) / max(1.0 - atmLuma, 1e-4));
     // Sky along this ray, the same function the resolve paints the dome with (rule a).
     // doGround=false: the border colour is what the world dissolves into, and a drawn ground plane
     // would swap one edge for another.
     terms.borderColor = plagueGetSky(skyColours, VdotU, VdotS, dither, true, false)
                        * atmColorMult;
-
-    plagueFogWaterTerms(terms, worldPos, rayLength, renderDistance, lighting, uwDepthFloor,
-                        uwFogStartBlocks, uwDistanceFogBlocks, uwDepthFogBlocks, uwTintBase,
-                        uwDarkness);
+    plagueFogWaterTerms(terms, worldPos, rayLength, lighting, waterClarity);
     return terms;
 }
 
@@ -198,28 +173,21 @@ PlagueFogTerms plagueFogTermsPath(vec3 worldPos, vec3 borderPos, float skyLight,
 PlagueFogTerms plagueFogTerms(vec3 worldPos, float skyLight, float cameraSkyLight,
                               float renderDistance, float cameraAltitude, float dither,
                               PlagueSkyColors skyColours, PlagueLighting lighting, vec3 sunDirTrue,
-                              float atmDensity, float borderDensity, float uwDepthFloor,
-                              float uwFogStartBlocks, float uwDistanceFogBlocks,
-                              float uwDepthFogBlocks, vec3 uwTintBase, vec3 uwDarkness,
+                              float atmDensity, float borderDensity, float waterClarity,
                               vec3 atmColorMult) {
     return plagueFogTermsPath(worldPos, worldPos, skyLight, cameraSkyLight, renderDistance,
             cameraAltitude, dither, skyColours, lighting, sunDirTrue, atmDensity, borderDensity,
-            uwDepthFloor, uwFogStartBlocks, uwDistanceFogBlocks, uwDepthFogBlocks,
-            uwTintBase, uwDarkness, atmColorMult);
+            waterClarity, atmColorMult);
 }
 
-// Fallback for callers with no runtime access to the water fog options or colour mults
-// (terrain.fsh, particles_translucent.fsh, banner_patterns.fsh); only gbuffer_resolve.fsh and
-// water_composite.fsh reach the real 15-arg overload. The 32.0/32.0 pair is a stand-in for those
-// callers, a standing gap.
+// For callers with no colour mults (particles_translucent.fsh, banner_patterns.fsh).
 PlagueFogTerms plagueFogTerms(vec3 worldPos, float skyLight, float cameraSkyLight,
                               float renderDistance, float cameraAltitude, float dither,
                               PlagueSkyColors skyColours, PlagueLighting lighting, vec3 sunDirTrue,
-                              float atmDensity, float borderDensity, float uwDepthFloor) {
+                              float atmDensity, float borderDensity, float waterClarity) {
     return plagueFogTerms(worldPos, skyLight, cameraSkyLight, renderDistance, cameraAltitude,
                           dither, skyColours, lighting, sunDirTrue, atmDensity, borderDensity,
-                          uwDepthFloor, 0.0, 32.0, 32.0, vec3(0.80, 0.87, 0.97),
-                          vec3(1.0, 1.0, 999.0), vec3(1.0));
+                          waterClarity, vec3(1.0));
 }
 
 // Must replace fully at the edge, or the sky pixel just past the last fragment leaves a hard seam
@@ -236,47 +204,39 @@ float plagueBorderColorWeight(float border) {
 // flows through with no edit.
 vec3 plaguePremultipliedFog(PlagueFogTerms t) {
     float borderW = plagueBorderColorWeight(t.border);
-    vec3 p = mix(t.atmColor * clamp(t.atm, 0.0, 1.0), t.borderColor, borderW);
-    // Water term outermost, then the underwater tint over all of it, the order plagueApplyFog
-    // uses. Above water this is exact identities.
-    return mix(p, t.waterColor, clamp(t.water, 0.0, 1.0)) * t.uwTint;
+    // Air first, then the water over it, then the edge over both: the order plagueApplyFog uses.
+    // Above water the water pair is an exact identity.
+    vec3 p = t.atmColor * clamp(t.atm, 0.0, 1.0) * t.waterT + t.waterIn;
+    return mix(p, t.borderColor, borderW);
 }
-
-// What is left of the incoming colour, per channel since the underwater tint dies per channel, red
-// first with depth. A scalar would average that away.
+// What is left of the incoming colour, per channel since water takes red first. A scalar would
+// average that away.
 vec3 plagueFogOpacity(PlagueFogTerms t) {
-    vec3 transmittance = vec3((1.0 - clamp(t.atm, 0.0, 1.0)) * (1.0 - plagueBorderColorWeight(t.border))
-                              * (1.0 - clamp(t.water, 0.0, 1.0))) * t.uwTint;
+    vec3 transmittance = (vec3(1.0) - clamp(t.atm, 0.0, 1.0)) * t.waterT
+                       * (1.0 - plagueBorderColorWeight(t.border));
     return clamp(vec3(1.0) - transmittance, 0.0, 1.0);
 }
 
 vec3 plagueApplyFog(vec3 color, vec3 worldPos, float skyLight, float cameraSkyLight,
                     float renderDistance, float cameraAltitude, float dither,
                     PlagueSkyColors skyColours, PlagueLighting lighting, vec3 sunDirTrue,
-                    float atmDensity, float borderDensity, float uwDepthFloor,
-                    float uwFogStartBlocks, float uwDistanceFogBlocks,
-                    float uwDepthFogBlocks, vec3 uwTintBase, vec3 uwDarkness,
+                    float atmDensity, float borderDensity, float waterClarity,
                     vec3 atmColorMult) {
     PlagueFogTerms terms = plagueFogTerms(worldPos, skyLight, cameraSkyLight,
                                           renderDistance, cameraAltitude, dither,
                                           skyColours, lighting, sunDirTrue, atmDensity,
-                                          borderDensity, uwDepthFloor, uwFogStartBlocks,
-                                          uwDistanceFogBlocks, uwDepthFogBlocks, uwTintBase,
-                                          uwDarkness, atmColorMult);
+                                          borderDensity, waterClarity, atmColorMult);
     color = mix(color, terms.atmColor, clamp(terms.atm, 0.0, 1.0));
-    color = mix(color, terms.borderColor, plagueBorderColorWeight(terms.border));
-    color = mix(color, terms.waterColor, clamp(terms.water, 0.0, 1.0));
-    return color * terms.uwTint;
+    color = color * terms.waterT + terms.waterIn;
+    return mix(color, terms.borderColor, plagueBorderColorWeight(terms.border));
 }
-
 vec3 plagueApplyFog(vec3 color, vec3 worldPos, float skyLight, float cameraSkyLight,
                     float renderDistance, float cameraAltitude, float dither,
                     PlagueSkyColors skyColours, PlagueLighting lighting, vec3 sunDirTrue,
-                    float atmDensity, float borderDensity, float uwDepthFloor) {
+                    float atmDensity, float borderDensity, float waterClarity) {
     return plagueApplyFog(color, worldPos, skyLight, cameraSkyLight, renderDistance,
                           cameraAltitude, dither, skyColours, lighting, sunDirTrue,
-                          atmDensity, borderDensity, uwDepthFloor, 0.0, 32.0, 32.0, vec3(0.80, 0.87, 0.97),
-                          vec3(1.0, 1.0, 999.0), vec3(1.0));
+                          atmDensity, borderDensity, waterClarity, vec3(1.0));
 }
 
 #endif // PLAGUE_FOG_INCLUDE

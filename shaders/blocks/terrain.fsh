@@ -138,8 +138,9 @@ layout(std140) uniform u_PbrSettings {
     float u_WaveStrength;
     float u_SnowAmount;
     float u_SplashDensity;
-    // Underwater depth-darkening floor, for the glass arm's eye-in-water veil. Declared in gbuffer_resolve.fsh.
-    float u_DepthDarkness;
+    // Water Clarity, for the glass arm's eye-in-water veil: scales the shared water medium.
+    // Declared in water_options.glsl.
+    float u_WaterClarity;
     // Gates the gAlbedoOut diagnostic repaint below. Declared in gbuffer_resolve.fsh.
     float u_AlbedoIdentityDebug;
     float u_WaveSpeed;
@@ -1133,9 +1134,8 @@ void main() {
                                                  renderDistance, fogAerial, fogNearT,
                                                  plagueAtmoAerialSky(fogNdcUv),
                                                  plagueAtmoAerialChroma(fogNdcUv), fogDrive,
-                                                 u_FogBorderDensity, u_DepthDarkness,
-                                                 0.0, 32.0, 32.0, vec3(0.80, 0.87, 0.97),
-                                                 vec3(1.0, 1.0, 999.0), fogLighting, vec3(1.0));
+                                                 u_FogBorderDensity, u_WaterClarity,
+                                                 fogLighting, vec3(1.0));
         // Per-channel vec3, not scalar: underwater tint differs by wavelength (red dies first);
         // above water every channel agrees exactly, so this costs nothing there.
         vec3 fogOpacity = plagueFogOpacity(fogTerms);

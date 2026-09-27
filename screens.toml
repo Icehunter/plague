@@ -113,7 +113,6 @@ sliders = [
     "u_WaterTurbidityDepth",
     "u_WaterMoteAmount",
     "u_WaveSpeed",
-    "u_WaterTintSaturation",
     "u_WaterReflectionStrength",
     "u_WaterSunGlitterStrength",
     "u_WaterSplashStrength",
@@ -188,7 +187,6 @@ sliders = [
     "u_NebulaZoom",
     "u_NebulaAmount",
     "u_ShootingStarSpeed",
-    "u_DepthDarkness",
     "u_CausticStrength",
     "u_CausticGlow",
     "u_CausticBounce",
@@ -206,13 +204,6 @@ sliders = [
     "u_UnderwaterFlowScale",
     "u_UnderwaterViewWarpPixels",
     "u_UnderwaterWarpBends",
-    "u_UnderwaterFogStart",
-    "u_WaterTintR",
-    "u_WaterTintG",
-    "u_WaterTintB",
-    "u_WaterDistanceDarkness",
-    "u_WaterDepthDarkness",
-    "u_WaterDarknessDepth",
     "u_ShootingStarChance",
     "u_StarSize",
     "u_StarSoftness",
@@ -225,8 +216,6 @@ sliders = [
     "u_AtmNoonR", "u_AtmNoonG", "u_AtmNoonB", "u_AtmNoonI",
     "u_AtmNightR", "u_AtmNightG", "u_AtmNightB", "u_AtmNightI",
     "u_AtmRainR", "u_AtmRainG", "u_AtmRainB", "u_AtmRainI",
-    "u_WaterDistanceFog",
-    "u_WaterDepthFog",
     "u_LightPaletteNoonR", "u_LightPaletteNoonG", "u_LightPaletteNoonB",
     "u_LightPaletteSunsetR", "u_LightPaletteSunsetG", "u_LightPaletteSunsetB",
     "u_LightPaletteSunsetWarmth",
@@ -617,7 +606,6 @@ elements = [
     "PLAGUE_WATER_INTERACTION",
     "PLAGUE_SHORE_SPILL",
     "u_WaterClarity",
-    "u_WaterTintSaturation",
 
     "<group:Surface Reflections>",
     "SSR_WATER_MODE",
@@ -638,19 +626,9 @@ elements = [
 
     "<group:Underwater: Haze|requires:WATER_VEIL>",
     "WATER_VEIL",
-    "u_UnderwaterFogStart",
-    "u_WaterDistanceFog",
-    "u_WaterDepthFog",
 
-    "<group:Underwater: Colour and Darkness|requires:WATER_ABSORPTION_TINT>",
+    "<group:Underwater: Colour|requires:WATER_ABSORPTION_TINT>",
     "WATER_ABSORPTION_TINT",
-    "u_WaterTintR",
-    "u_WaterTintG",
-    "u_WaterTintB",
-    "u_DepthDarkness",
-    "u_WaterDistanceDarkness",
-    "u_WaterDepthDarkness",
-    "u_WaterDarknessDepth",
 
     "<group:Underwater: Light|requires:PLAGUE_UNDERWATER>",
     "WATER_SUN_TINT",
@@ -2124,10 +2102,11 @@ clears, the drops stop landing while the puddles themselves linger and dry. Past
 surface stops looking like rained-on water and starts looking like frosted glass."""
 
 u_WaterClarity = """
-How far you can see into the water.
+How clear the water is, above and below the surface alike.
 
-Raising it makes deep water look like shallow water. Red light fades out first, which is why \
-deep water turns blue-green before it goes dark."""
+One water: the same medium colours a lake seen from the shore and the view once you dive in, so \
+a lantern on the bottom keeps its colour when you go under. Higher is clearer; lower turns every \
+lake toward silt. Red always goes first, then green, then blue, the way real water takes light."""
 
 u_WaterReflectionStrength = """
 Strength of reflections on water only.
@@ -2672,71 +2651,6 @@ drawn.
 
 Off skips this entirely and costs nothing. High draws it more cheaply; Epic takes more steps, so \
 the shafts keep their shape at a distance instead of breaking into bands."""
-
-u_WaterTintSaturation = """
-How coloured the water looks when you view it from above the surface.
-
-At 0 the surface looks like plain grey glass with a reflection on it; higher lets the water's own \
-blue-green colour show through. It does not change what you see once you go under the surface."""
-
-u_DepthDarkness = """
-How dark the water looks as it gets deeper, seen from above the surface.
-
-This is the extra shading on the water's surface that tells you "there is a lot of water under \
-this". At 0 a deep ocean looks just as light as a puddle."""
-
-u_WaterTintR = """
-How much red is mixed into the water's own colour.
-
-These three sliders (red, green and blue) set the colour that light takes on as it passes through \
-the water. Raising red turns a lake toward tea-coloured swamp water."""
-
-u_WaterTintG = """
-How much green is mixed into the water's own colour.
-
-High green with low red gives the look of tropical shallows; dropping green moves the water \
-toward deep-ocean blue."""
-
-u_WaterTintB = """
-How much blue is mixed into the water's own colour.
-
-This is the highest of the three by default, because real water soaks up red light first and blue \
-light last. That is why deep water looks blue."""
-u_WaterDistanceFog = """
-How far you can see sideways under water, in chunks.
-
-This is the point where the underwater haze closes in completely. Lower means the water is \
-murkier; higher opens the view up. It works with Underwater Fog Start Depth below, which sets \
-where the haze begins."""
-
-u_WaterDepthFog = """
-The same closing distance as above, but measured downward instead of sideways, in chunks.
-
-Kept separate from the sideways distance so a lake can be clear to look across but still turn \
-dark below you."""
-
-u_UnderwaterFogStart = """
-How far away the underwater haze starts, in chunks.
-
-Inside this distance everything looks fully clear. Raising it keeps things close to you sharp; \
-at 0 the haze starts right where you are standing or swimming."""
-
-u_WaterDistanceDarkness = """
-How much darker things look the farther away they are, under water.
-
-This is separate from fog: fog paints the water's colour over what you see, while this takes \
-light away from it. Together they decide whether distance under water feels misty or feels \
-gloomy."""
-
-u_WaterDepthDarkness = """
-How much darker things get the deeper under water they are."""
-
-u_WaterDarknessDepth = """
-How deep you need to go before the Darker with Depth effect above has fully taken hold, in \
-chunks.
-
-Lower makes water turn dark almost right away; higher stretches it out, so only truly deep \
-ocean trenches turn black."""
 
 u_UwBlurStart = """
 How far away the underwater blur starts, in chunks.

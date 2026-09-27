@@ -9,18 +9,6 @@ const int PLAGUE_WATER_VOLUME_CELLS = 8;
 const int PLAGUE_WATER_VOLUME_CELLS = 12;
 #endif
 
-vec3 plagueWaterShaftTint() {
-#if WATER_ABSORPTION_TINT
-    // These are absolute authored display-space values, just like the standard underwater tint.
-    // Convert them before multiplying linear HDR radiance, but never normalize against defaults:
-    // changing any channel must change the corresponding single-scatter channel.
-    return plagueAuthoredToLinear(
-            vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB) * 0.85);
-#else
-    return vec3(1.0);
-#endif
-}
-
 float plagueWaterCellJitter(vec2 sampleCoord) {
     // Interleaved-gradient noise is fixed in screen space and distributes a 3x3 neighborhood across
     // nine distinct sub-cell depths. That gives the interval-aware reconstruction real stratified
@@ -230,7 +218,9 @@ bool plagueWaterIntegrate(
         // Fog/tint/ambient/held lighting remain owned by the accepted underwater pipeline. This
         // field carries only direct celestial single-scatter contrast, so adding it later cannot
         // remove or double-attenuate any of those effects.
-        vec3 source = directSource * plagueWaterShaftTint() * shaftDistanceFade
+        // No tint of its own: the shaft's colour is what the medium's per-channel loss leaves of
+        // the sun along the way, the same water the veil reads.
+        vec3 source = directSource * shaftDistanceFade
                 * max(u_WaterShaftStrength, 0.0);
         vec3 Tcell = exp(-cellSigmaT * ds);
         vec3 cellWeight = plagueWaterCellWeight(cellSigmaT, ds);

@@ -98,7 +98,7 @@ layout(std140) uniform u_PbrSettings {
     float u_WaveStrength;
     float u_SnowAmount;
     float u_SplashDensity;
-    float u_DepthDarkness;
+    float u_WaterClarity;
     float u_AlbedoIdentityDebug;
     float u_WaveSpeed;
 };
@@ -144,8 +144,18 @@ vec3 plagueDisplacedWaterPosition(vec3 cameraRelativePosition, vec3 cameraAbsolu
     interactionHeight = plagueInteractionVertexHeight(u_GeomInput3, worldAbsolute,
             previousCentre, PLAGUE_WATER_INTERACTION);
 #endif
+    float stillHeight = cameraRelativePosition.y;
     cameraRelativePosition += macroDisplacement;
     cameraRelativePosition.y += interactionHeight;
+    // A dry eye sits above the still surface, but a crest can rise past it. The engine's
+    // eye-in-water flag knows only the still level, so that frame is drawn dry, and the lifted top
+    // face is seen from below and culled: no surface, no veil, the bed in open air for as long as
+    // the crest lasts. Hold the surface a hair under a dry eye instead. Only vertices whose
+    // still level is below the eye: water above the eye is a fall or a pool higher up, not this.
+    // 0.02 blocks: the smallest gap that still reads as a surface seen from above at these depths.
+    if (u_WaterState.x < 0.5 && stillHeight < 0.0) {
+        cameraRelativePosition.y = min(cameraRelativePosition.y, -0.02);
+    }
 #endif
     return cameraRelativePosition;
 }

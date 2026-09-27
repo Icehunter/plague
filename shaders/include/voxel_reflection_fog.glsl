@@ -117,11 +117,7 @@ vec3 plagueVoxelReflectionFog(vec3 radiance, vec3 origin, vec3 hit, float skyLig
     }
     PlagueFogTerms terms = plagueFogTermsAerialPath(segment, hit, skyLight, u_CameraSkyLight.x,
             renderDistance, aerial, nearT, sky, transmittance, drive,
-            u_FogBorderDensity, u_DepthDarkness,
-            plagueChunksToBlocks(u_UnderwaterFogStart), plagueChunksToBlocks(u_WaterDistanceFog),
-            plagueChunksToBlocks(u_WaterDepthFog), vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
-            vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
-                 plagueChunksToBlocks(u_WaterDarknessDepth)), lighting, atmColorMult);
+            u_FogBorderDensity, u_WaterClarity, lighting, atmColorMult);
     radiance = mix(radiance, terms.atmColor, clamp(terms.atm, 0.0, 1.0));
     radiance = mix(radiance, terms.borderColor, plagueBorderColorWeight(terms.border));
 #endif

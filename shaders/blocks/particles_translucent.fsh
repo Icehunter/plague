@@ -38,7 +38,7 @@ out vec4 fragColor;
 // (PlaguePackLoadsTest.noDeferredGeometryShaderDeclaresARuntimeOption) honest about that.
 #define u_ScreenBrightness 0.5 //[0.0..1.0 step 0.05] runtime "Screen Brightness"
 // Byte-identical to shaders/include/water_options.glsl's declaration, same forward-pass reason as above.
-#define u_DepthDarkness 0.60 //[0.0..1.0 step 0.05] runtime "Deep Water Darkness"
+#define u_WaterClarity 1.0 //[0.25..3.0 step 0.05] runtime "Water Clarity"
 
 void main() {
     // Every line to the end of this block is core/particle.fsh verbatim, minus its apply_fog call, so
@@ -100,7 +100,7 @@ void main() {
         PlagueFogTerms fog = plagueFogTerms(v_PlagueWorldPos, fogSkyAccess, u_CameraSkyLight.x,
                                             renderDistance, u_CameraAbs.y, fogDither,
                                             fogSky, fogLighting, fogSunDir,
-                                            u_FogDensity, u_FogBorderDensity, u_DepthDarkness);
+                                            u_FogDensity, u_FogBorderDensity, u_WaterClarity);
         vec3 opacity = plagueFogOpacity(fog);
 
         // Skip near-zero opacity: the un-premultiply below would otherwise divide by ~0.

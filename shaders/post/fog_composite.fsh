@@ -83,8 +83,6 @@ layout(std140) uniform u_PassParams {
     vec4  u_MoonSpriteRect;
 };
 
-// GBufferDebugView ordinal ABI; closure data is produced by the moved fog block below.
-#define DBG_UW_CLOSURE 30
 in vec2 texCoord;
 out vec4 fragColor;
 
@@ -95,7 +93,7 @@ void main() {
     return;
 #else
     int debugView = int(u_Param3 + 0.5);
-    if (debugView != 0 && debugView != DBG_UW_CLOSURE) {
+    if (debugView != 0) {
         fragColor = scene;
         return;
     }
@@ -261,13 +259,7 @@ void main() {
         PlagueFogTerms fogTerms = plagueFogTermsAerialPath(worldPos, worldPos, skyLight, u_CameraSkyLight.x,
                                                  renderDistance, fogAerial, fogNearT, fogSky,
                                                  fogTransmittance, fogDrive,
-                                                 u_FogBorderDensity, u_DepthDarkness,
-                                                 plagueChunksToBlocks(u_UnderwaterFogStart),
-                                                 plagueChunksToBlocks(u_WaterDistanceFog),
-                                                 plagueChunksToBlocks(u_WaterDepthFog),
-                                                 vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
-                                                 vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
-                                                      plagueChunksToBlocks(u_WaterDarknessDepth)), lighting, atmColorMult);
+                                                 u_FogBorderDensity, u_WaterClarity, lighting, atmColorMult);
 #ifdef SHADOWS
         // A blocked border keeps the march's own gated fog colour for the same ray, so the
         // silhouette stays hue continuous and the cell-grid transition has nothing contrasting to
@@ -306,57 +298,15 @@ void main() {
             return;
         }
         lit = mix(lit, fogTerms.atmColor, clamp(fogTerms.atm, 0.0, 1.0));
-        // plagueBorderColorWeight (fog.glsl): squared so a bright sun-side sky reading doesn't
-        // glow in ahead of the render cutoff. See its own comment for why.
-        lit = mix(lit, fogTerms.borderColor, plagueBorderColorWeight(fogTerms.border));
-        lit = mix(lit, fogTerms.waterColor, clamp(fogTerms.water, 0.0, 1.0));
-
+        // Under water the air term is zero and this pair is the whole veil: what the leg lets
+        // through per channel, plus what it adds. Above water it is an exact identity.
+        lit = lit * fogTerms.waterT + fogTerms.waterIn;
         lit = max(lit, vec3(0.0));
-        lit *= fogTerms.uwTint;
-
-#if PLAGUE_UNDERWATER
-        // Exponential water fog only approaches closure, leaving loaded chunks as rectangles
-        // against the depth<=0 branch; this hands the far field over before the render-distance
-        // boundary, leaving the near 72% alone.
-        //
-        // uwClosureScale takes the shorter of render distance and (Water Distance Fog x
-        // uwVisibilityMult), so a tight visibility setting closes the horizon near itself. 3x/6x
-        // (night-or-rain/clear-noon) is where the veil above is already ~95% opaque on its own.
-        //
-        // Pure exponential (plagueGetWaterFog), not a near/far smoothstep band: smoothstep on
-        // length(worldPos) is a sphere test against camera-relative position, and a sphere cutting
-        // the frustum draws a curved, camera-following edge no retuning removes.
-        //
-        // Always on rather than a player option: it is redundant whenever distanceFog <=
-        // renderDistance and does real work only past that, so "Water Distance Fog alone decides
-        // underwater visibility" has to hold either way.
-        if (u_WaterState.x > 0.5 && fragSubmerged) {
-            float uwClearNoon = lighting.noonFactor * (1.0 - clamp(lighting.rainFactor, 0.0, 1.0));
-            float uwVisibilityMult = mix(3.0, 6.0, uwClearNoon);
-            float uwClosureScale = min(renderDistance,
-                    plagueChunksToBlocks(u_WaterDistanceFog) * uwVisibilityMult);
-            float uwClosureDist = length(worldPos);
-            float horizonClosure = plagueGetWaterFog(uwClosureDist, uwClosureScale);
-            if (debugView == DBG_UW_CLOSURE) {
-                fragColor = vec4(uwClosureScale, uwClosureDist, horizonClosure, uwVisibilityMult);
-                return;
-            }
-            // Same darkening the geometry veil takes (fog.glsl's terms.waterColor), or the two
-            // paths disagree in brightness the moment the ramps do anything.
-            vec3 closedVeil = plagueWaterFogColor(lighting)
-                            * plagueWaterVeilDarkness(worldPos,
-                                                      plagueChunksToBlocks(u_WaterDistanceFog),
-                                                      plagueChunksToBlocks(u_WaterDarknessDepth),
-                                                      u_WaterDistanceDarkness, u_WaterDepthDarkness)
-                            * plagueAuthoredToLinear(
-                                  plagueUnderwaterMult(renderDistance, renderDistance,
-                                                       u_DepthDarkness, lighting, vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB)) * 0.85);
-            vec3 closedRadiance = plagueUnderwaterClosedRadiance(
-                    normalize(worldPos), closedVeil, lighting.sunFactor,
-                    plagueChunksToBlocks(u_WaterDistanceFog));
-            lit = mix(lit, closedRadiance, horizonClosure);
-        }
-#endif
+        // plagueBorderColorWeight (fog.glsl): squared so a bright sun-side sky reading doesn't
+        // glow in ahead of the render cutoff. See its own comment for why. Under water the border
+        // colour is the closed volume, so the render edge seals on the water's own far radiance
+        // instead of on a sky no submerged ray can see.
+        lit = mix(lit, fogTerms.borderColor, plagueBorderColorWeight(fogTerms.border));
     }
 #endif
 

@@ -56,6 +56,7 @@ uniform sampler2D u_MoonNormal; // moonNormal, tangent-space relief for the same
 uniform sampler2D u_CloudFront; // cloudFront: live tier's first-hit cloud distance (0.0 = empty ray)
 uniform sampler2D u_AtmoSkyView; // atmoSkyView, the marched dome (atmo_lut.glsl)
 uniform sampler2D u_AtmoAerial; // atmoAerial, in-scatter and transmittance per screen froxel
+uniform sampler2D u_SceneHdr; // sceneHdr: the scene before any water, read so absorption can act per channel
 
 vec4 plagueAtmoFetchSkyView(vec2 uv) {
     return texture(u_AtmoSkyView, uv);
@@ -95,19 +96,8 @@ layout(std140) uniform u_PassParams {
 #define PLAGUE_RAIN_SPLASHES //[] compile "Rain Splashes"
 #moj_import <fornax_runtime:material_options.glsl>
 
-// Deep-water tint: the colour of light that has scattered back out rather than been absorbed.
-const vec3 WATER_TINT = vec3(0.02, 0.11, 0.16);
-// Above-water body reads cyan in engine captures; filtered toward slate blue to match. Art
-// direction, not a physics fit.
-const vec3 WATER_SURFACE_TINT_FILTER = vec3(1.10, 0.59, 0.53);
-
-// Beer-Lambert extinction per block/channel: red absorbs within ~1-2m, green within several, blue
-// survives tens of metres — this is why water reads as water rather than uniform grey.
-const vec3 WATER_EXTINCTION = vec3(0.46, 0.10, 0.055);
-
-// How opaque water can ever get, so an abyss still hints at what's under it.
-const float WATER_MAX_OPACITY = 0.96;
-
+// No water colour or absorption of its own here: the body colour and the per-channel loss both
+// come from water_medium.glsl, the medium the underwater veil and the shaft march read too.
 // Foam's ALBEDO, not its finished radiance: churned bubbles scatter broadly and shouldn't render
 // unlit. Multiplied by ambient below rather than painted directly, so foam brightness follows time
 // of day instead of reading identically bright at noon and midnight. tools/verify_fog.py's
@@ -461,34 +451,22 @@ void main() {
     } else {
         thickness = distance(worldPos, worldPosAt(texCoord, opaqueDepth));
     }
-    // Kept before the clarity divide below: shoreline foam (WATER_FOAM) reads this raw geometric
-    // distance, not the optical one, so raising Water Clarity can't make deep water numerically
-    // shrink into the foam band and grow foam somewhere the shore never reaches.
+    // Shoreline foam (WATER_FOAM) reads this raw geometric distance; the medium applies Water
+    // Clarity itself, so raising it cannot shrink deep water into the foam band.
     float rawThickness = thickness;
-    thickness /= max(u_WaterClarity, 0.05);
 
-    // Beer-Lambert. Transmittance is what SURVIVES the trip to the bed and back.
-    vec3 transmittance = exp(-thickness * WATER_EXTINCTION);
+    // What survives the trip to the bed, per channel (water_medium.glsl): red goes in the first
+    // few blocks, blue lasts tens. The background is read below, so the loss can act on each
+    // channel rather than as one grey alpha.
+    vec3 transmittance = plagueWaterVolumeTransmittance(thickness, u_WaterClarity);
 
-    // Hardware blend is single-scalar alpha, so per-channel absorption must live in colour: alpha
-    // carries average loss, body colour carries the resulting hue.
-    float opacity = clamp(1.0 - dot(transmittance, vec3(1.0 / 3.0)), 0.0, WATER_MAX_OPACITY);
-
-    // WATER_TINT is scattering colour, not emitted radiance — illuminate it with zenith sky,
-    // normalized so noon brightness is unchanged but dawn/overcast/night genuinely dim it.
-    vec3 zenithSky = plagueGetSky(waterSky, 1.0, trueSunDir.y, 0.5, false, false) * atmColorMult;
-    const float WATER_NOON_ZENITH_LUMA = 0.471;
-    float bodyIllumination = clamp(dot(zenithSky, vec3(0.2126, 0.7152, 0.0722))
-            / WATER_NOON_ZENITH_LUMA, 0.035, 1.25);
-    vec3 surfaceWaterTint = WATER_TINT * WATER_SURFACE_TINT_FILTER;
-    float surfaceTintLuma = dot(surfaceWaterTint, vec3(0.2126, 0.7152, 0.0722));
-    surfaceWaterTint = mix(vec3(surfaceTintLuma), surfaceWaterTint,
-                           clamp(u_WaterTintSaturation, 0.0, 1.0));
-    vec3 body = surfaceWaterTint
-              * mix(0.15, 1.0, skyVis)
-              * mix(0.35, 1.0, clamp(thickness * 0.18, 0.0, 1.0));
-    body *= bodyIllumination;
-
+    // The water's own light: sky light entering the surface, scattered back along the refracted
+    // eye ray. Steeper rays reach deeper, dimmer water, which the medium's depth fall-off carries.
+    // skyVis keeps a covered pool dark: no sky over it, nothing to scatter.
+    vec3 refractedEye = refract(-viewDir, waveNormal, 1.0 / 1.333);
+    float bodyDirY = dot(refractedEye, refractedEye) > 1e-6 ? normalize(refractedEye).y : -1.0;
+    vec3 bodyLight = max(lighting.ambient, vec3(0.0)) * mix(0.15, 1.0, skyVis);
+    vec3 body = plagueWaterInScatter(bodyLight, bodyDirY, thickness, u_WaterClarity);
 #ifdef WATER_FOAM
     // Shoreline foam hugs every coastline/sandbar for free, since it's driven by the same distance
     // computed above rather than needing a separate edge-detection pass. Reads rawThickness, not
@@ -588,20 +566,15 @@ void main() {
                    * mix(0.35, 1.0, skyVis),
                    clamp(foam, 0.0, 1.0));
         // Foam is opaque in a way clear shallow water is not: it hides the bed it sits over.
-        opacity = max(opacity, clamp(foam, 0.0, 1.0) * 0.9);
+        transmittance *= 1.0 - clamp(foam, 0.0, 1.0) * 0.9;
     }
 #endif
 
-    // Analytic interface solve for the fixed src*a+dst*(1-a) blend: alpha carries both interface
-    // reflection and Beer-Lambert absorption, and colour is pre-divided by alpha so hardware
-    // blending reconstructs L = F*Lreflection + (1-F)*[(1-T)*Lwater + T*Lbackground] exactly.
-    float transmitMean = clamp(dot(transmittance, vec3(1.0 / 3.0)), 0.0, 1.0);
-    float interfaceAlpha = 1.0 - (1.0 - fresnel) * transmitMean;
-    vec3 interfaceNumerator = fresnel * reflection
-                            + (1.0 - fresnel) * (1.0 - transmitMean) * body;
-    vec3 surface = interfaceNumerator / max(interfaceAlpha, 1e-4);
-    opacity = max(opacity, interfaceAlpha);
-
+    // L = F * Lreflection + (1 - F) * (Lwater + T * Lbackground), per channel. `surface` is the
+    // water's own share, `backgroundWeight` what the bed still shows through; the background is
+    // added at the end, after fog, since it already carries its own.
+    vec3 surface = fresnel * reflection + (1.0 - fresnel) * body;
+    vec3 backgroundWeight = (1.0 - fresnel) * transmittance;
 #if PLAGUE_UNDERWATER
     // Surface seen from below. Wave normal perturbs refraction, Fresnel and SSR direction only —
     // never converted to emissive slope shading (a prior arm's slope-band emission saturated to a
@@ -615,13 +588,17 @@ void main() {
         float uwCosIncident = clamp(dot(-uwEyeRay, uwInterfaceNormal), 0.0, 1.0);
         float uwFresnel = plagueDielectricFresnel(uwCosIncident, 1.333, 1.0);
 
-        // Downwelling sky radiance along the refracted eye ray — real directional structure, not a
+        // Downwelling sky radiance along the refracted eye ray: real directional structure, not a
         // flat tint. No cloud content (that's a separate volumetric march, uncallable along an
-        // arbitrary ray).
+        // arbitrary ray). The water between the eye and this point is the fog site's job below,
+        // so nothing here filters for it a second time.
         float uwCameraDepth = max(u_WaterState.z - u_CameraAbs.y, 0.0);
-        vec3 uwEyeFilter = exp(-uwCameraDepth * vec3(0.20, 0.08, 0.04));
+        // The sky light left at the eye's depth, read for the debug view only: the leg between
+        // the eye and this point is priced once, at the fog site.
+        vec3 uwEyeFilter = plagueWaterDownwelling(uwCameraDepth, u_WaterClarity);
         vec3 uwExitRay = refract(uwEyeRay, uwInterfaceNormal, 1.333);
-        vec3 uwDirectionalSky = plagueWaterFogColor(lighting);
+        vec3 uwWaterGlow = plagueWaterGlowAtDepth(lighting, uwCameraDepth, u_WaterClarity);
+        vec3 uwDirectionalSky = uwWaterGlow;
         if (dot(uwExitRay, uwExitRay) > 1e-6) {
             vec3 uwExitDir = normalize(uwExitRay);
             uwDirectionalSky = plagueGetSky(waterSky, uwExitDir.y,
@@ -652,12 +629,12 @@ void main() {
                     u_SkyCelestial.w, u_WorldClock.x, u_WorldClock.y, u_MoonAlbedo, u_MoonNormal,
                     uwDiscSoftness, 1.0 - rainFactor, uwMoonDiscGlow);
         }
-        vec3 uwSkyFill = mix(plagueWaterFogColor(lighting), uwDirectionalSky, 0.68);
-        vec3 uwInside = uwSkyFill * uwEyeFilter * mix(0.90, 1.08, skyVis);
-
-        // TIR mirror fallback outside the critical cone; kept quiet so a failed SSR ray doesn't
-        // read as a bright marble stripe.
-        vec3 uwMirrorFallback = plagueWaterFogColor(lighting) * uwEyeFilter * 0.30;
+        vec3 uwSkyFill = mix(uwWaterGlow, uwDirectionalSky, 0.68);
+        vec3 uwInside = uwSkyFill * mix(0.90, 1.08, skyVis);
+        // Past the critical cone the surface mirrors the water below it: a failed SSR ray shows
+        // the closed volume along the mirrored direction, not a bright marble stripe.
+        vec3 uwMirrorFallback = plagueWaterClosedRadiance(
+                reflect(uwEyeRay, uwInterfaceNormal), lighting, u_WaterClarity);
         vec3 uwOutside = mix(uwMirrorFallback, reflSample.rgb,
                              clamp(reflSample.a, 0.0, 1.0) * 0.88)
                        * u_WaterReflectionStrength;
@@ -698,14 +675,15 @@ void main() {
             uwMoonGlint = uwMoonLobe * uwMoonHorizonFade * uwMicroGlint * uwMoonShadowVis;
         }
 
-        vec3 uwSunFiltered = plagueSunColor(glitterAirEyePos, trueSunDir) * uwEyeFilter;
-        vec3 uwMoonFiltered = plagueMoonColor(glitterAirEyePos, uwMoonDir) * uwEyeFilter;
+        vec3 uwSunFiltered = plagueSunColor(glitterAirEyePos, trueSunDir);
+        vec3 uwMoonFiltered = plagueMoonColor(glitterAirEyePos, uwMoonDir);
         vec3 uwGlintContribution = (uwSunFiltered * uwSunGlint + uwMoonFiltered * uwMoonGlint)
                 * 2.0 * u_UnderwaterSunGlitterStrength * skyVis;
-
-        surface = mix(uwInside, uwOutside, uwFresnel) + uwGlintContribution;
-        // Overrides the air-side alpha computed above: it described the wrong side of the interface.
-        opacity = mix(0.74, 0.98, uwFresnel);
+        // Overrides the air-side split above: it described the wrong side of the interface. The
+        // window keeps most of the scene behind it out; what shows through is the world above.
+        float uwOpacity = mix(0.74, 0.98, uwFresnel);
+        surface = (mix(uwInside, uwOutside, uwFresnel) + uwGlintContribution) * uwOpacity;
+        backgroundWeight = vec3(1.0 - uwOpacity);
 
         if (debugView == DBG_UW_GLINT_ALIGNMENT) {
             fragColor = vec4(uwSunAlignment, uwMoonAlignment, uwFresnel, 1.0);
@@ -726,14 +704,10 @@ void main() {
     }
 #endif
 
-    // Fog: COLOUR ONLY, alpha untouched. A forward pass would drive alpha toward 0 to fade a
-    // translucent into the (already-fogged) background, but here the background is the seabed, so
-    // fading alpha would let it show through in proportion to fog, worse the deeper the water.
-    // Fogging only colour converges to the same result: at full fog both water and the already-
-    // fogged seabed read as sky colour, so alpha stops mattering.
-    //
-    // The reflection inside `surface` already carries its own fog (traced against the resolve's
-    // fogged sceneHdr), matching gbuffer_resolve.fsh's own approximation at its fog site.
+    // Fog over the water's own share only. The background already carries its own fog from the
+    // resolve, and the reflection inside `surface` was traced against that fogged scene. The
+    // fog's added light is weighted by the water's own coverage, so at full fog water and
+    // already-fogged seabed meet at the same colour.
 #if PLAGUE_FOG
     // Ungated on u_WaterState: plagueFogTerms's eye-in-water arm already gives a submerged surface
     // the same veil/tint as terrain around it, and the dry path is unchanged.
@@ -763,44 +737,20 @@ void main() {
         PlagueFogTerms fogTerms = plagueFogTermsAerial(worldPos, skyLight, u_CameraSkyLight.x,
                                  renderDistance, fogAerial, fogNearT, fogSkyAlong,
                                  plagueAtmoAerialChroma(texCoord), fogDrive,
-                                 u_FogBorderDensity, u_DepthDarkness,
-                                 plagueChunksToBlocks(u_UnderwaterFogStart),
-                                 plagueChunksToBlocks(u_WaterDistanceFog),
-                                 plagueChunksToBlocks(u_WaterDepthFog),
-                                                 vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB),
-                                                 vec3(u_WaterDistanceDarkness, u_WaterDepthDarkness,
-                                                      plagueChunksToBlocks(u_WaterDarknessDepth)), lighting, atmColorMult);
-        surface = mix(surface, fogTerms.atmColor, clamp(fogTerms.atm, 0.0, 1.0));
+                                 u_FogBorderDensity, u_WaterClarity, lighting, atmColorMult);
+        vec3 ownWeight = vec3(1.0) - backgroundWeight;
+        surface = surface * (vec3(1.0) - clamp(fogTerms.atm, 0.0, 1.0))
+                + fogTerms.atmColor * clamp(fogTerms.atm, 0.0, 1.0) * ownWeight;
+        surface = surface * fogTerms.waterT + fogTerms.waterIn * ownWeight;
         // plagueBorderColorWeight (fog.glsl): squared so a bright sun-side sky reading doesn't
-        // glow in ahead of the render cutoff. See its own comment for why.
-        surface = mix(surface, fogTerms.borderColor, plagueBorderColorWeight(fogTerms.border));
-        surface = mix(surface, fogTerms.waterColor, clamp(fogTerms.water, 0.0, 1.0));
-        surface *= fogTerms.uwTint;
-
-#if PLAGUE_UNDERWATER
-        // Matches the resolve's own far-field water-fog handover exactly (byte-identical logic,
-        // must move together) so a loaded water surface and a missing pre-pass texel converge to
-        // one closed volume instead of outlining the translucent chunk grid. Visibility multiplier
-        // is 3x baseline, 6x at clear noon. See the resolve's copy for why a sphere-test smoothstep
-        // couldn't fix the curved-band artifact it replaced.
-        if (u_WaterState.x > 0.5) {
-            float uwClearNoon = lighting.noonFactor * (1.0 - clamp(lighting.rainFactor, 0.0, 1.0));
-            float uwVisibilityMult = mix(3.0, 6.0, uwClearNoon);
-            float uwClosureScale = min(renderDistance,
-                    plagueChunksToBlocks(u_WaterDistanceFog) * uwVisibilityMult);
-            float horizonClosure = plagueGetWaterFog(length(worldPos), uwClosureScale);
-            vec3 closedVeil = plagueWaterFogColor(lighting)
-                            * plagueAuthoredToLinear(
-                                  plagueUnderwaterMult(renderDistance, renderDistance,
-                                                       u_DepthDarkness, lighting, vec3(u_WaterTintR, u_WaterTintG, u_WaterTintB)) * 0.85);
-            vec3 closedRadiance = plagueUnderwaterClosedRadiance(
-                    normalize(worldPos), closedVeil, lighting.sunFactor,
-                    plagueChunksToBlocks(u_WaterDistanceFog));
-            surface = mix(surface, closedRadiance, horizonClosure);
-        }
-#endif
+        // glow in ahead of the render cutoff. See its own comment for why. Under water the border
+        // colour is the closed volume, which is what seals the far field there.
+        float borderW = plagueBorderColorWeight(fogTerms.border);
+        surface = surface * (1.0 - borderW) + fogTerms.borderColor * borderW * ownWeight;
     }
 #endif
 
-    fragColor = vec4(surface, opacity);
+    // Written whole, no hardware blend: the background was read above, so the per-channel loss
+    // has already been applied to it.
+    fragColor = vec4(surface + backgroundWeight * texture(u_SceneHdr, texCoord).rgb, 1.0);
 }

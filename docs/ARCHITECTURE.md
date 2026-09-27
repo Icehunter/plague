@@ -42,7 +42,8 @@ loss are worked out together, in the same shader step: no separate compute pass 
 stands in for this.
 The fog pass copies its input straight through on sky pixels, when fog is off, and for debug
 views that don't need it. With underwater effects enabled, a submerged eye skips the air march
-and air sky reads that the fog dispatcher discards; water tint, veil and horizon closure still run.
+and air sky reads that the fog dispatcher discards; the water leg's transmittance and scattered
+light still run, and the render edge seals on the water's closed volume instead of the sky.
 It shares its air, light source and shadow math with `atmo_aerial` through `atmo_transport.glsl`; `atmo_transport_compute.glsl` holds only the code that binds and
 reads compute textures. Light along the path is added up from far to near.
 Near the camera, the ray is split at world-grid lines every eight blocks, and the last piece is

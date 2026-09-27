@@ -4,8 +4,8 @@
 // water_composite and bloom/tonemap. Dry camera is a passthrough copy. Opaque and water depth are
 // both used so distortion can't pull colour across a geometry silhouette.
 //
-// Audited and confirmed clean against the pack's actual fog shape (plagueGetWaterFogAniso); a
-// stray duplicate fog top-up that used to live here is removed (see the note near the end of main).
+// No fog of its own: the veil belongs to the fog dispatcher (fog.glsl), and this pass only warps
+// and samples (see the note near the end of main).
 
 #moj_import <fornax:globals.glsl>
 
@@ -25,12 +25,6 @@ layout(std140) uniform u_PassParams {
 #define PLAGUE_UNDERWATER 1 //[0 1] compile "Underwater Effects" {0="Off" 1="On"}
 
 #moj_import <fornax_runtime:water_options.glsl>
-// Local copy of underwater.glsl's plagueChunksToBlocks: this pass is deliberately self-contained
-// and avoids pulling in light_and_ambient_colors.glsl for a one-line multiply. Keep in sync by hand.
-float plagueChunksToBlocks(float chunks) {
-    return chunks * 16.0;
-}
-
 in vec2 texCoord;
 out vec4 fragColor;
 
@@ -89,9 +83,11 @@ void main() {
         vec2 flowB = texture(u_Noise, noiseUvB).rg * 2.0 - 1.0;
         vec2 flow = (flowA + flowB) * 0.5;
 
+        // A pixel with nothing behind it only needs to count as far: the fade below is full by
+        // six blocks and nothing else reads this figure.
         float sceneDistance = centreDepth > 0.0
                 ? plagueAddonDistance(texCoord, centreDepth)
-                : plagueChunksToBlocks(u_WaterDistanceFog) * 3.0;
+                : 64.0;
         // Off at arm's length, full by six blocks: within half a block the warp lands on the same
         // surface and is invisible work; too close and it reads as a wobbling texture.
         float distanceFade = smoothstep(0.5, 6.0, sceneDistance);

@@ -165,15 +165,26 @@ covers what the pack does, not the engine under it.
   with its own surface capture, wave normals, reflection trace and HDR composite.
 - Multi-octave wave field (2-6 octaves) where shorter waves travel slower, scaled so detail changes
   without changing total steepness; separate wave strength control.
-- Per-channel absorption, so deep water goes blue-green then dark rather than only dim; clarity
-  control.
+- One medium for every view of the water (`shaders/include/water_medium.glsl`): absorption from
+  Pope & Fry, a small flat scattering term, and the depth fall-off of sky light after Kirk. The
+  surface seen from the shore, the veil seen from under it, the light shafts and the light left on a
+  sunken block all read the same numbers, so a lantern on the bottom keeps its colour across the
+  surface.
+  Per channel: red goes in the first few blocks, blue lasts tens. One control, Water Clarity, scales
+  the lot.
+- The surface reads the scene behind it and writes the composed pixel whole, so the bed is absorbed
+  per channel rather than dimmed by one grey alpha.
 - Shoreline foam placed by water depth, so it hugs every coast and sandbar without edge detection.
 - Its own reflection trace and temporal blur, reprojected by a motion vector taken from the water
   surface itself rather than the seabed behind it.
 
 ## Underwater: *in active tuning*
 
-- Depth-graded underwater veil, with an ocean depth floor.
+- The underwater veil is the medium's own scattered light: sky light at the eye's depth,
+  scattered along the view ray, brighter looking up toward the surface and dimmer looking down,
+  fading with the same per-channel loss the surface uses. A ray that meets nothing ends in the
+  same closed volume the render edge seals on. No colour, distance or darkness sliders: the water
+  decides.
 - Depth-graded blur of the sunken scene.
 - Texture-driven caustics thrown onto the seabed, from a commissioned tileable pattern sampled as
   two rotated flowing layers. Scale, speed and strength controls.
