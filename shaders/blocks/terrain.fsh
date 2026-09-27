@@ -552,8 +552,20 @@ void main() {
         tangentXY = nTex.xy * PLAGUE_NORMAL_XY_SCALE + PLAGUE_NORMAL_XY_BIAS;
         tangentXY *= clamp(u_BumpStrength, 0.0, 2.0);
     }
+    // The _n atlas has no mip levels: the engine binds it with mipmaps off, since a blended normal
+    // is not unit length. So once one screen pixel covers more than one of its texels, the sample
+    // above is one texel picked at random, not an average. On the AO debug view of the 32-chunk
+    // valley frame that is speckle over every face past the village. Fade the per-texel terms to
+    // flat and unoccluded as the footprint grows: the average a mip would give is not known here,
+    // and flat is what distance reads as anyway. AUTHORED, off that view with the owner's
+    // 128-texel sidecars: with TAA and 2x SSAA blending several samples a pixel, 4 texels a pixel
+    // (30 blocks there) still read as the authored pattern; at 16 (120 blocks) the view was speckle.
+    vec2 nAtlasTexels = vec2(textureSize(u_NormalTex, 0));
+    float nTexelsPerPixel = max(length(ddx * nAtlasTexels), length(ddy * nAtlasTexels));
+    float nDetail = 1.0 - smoothstep(4.0, 16.0, nTexelsPerPixel);
+    tangentXY *= nDetail;
     float tangentZ = sqrt(clamp(1.0 - dot(tangentXY, tangentXY), 0.0, 1.0));
-    float bakedAo  = mix(1.0, normalSample.b, u_AOStrength);
+    float bakedAo  = mix(1.0, normalSample.b, u_AOStrength * nDetail);
 
     // Frame derived from how atlas UVs vary across the surface, not guessed from face normal + an
     // up-vector: a guessed frame is rotated/mirrored on most face directions, lighting bumps wrong.

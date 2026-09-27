@@ -62,7 +62,9 @@ const vec3  PLAGUE_OZONE_ABSORB       = vec3(2.156649e-06, 1.543816e-06, 2.92407
 // in-scattering march (atmo_lut.glsl).
 //
 // Don't raise this to mask the render cutoff: aerosols are wavelength-neutral, so more of them
-// just drowns out Rayleigh, the term that actually makes the sky blue and sunsets orange.
+// drowns out Rayleigh, the term that makes the sky blue and sunsets orange. The Aerial
+// Perspective slider (atmo_eye_path.glsl) is the lever for distance: it scales the whole medium
+// along the eye path, Rayleigh included.
 const float PLAGUE_AEROSOL_SCATTER    = 2.100000e-05;
 const float PLAGUE_AEROSOL_EXTINCT    = 2.333333e-05;
 

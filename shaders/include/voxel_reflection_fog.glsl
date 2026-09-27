@@ -14,6 +14,7 @@
 #define PLAGUE_ATMO_SHADOWED
 #endif
 #moj_import <fornax_runtime:atmo_lut.glsl>
+#moj_import <fornax_runtime:atmo_eye_path.glsl>
 #moj_import <fornax_runtime:fog_aerial.glsl>
 #moj_import <fornax_runtime:end_sky.glsl>
 
@@ -71,9 +72,10 @@ vec3 plagueVoxelReflectionFog(vec3 radiance, vec3 origin, vec3 hit, float skyLig
     float rain = clamp(u_SkyState.x, 0.0, 1.0);
     float thunder = clamp(u_FrameState.z, 0.0, 1.0);
     PlagueFogDrive drive = PLAGUE_FOG_DRIVE(lighting);
-    // Same mist drive as the table producer; 1.6 is its conversion to mist scale.
-    PlagueAtmoAir air = plagueAtmoAirWithMist(plagueAtmoAir(rain, thunder), 1.6 * drive.mist,
-            u_FogDensity, drive.H * (1.0 + drive.rainDepth * drive.rain));
+    // Same mist drive as the table producer (1.6 is its conversion to mist scale) and the same
+    // eye-path scale, or a reflected hill would haze differently from the hill above it.
+    PlagueAtmoAir air = plagueAtmoAirAlongEyePath(plagueAtmoAirWithMist(plagueAtmoAir(rain, thunder),
+            1.6 * drive.mist, u_FogDensity, drive.H * (1.0 + drive.rainDepth * drive.rain)));
     float radius = PLAGUE_PLANET_RADIUS
             + plagueAtmoAltitude(u_CameraAbs.y + origin.y, plagueAtmoSeaLevel());
     vec3 airOrigin = vec3(0.0, radius, 0.0);

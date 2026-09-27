@@ -108,5 +108,16 @@ void main() {
     }
 
     occlusion = occlusion / float(SSAO_TAPS);
-    fragColor = clamp(1.0 - occlusion * u_SsaoStrength, 0.0, 1.0);
+
+    // A block's height on screen, in this pass's own texels. Once a block is only a few texels
+    // tall, the taps land on this block step or the next, and the sum is the block grid itself,
+    // drawn as dark seams at full strength on terrain the air has already softened. Fade the
+    // term out as the block shrinks. AUTHORED, off the SSAO debug view of the 32-chunk valley
+    // frame: a ridge at 200 blocks (5 texels a block at 1369 rows, 70 degree field) still read
+    // as a grid of every block edge; the village at 60 blocks (16 texels) read as contact
+    // shadow. None at 4 texels a block, full from 16.
+    float viewZ = max(-(u_ModelViewMatrix * vec4(origin, 1.0)).z, 1e-3);
+    float blockTexels = u_ProjectionMatrix[1][1] * 0.5 / (viewZ * u_PassTexelSize.y);
+    float footprint = smoothstep(4.0, 16.0, blockTexels);
+    fragColor = clamp(1.0 - occlusion * u_SsaoStrength * footprint, 0.0, 1.0);
 }

@@ -17,8 +17,10 @@ covers what the pack does, not the engine under it.
   the pack does not have yet. Water reflections and screen-space misses sample the same dome. The haze
   on distant terrain, water and glass is marched too: added light and how much light gets through,
   per screen froxel, with the fog drive's morning, night, after-rain and snow mist as a shallow
-  layer. The render-edge veil fades into the sky along the same ray. The night-sky gate follows the
-  scattering dome. Shared palette estimates still supply surface ambient, water illumination,
+  layer. Aerial Perspective on the Atmosphere screen multiplies that air along the view ray alone,
+  since at true scale a 32-chunk view is under 3 km of air and fades nothing; the dome, the sun's
+  path and the camera's height stay at true scale. The render-edge veil fades into the sky along the same
+  ray. The night-sky gate follows the scattering dome. Shared palette estimates still supply surface ambient, water illumination,
   cloud direct lighting, smoke and banner fog; their controls remain active.
 - Stars, with amount, size, roundness and softness controls.
 - Night nebula (intensity, zoom, amount).

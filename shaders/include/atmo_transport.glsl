@@ -19,6 +19,7 @@
 #define PLAGUE_ATMO_SHADOWED
 #endif
 #moj_import <fornax_runtime:atmo_lut.glsl>
+#moj_import <fornax_runtime:atmo_eye_path.glsl>
 #moj_import <fornax_runtime:atmo_mist.glsl>
 #moj_import <fornax_runtime:end_sky.glsl>
 
@@ -29,12 +30,13 @@ vec3 plagueAtmoComputeSunDirection() {
 }
 
 PlagueAtmoAir plagueAtmoComputeAir(vec3 sunDir, float rain, float thunder) {
-    // The aerial medium: fog-drive mist sets its optical depth and e-folding height.
+    // The aerial medium: fog-drive mist sets its optical depth and e-folding height, and the
+    // Aerial Perspective slider scales the air around it (atmo_eye_path.glsl).
     PlagueLighting lighting = plagueOverworldLighting(max(u_SkyColor.rgb, vec3(0.0)), sunDir.y,
                                                       u_SkyState.y, rain, u_ScreenBrightness);
     PlagueFogDrive drive = PLAGUE_FOG_DRIVE(lighting);
-    return plagueAtmoAirWithMist(plagueAtmoAir(rain, thunder), 1.6 * drive.mist,
-                                 u_FogDensity, drive.H * (1.0 + drive.rainDepth * drive.rain));
+    return plagueAtmoAirAlongEyePath(plagueAtmoAirWithMist(plagueAtmoAir(rain, thunder),
+            1.6 * drive.mist, u_FogDensity, drive.H * (1.0 + drive.rainDepth * drive.rain)));
 }
 
 vec4 plagueAtmoComputeTransport(vec3 dir, vec3 sunDir, float r, PlagueAtmoAir air, float distanceBlocks,

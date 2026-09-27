@@ -41,6 +41,7 @@ sliders = [
     "u_AirDensity",
     "u_AirTurbidity",
     "u_AirOzone",
+    "u_AirEyePathScale",
     "u_SunIntensity",
     "u_MoonIntensity",
     "u_NightScotopic",
@@ -262,6 +263,7 @@ elements = [
     "u_AirDensity",
     "u_AirTurbidity",
     "u_AirOzone",
+    "u_AirEyePathScale",
 
     "<group:Light and Eye>",
     "u_SunIntensity",
@@ -1177,6 +1179,13 @@ How deep blue the sky stays after the sun goes down.
 
 It barely touches daylight. Twilight is where it shows. At 0 the evening sky fades to grey \
 instead of deep blue."""
+
+u_AirEyePathScale = """
+How much the far away world fades into the sky.
+
+At 1 the air is at real scale, and a world this small barely fades at all. Higher counts each \
+block as more air between you and what you look at. Sunsets, clouds, mist and the sky itself \
+stay as they are."""
 
 u_SunIntensity = """
 How bright sunlight is overall.
