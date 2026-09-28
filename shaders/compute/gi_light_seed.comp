@@ -1,102 +1,129 @@
 #version 450
 
-// A ray from each cell's surface to one glowing block, so the lamp's shadow gets measured rather
-// than guessed.
-//
-// The light itself is exact and per pixel (voxel_local_direct.fsh). What this grid asks is only
-// how much of a lamp a surface can see, one ray a cell a frame: a lamp drawn in proportion to its
-// share, aimed at a fresh point on its face. gi_light_resolve averages the answers over frames,
-// gi_light_upsample hands the fraction to the voxel chain, and voxel_local_combine multiplies.
-
+// Select from the same full-BRDF source offers as voxel_local_direct. The selected RGB
+// importance weight accompanies its hardware ray; no diffuse-only or capped light list is used.
 #define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
-#moj_import <fornax_runtime:gi_grid.glsl>
 #moj_import <fornax_runtime:geometric_normal.glsl>
-#define PLAGUE_GI_LIGHT_READER
-#moj_import <fornax_runtime:gi_lights.glsl>
+#moj_import <fornax_runtime:local_light_handoff.glsl>
+#moj_import <fornax_runtime:color.glsl>
+#moj_import <fornax_runtime:brdf.glsl>
+#moj_import <fornax_runtime:glass_options.glsl>
+// Geometry also certifies thin receivers when glass transport is disabled.
+#define PLAGUE_GLASS_BINDING_START 6
+#moj_import <fornax_runtime:glass_compute_scene.glsl>
 
-layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x=256,local_size_y=1,local_size_z=1) in;
+// Inputs 0..12 retain their ABI positions, including the unused analytic-list slot at 2.
+layout(set=0,binding=3) uniform sampler2D u_Depth;
+layout(set=0,binding=4) uniform sampler2D u_GNormal;
+layout(rgba32f,set=0,binding=5) uniform readonly image2D u_GiGrid;
+layout(std430,set=0,binding=13) readonly buffer LocalRadiance { uint sourceWords[]; };
+layout(set=0,binding=14) uniform sampler2D u_GAlbedo;
+layout(set=0,binding=15) uniform sampler2D u_GMaterial;
+layout(set=0,binding=16) uniform sampler2D u_GAo;
+layout(std430,set=0,binding=17) buffer GiLightRequests { vec4 words[]; } rays;
+layout(rgba32f,set=0,binding=18) uniform writeonly image2D u_GiLightWeight;
 
-// Bindings: 0 globals, 1 packOptions (engine-injected), 2 the light list, 3 depth, 4 gNormal, 5 the
-// grid (read only for its own extent), 6 the rays. This pass writes no image itself, so the grid is
-// bound purely to read imageSize off it: appended, never inserted, so the rays binding below is the
-// only one it moves.
-layout(std430, set = 0, binding = 2) readonly buffer AnalyticLightList {
-    uint words[];
-} lights;
-layout(set = 0, binding = 3) uniform sampler2D u_Depth;
-layout(set = 0, binding = 4) uniform sampler2D u_GNormal;
-layout(rgba16f, set = 0, binding = 5) uniform readonly image2D u_GiGrid;
-layout(std430, set = 0, binding = 6) buffer GiLightRequests {
-    vec4 words[];
-} rays;
+uint plagueLocalSourceWord(int word) { return sourceWords[word]; }
+int plagueLocalSourceSize() { return sourceWords.length(); }
+bool plagueLocalReceiverBuffersValid() {
+    int d=u_VoxelWindow.w;
+    return glassOccupancy.length()==d*d*d*128 && glassPayload.length()==d*d*d*1024
+        && glassPalette.length()==d*d*d*1536 && glassSummary.length()==d*d*d;
+}
+bool plagueLocalReceiverFacesValid() { int d=u_VoxelWindow.w; return glassFaces.length()==d*d*d*96*42; }
+uint plagueLocalReceiverOccupancy(int word) { return glassOccupancy[word]; }
+uint plagueLocalReceiverPayload(int word) { return glassPayload[word]; }
+uint plagueLocalReceiverPalette(int word) { return glassPalette[word]; }
+uint plagueLocalReceiverSummary(int word) { return glassSummary[word]; }
+uint plagueLocalReceiverFace(int word) { return glassFaces[word]; }
+#moj_import <fornax_runtime:local_light_receiver.glsl>
+#moj_import <fornax_runtime:local_light_source.glsl>
 
-// The chooser lives in the include and the list lives here, so this is how it reads one.
-uint plagueGiLightWord(uint index) {
-    return lights.words[index];
+float plagueLocalRtDraw(inout uint state) {
+    // Same 32-bit LCG and upper-24-bit conversion as the voxel importance sampler.
+    state=state*747796405u+2891336453u;
+    return float(state>>8)/16777216.0;
 }
 
 void main() {
-    uint index = gl_GlobalInvocationID.x;
-    ivec2 size = imageSize(u_GiGrid);
-    uvec2 gridSize = uvec2(size);
-    if (index >= gridSize.x * gridSize.y) return;
-
-    // Row-major on the grid's WIDTH. gi_light_resolve decodes this same index with the width it
-    // reads off the same target, so the two must agree or a ray answers the wrong cell.
-    vec2 cell = vec2(float(index % gridSize.x), float(index / gridSize.x));
-    vec2 uv = plagueGiCellUv(cell, vec2(size));
-
-    float depth = texture(u_Depth, uv).r;
-    vec4 packed = texture(u_GNormal, uv);
-    // The flat face, decoded from gNormal's alpha, not the bumped normal in its rgb: leaves
-    // change their bumped normal texel to texel, which fails the history test's facing check
-    // every frame, and the flat face stays the same across a whole leaf block.
-    vec3 normal = dot(packed.xyz, packed.xyz) > 1e-6
-            ? plagueDecodeGeometricNormal(packed.a, normalize(packed.xyz)) : vec3(0.0);
-    uint count = min(lights.words[0], PLAGUE_GI_MAX_LIGHTS);
-    // Sky, an unwritten normal, or a frame with no lights at all. A zero-length direction is a
-    // caller bug to the engine's kernel, and a tMax of zero is what says this ray wants no trace.
-    if (depth <= 0.0 || dot(normal, normal) <= 1e-6 || count == 0u) {
-        rays.words[index * 2u] = vec4(0.0);
-        rays.words[index * 2u + 1u] = vec4(0.0, 1.0, 0.0, 0.0);
-        return;
+    uint index=gl_GlobalInvocationID.x;
+    ivec2 size=imageSize(u_GiGrid);
+    if(index>=uint(size.x*size.y)) return;
+    ivec2 cell=ivec2(int(index)%size.x,int(index)/size.x);
+    imageStore(u_GiLightWeight,cell,vec4(0.0));
+    // Canonical inactive interval: Vulkan requires tMin <= tMax even for an empty request.
+    rays.words[index*2u]=vec4(0.0);
+    rays.words[index*2u+1u]=vec4(0.0,1.0,0.0,0.0);
+    vec2 uv=plagueGiDepthUv(plagueGiCellUv(vec2(cell),vec2(size)),textureSize(u_Depth,0));
+    float depth=texture(u_Depth,uv).r;
+    vec4 packed=texture(u_GNormal,uv);
+    if(depth<=0.0 || dot(packed.xyz,packed.xyz)<=1e-6) return;
+    vec3 normal=normalize(packed.xyz);
+    vec3 geometric=plagueDecodeGeometricNormal(packed.a,normal);
+    vec4 world=u_InvProjModelView*vec4(uv*2.0-1.0,depth,1.0);
+    vec3 point=world.xyz/world.w;
+    if(plagueLocalRtPreference(point)<=0.0) return;
+    vec3 viewDir=normalize(-point);
+    point=plagueLocalSurfacePoint(point,geometric);
+    PlagueLocalSourceIterator iterator=plagueLocalSourceBegin(point);
+    if(!iterator.valid) return;
+    vec3 encoded=texture(u_GMaterial,uv).rgb;
+    PlagueMaterial material=plagueDecodeMaterial(encoded.r,encoded.g,encoded.b);
+    vec3 albedo=plagueSrgbToLinear(texture(u_GAlbedo,uv).rgb);
+    // Same terrain-cutout class and geometry certificate as the direct and voxel estimators.
+    if(abs(texture(u_GAo,uv).a-0.5)>=0.125) material.subsurface=0.0;
+    float transmission=material.subsurface>0.0 && material.metalness<1.0
+            && plagueLocalThinReceiver(point,geometric) ? 0.5*material.subsurface : 0.0;
+    vec3 offered=vec3(0.0);
+    float worth=0.0,selectedWorth=0.0;
+    PlagueLocalSource selected;
+    uint state=index*747796405u+uint(u_FrameState.x)*2891336453u;
+    int base;
+    while(plagueLocalSourceNext(iterator,base)) {
+        PlagueLocalSource candidate;
+        if(!plagueLocalSourceCandidate(base,point,geometric,normal,viewDir,material,albedo,
+                transmission,candidate)) continue;
+        // Linear sRGB luminance gives each nonzero RGB contribution positive sampling support.
+        float share=dot(candidate.offer,vec3(0.2126,0.7152,0.0722));
+        if(!(share>0.0)) continue;
+        offered+=candidate.offer;
+        worth+=share;
+        // Weighted reservoir: probability of retaining this source is share / total worth.
+        if(plagueLocalRtDraw(state)*worth<=share) {
+            selected=candidate;
+            selectedWorth=share;
+        }
     }
-
-    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
-    vec4 world = u_InvProjModelView * clip;
-    vec3 surface = world.xyz / world.w;
-
-    // Weighted by what each light would give this cell, so the one ray this cell can afford goes
-    // where the light is, and drawn again every frame so every lamp gets its turn.
-    PlagueGiPick pick = plagueGiPickLight(surface, normal, count, plagueGiFrameSeed(index));
-    vec3 toLight = pick.light.position - surface;
-    float distance = length(toLight);
-    // Nothing in reach facing this way, or a light the cell sits inside. Neither is a ray worth
-    // tracing. A tMax of zero tells gi_light_resolve to count this cell as fully lit.
-    if (!pick.valid || !(distance > 1e-3)) {
-        rays.words[index * 2u] = vec4(0.0);
-        rays.words[index * 2u + 1u] = vec4(0.0, 1.0, 0.0, 0.0);
-        return;
+    if(!(selectedWorth>0.0)) return;
+    vec2 draw=vec2(plagueLocalRtDraw(state),plagueLocalRtDraw(state));
+    vec2 st=selected.rectLo+draw*selected.faceSpan;
+    vec3 target=selected.sourceOrigin+(selected.face<2 ? vec3(st.x,selected.facePlane,st.y)
+            : selected.face<4 ? vec3(st,selected.facePlane) : vec3(selected.facePlane,st));
+    // Both backends test the same nudged receiver-to-face segment, including thin backlighting.
+    vec3 origin=point+(selected.front>0.0?geometric:-geometric)*PLAGUE_LOCAL_NUDGE;
+    target+=selected.sourceNormal*PLAGUE_LOCAL_NUDGE;
+    vec3 segment=target-origin;
+    float span=length(segment);
+    if(!(span>PLAGUE_LOCAL_NUDGE)) return;
+    vec3 direction=segment/span;
+    rays.words[index*2u]=vec4(origin,0.0);
+    rays.words[index*2u+1u]=vec4(direction,span);
+    // offer / p(source) / full RGB denominator. Values above one are valid importance samples.
+    vec3 weight=vec3(1.0);
+    for(int channel=0;channel<3;channel++)
+        if(offered[channel]>0.0)
+            weight[channel]=selected.offer[channel]*worth/(selectedWorth*offered[channel]);
+    imageStore(u_GiLightWeight,cell,vec4(weight,1.0));
+#if PLAGUE_GLASS_TRANSPORT != 0
+    if(plagueGlassSegmentIntersects(origin,direction,span)) {
+        // Refracted transport owns this path; a negative tag is valid zero direct energy.
+        rays.words[index*2u].w=0.0;
+        rays.words[index*2u+1u].w=0.0;
+        imageStore(u_GiLightWeight,cell,vec4(vec3(0.0),-1.0));
     }
-
-    // At a point on the lamp's surface, a different one each frame. The average over frames is
-    // the fraction of the lamp this cell can see: a soft edge whose width is set by the lamp's real
-    // size and where the blocker stands, not by a number.
-    // Lift along the normal to avoid re-hitting the receiver at grazing angles. Aim from that
-    // origin too: reusing the old direction translates the segment past its chosen lamp point.
-    vec3 origin = surface + normal * 0.03;
-    vec3 toTarget = plagueGiLightPoint(index, pick.light) - origin;
-    float span = length(toTarget);
-    if (!(span > 1e-3)) {
-        rays.words[index * 2u] = vec4(0.0);
-        rays.words[index * 2u + 1u] = vec4(0.0, 1.0, 0.0, 0.0);
-        return;
-    }
-
-    vec3 direction = toTarget / span;
-    rays.words[index * 2u] = vec4(origin, 0.001);
-    rays.words[index * 2u + 1u] = vec4(direction, plagueGiLampReach(origin, direction, span, pick.light));
+#endif
 }

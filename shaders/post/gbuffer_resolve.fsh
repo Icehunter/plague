@@ -30,6 +30,9 @@
 #moj_import <fornax_runtime:ocean_caustics.glsl>
 #moj_import <fornax_runtime:end_sky.glsl>
 #moj_import <fornax_runtime:surface_lighting.glsl>
+#moj_import <fornax_runtime:glass_options.glsl>
+#moj_import <fornax_runtime:glass_optics.glsl>
+#moj_import <fornax_runtime:glass_receiver_grid.glsl>
 
 #define PLAGUE_LOCAL_LIGHTING 0 //[0 1] compile "Local Coloured Light" {0="Off" 1="On"}
 #define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
@@ -100,6 +103,7 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 uniform sampler2D u_RtShadowComposite; // rtShadowComposite
 uniform sampler2D u_GiBounce; // giBounce
 uniform sampler2D u_GiBounceDir; // giBounceDir, which way that light arrives and how much it agrees
+uniform sampler2DArray u_GlassLighting; // appended slot23: local flux/mask, then celestial flux
 // u_Input22 stays reserved (bound to builtin.depth) so no input numbers shift. Not declared: a
 // sampler with no alias binds nothing.
 #define RT_SHADOW_COMPOSITE u_RtShadowComposite
@@ -379,6 +383,17 @@ vec3 plagueGiUpsample(sampler2D grid, vec2 uv, float depth, vec3 pixelNormal) {
     return total;
 }
 #endif
+
+void plagueGlassLighting(vec3 point,vec3 geometric,out vec4 local,out vec3 celestial) {
+    local=vec4(0.0,0.0,0.0,1.0); celestial=vec3(0.0);
+#if PLAGUE_GLASS_TRANSPORT != 0
+    // Photon RGB already includes this pixel's material response. Interpolating neighbouring
+    // values would mix textures, bumped normals and roughness on the same geometric face.
+    ivec2 pixel=ivec2(gl_FragCoord.xy);
+    local=texelFetch(u_GlassLighting,ivec3(pixel,0),0);
+    celestial=texelFetch(u_GlassLighting,ivec3(pixel,1),0).rgb;
+#endif
+}
 
 void main() {
 #if PLAGUE_SUN_SHADOW_VIEW && RT_SHADOWS
@@ -1150,6 +1165,12 @@ int debugView = int(u_Param3 + 0.5);
     }
 #endif
     sunColour *= uwSunColourShift;
+    vec4 glassLocal; vec3 glassSun;
+    plagueGlassLighting(worldPos,plagueDecodeGeometricNormal(texture(G_NORMAL,texCoord).a,normal),glassLocal,glassSun);
+#if CLOUD_SHADOWS && CLOUDS_VOLUMETRIC
+    glassSun*=clamp(texture(CLOUD_SHADOW_MASK,texCoord).a,0.0,1.0);
+#endif
+    shadow*=glassLocal.a;
     float sunVisibilityHere = shadow * (uwSunGate >= 0.0 ? uwSunGate : skyLight);
     vec3 specular = brdf.specular * sunVisibilityHere * sunColour;
     if (debugView == DBG_CONDUCTOR_DIRECT) {
@@ -1244,6 +1265,9 @@ int debugView = int(u_Param3 + 0.5);
              // Moon phase enters the highlight twice, an authored falloff: a thin crescent should
              // keep faint diffuse moonlight but lose the glint first.
              * moonPhaseInf * moonPhaseInf + localRadiance;
+    // These photons already carry the receiver BRDF and their bent path's visibility.
+    // Reapplying the straight shadow here would remove the caustic traced around the glass.
+    lit+=glassLocal.rgb+glassSun*sunColour;
 
     // Vanilla sets ambient_light 0.25 in the End (the_end.json), so nothing there is fully dark.
     // This pack never reads vanilla's lightmap, so it loses that floor, and with no sun either a

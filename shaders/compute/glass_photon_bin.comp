@@ -1,0 +1,40 @@
+#version 450
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 2
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:glass_beam_index.glsl>
+#moj_import <fornax_runtime:glass_beam.glsl>
+layout(local_size_x=256,local_size_y=1,local_size_z=1) in;
+layout(std430,set=0,binding=0) readonly buffer GlassPhotons { vec4 photonWords[]; };
+// The depth input keeps the photon write and this read on the same graphics command stream.
+layout(set=0,binding=1) uniform sampler2D u_Depth;
+layout(std430,set=0,binding=3) readonly buffer GlassCache { uint cacheWords[]; };
+layout(std430,set=0,binding=4) readonly buffer GlassBeams { vec4 beamWords[]; };
+layout(std430,set=0,binding=5) buffer GlassHeads { uint headWords[]; };
+layout(std430,set=0,binding=6) writeonly buffer GlassLinks { uvec4 linkWords[]; };
+void main() {
+    uint index=gl_GlobalInvocationID.x;
+    if(index>=PLAGUE_GLASS_PHOTONS) return;
+    uint firstNode=index*PLAGUE_GLASS_BEAM_LINKS_PER_PHOTON;
+    for(uint lane=0u;lane<PLAGUE_GLASS_BEAM_LINKS_PER_PHOTON;++lane) linkWords[firstNode+lane]=uvec4(0u);
+    uint photonBase=index*PLAGUE_GLASS_PHOTON_WORDS;
+    vec4 photon=photonWords[photonBase];
+    if(photon.w==0.0) return;
+    vec3 centre=photon.xyz;
+    vec3 extent0=vec3(PLAGUE_GLASS_GATHER_RADIUS,0.0,0.0);
+    vec3 extent1=vec3(0.0,PLAGUE_GLASS_GATHER_RADIUS,0.0);
+    vec3 extent2=vec3(0.0,0.0,PLAGUE_GLASS_GATHER_RADIUS);
+    vec3 cacheOrigin=vec3(ivec3(cacheWords[4],cacheWords[5],cacheWords[6]));
+    mat4 relative=mat4(1.0); relative[3]=vec4(cacheOrigin-u_CameraAbs,1.0);
+    mat4 clipFromCache=u_ProjectionMatrix*u_ModelViewMatrix*relative;
+    ivec2 lower,upper,size=textureSize(u_Depth,0); int level;
+    if(!plagueGlassBeamIndexBounds(clipFromCache,centre,extent0,extent1,extent2,size,lower,upper,level)) return;
+    ivec3 first=plagueGlassBeamCell(lower,level),last=plagueGlassBeamCell(upper,level);
+    uint lane=0u;
+    for(int y=first.y;y<=last.y;++y) for(int x=first.x;x<=last.x;++x) {
+        ivec3 key=ivec3(x,y,level);
+        uint node=firstNode+lane++,bucket=plagueGlassBeamIndexBucket(key);
+        uint previous=atomicExchange(headWords[bucket],node+1u);
+        linkWords[node]=uvec4(previous,uvec3(key));
+    }
+}

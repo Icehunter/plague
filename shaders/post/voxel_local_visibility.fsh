@@ -4,6 +4,7 @@
 #moj_import <fornax_runtime:brdf.glsl>
 #moj_import <fornax_runtime:geometric_normal.glsl>
 #moj_import <fornax_runtime:local_light_mode.glsl>
+#moj_import <fornax_runtime:glass_options.glsl>
 
 uniform sampler2D u_GNormal; // builtin.gNormal
 uniform sampler2DArray u_ConsolidatedGbuf; // consolidated GBuffer: albedo/material/AO
@@ -24,19 +25,28 @@ int plagueEntityOccluderSize() { return textureSize(u_EntityOccluders); }
 #define PLAGUE_VOXEL_ENTITY_OCCLUDERS
 // Only the sampled half is wanted here, and it runs on a smaller image than the screen.
 #define PLAGUE_LOCAL_VISIBILITY_ONLY
+uniform sampler2D u_VoxelLocalUnshadowed; // appended: exact RGB denominator from the direct pass
+uniform sampler2D u_MaterialAtlas; // appended: builtin.materialAtlas
+uniform sampler2D u_GiLightVisRaw; // appended: current RT answer, before voxel work is selected
+#define PLAGUE_LOCAL_RT_GATHER
+#moj_import <fornax_runtime:local_light_handoff.glsl>
+vec3 plagueLocalVisibilityDenominator() {
+    return texelFetch(u_VoxelLocalUnshadowed,ivec2(gl_FragCoord.xy),0).rgb;
+}
 #moj_import <fornax_runtime:voxel_local_jitter.glsl>
+#if PLAGUE_GLASS_TRANSPORT != 0
+#moj_import <fornax_runtime:glass_raster_scene.glsl>
+#endif
 #moj_import <fornax_runtime:voxel_local_light.glsl>
 in vec2 texCoord;
 // ONE output. A fullscreen pass may declare exactly one, and a second is not a compile error: the
 // graph never builds at all and every frame retries, which reads as a black screen.
 //
-// Red is the fraction of the offered light that got through. It is the only sampled quantity in
-// the whole of local lighting, which is why it alone is averaged over frames and spread over
-// neighbours, and why it alone is worked out at a lower resolution than the screen.
+// RGB carries independently weighted visibility; alpha is one for a fresh voxel estimate.
 out vec4 fragColor;
 void main() {
     // Fully lit where nothing is computed: a pixel no emitter reaches is not a shadowed pixel.
-    fragColor=vec4(1.0,0.0,0.0,1.0);
+    fragColor=vec4(1.0,1.0,1.0,0.0);
 #if PLAGUE_LOCAL_LIGHTING != 0
     float depth=texture(u_Depth,texCoord).r;
     // Reconstructed and dithered BEFORE any early return. plagueLocalJitter takes a screen
@@ -50,6 +60,10 @@ void main() {
     if(dot(packedNormal.xyz,packedNormal.xyz)==0.0) return;
     vec3 normal=normalize(packedNormal.xyz);
     vec3 geometricNormal=plagueDecodeGeometricNormal(packedNormal.a,normal);
+#if PLAGUE_LOCAL_SHADOWS != 0
+    if(plagueLocalRtPreference(point)>=1.0
+            && plagueLocalRtGather(texCoord,point,geometricNormal).complete) return;
+#endif
     vec3 viewDir=normalize(-point);
     vec4 encodedMaterial=texture(u_ConsolidatedGbuf,vec3(texCoord,1.0));
     vec3 albedo=plagueSrgbToLinear(texture(u_ConsolidatedGbuf,vec3(texCoord,0.0)).rgb);
@@ -60,10 +74,10 @@ void main() {
     if(abs(surfaceClass-0.5)>=0.125) material.subsurface=0.0;
     vec3 radiance;
     vec3 unshadowed;
-    float visibility;
+    vec3 visibility;
     if(plagueLocalLight(point,geometricNormal,normal,viewDir,material,albedo,jitterUV,radiance,
             unshadowed,visibility)) {
-        fragColor=vec4(visibility,0.0,0.0,1.0);
+        fragColor=vec4(visibility,1.0);
     }
 #endif
 }

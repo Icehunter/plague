@@ -7,6 +7,20 @@ through.
 The long write-up behind each of these lives outside the repository with the rest of the working
 notes; what is here is what a reader needs to know the limit exists.
 
+## Glass
+
+- Optical boundaries use certified axis-aligned box unions; rotated/open models, missing captures or missing material evidence retain raster refraction (`glass_scene.glsl`, `glass_view.fsh`).
+- Optical scattering uses material smoothness but not normal-map relief (`glass_scene.glsl`); detailed refractive surface texture needs a shared tangent-space normal lookup.
+- Glass classification uses representative surface materials and bulk tint uses palette colour averages (`glass_scene.glsl`); mixed optical volumes are not resolved spatially, and labPBR supplies no measured absorption spectrum.
+- Diffuse GI does not follow refracted connections (`gi_resolve.comp`); straight connections through glass are rejected to prevent unfiltered light leaks.
+- Offscreen glass-view hits recover local lighting and emission only (`glass_view.fsh`); sky, indirect light and view-dependent screen radiance remain approximate.
+- Cached photon density has finite radius and spatial sampling error (`glass_photons.glsl`, `glass_photon_sampling.glsl`); source-count changes alter finite sample quotas, and client stability and cost still require measurement.
+- Glass transport cache invalidation covers published geometry, sources and atlas generations (`glass_photon_cache.comp`); optical texture animation without a generation change and dynamic entities need additional update evidence.
+- Camera Fresnel splitting removes only the first branch-choice variance (`glass_view.fsh`); roughness and later interfaces remain noisy, and missing receiver data retains the original approximate raster fallback.
+- Tall wall-light bands around glass remain unisolated (`gbuffer_resolve.fsh`); separate direct, caustic, bounce and fog captures are needed to identify their source.
+- The local RT radius assumes the engine's nominal mesh window (`local_light_handoff.glsl`); a current ray result does not certify that every section along its path has finished loading.
+- Unresolved dielectric models retain vanilla-lit raster tint without volume absorption or refracted illumination; fallback conductors use voxel visibility without temporal history or entity shadows (`terrain.fsh`, `forward_local_light.glsl`).
+
 ## Water
 
 - **Near-silhouette SSR puts the wrong reflection in** where a water edge meets geometry.
@@ -124,6 +138,8 @@ notes; what is here is what a reader needs to know the limit exists.
 - **`u_PomShadowStrength` has no visible effect.** The slider moves and nothing changes.
 - **The normal-atlas magnification filter shapes the POM read**, so parallax depth depends on a
   texture filter setting rather than only on the material.
+- POM virtual-hit motion supports orthogonal one-block UV charts only (`parallax_terrain.glsl`, `terrain.fsh`); other mappings retain polygon motion, and the single motion buffer cannot separately represent physical geometry and displaced material history.
+- Opaque SSR history lacks previous material and reflected-hit metadata (`ssr_trace.fsh`); a deterministic mirror ray removes screen-pixel direction drift but does not establish correct history at every disocclusion.
 
 ## World outline
 

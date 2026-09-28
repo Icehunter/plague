@@ -176,6 +176,18 @@ bool plagueVoxelSegmentVisible(vec3 originRel,vec3 dir,float maxDistance,int max
             if(entry>=96) return false;
             int base=slot*1536+entry*16;
             uint flags=texelFetch(u_VoxelPalette,base).r;
+#if PLAGUE_GLASS_TRANSPORT != 0 && defined(PLAGUE_GLASS_SCENE)
+            if(plagueGlassMedium(base/16).glass) {
+                int opticalBoxes=int(flags&15u);
+                for(int box=0;box<max(opticalBoxes,1);box++) {
+                    vec3 lo,hi; plagueGlassBox(base/16,box,lo,hi);
+                    float a,b;
+                    if(plagueCoverageInterval(origin,dir,vec3(cell)+lo,vec3(cell)+hi,a,b)
+                            && b>max(a,t) && a<maxDistance) return false;
+                }
+                // Certified dielectric paths are supplied by the photon pass, including clear texels.
+            }
+#endif
             if((flags&0xc0000000u)!=0u) {
                 if(plagueVisibilityCutout(origin,dir,cell,base,flags,t,maxDistance)!=0) return false;
             } else {

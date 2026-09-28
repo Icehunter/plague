@@ -9,8 +9,8 @@
 // in proportion to what it gives the hit, aim at a fresh point on its face, and ask whether
 // anything stands in the way.
 //
-// The light itself is added up here as well, every candidate's share, and handed on in a small
-// buffer: the resolve reads it back rather than walking the list a second time.
+// The selected lamp's RGB importance estimate is handed on in a small buffer, so the resolve
+// applies that lamp's own visibility without walking the list a second time.
 
 #define PLAGUE_GI 0 //[0 1] compile "Bounce Light (Experimental)" {0="Off" 1="On"}
 #define FORNAX_COMPUTE_GLOBALS
@@ -40,7 +40,7 @@ layout(rgba16f, set = 0, binding = 5) uniform readonly image2D u_GiGrid;
 layout(std430, set = 0, binding = 6) buffer GiLampRequests {
     vec4 words[];
 } rays;
-// One vec4 a cell: rgb the summed lamp light arriving at the hit, w 1 where a ray was sent.
+// One vec4 a cell: rgb the selected lamp's RGB importance estimate, w 1 where a ray was sent.
 layout(std430, set = 0, binding = 7) buffer GiLampShade {
     vec4 words[];
 } shade;
@@ -107,8 +107,7 @@ void main() {
     vec3 direction = toTarget / span;
     rays.words[index * 2u] = vec4(origin, 0.001);
     rays.words[index * 2u + 1u] = vec4(direction, plagueGiLampReach(origin, direction, span, pick.light));
-    // What every lamp in reach sends the hit, cosine at the hit and falloff already in the share.
-    // Times four: only one cell in four traces this ray a frame, so the write here has to stand
-    // in for the three that did not.
-    shade.words[index] = vec4(pick.colourSum, 1.0);
+    // Selection probability is share/weightSum. Dividing the selected RGB contribution by it
+    // preserves that lamp's colour when its own visibility is applied in the resolve.
+    shade.words[index] = vec4(pick.light.colour * pick.weightSum, 1.0);
 }

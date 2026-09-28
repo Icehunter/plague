@@ -115,6 +115,35 @@ vec3 plagueDebugRamp(float x) {
 // direction and the self-shadow ray's light direction.
 const float PLAGUE_POM_MIN_RAY_Z = 0.109;
 
+// The march measures relief in one-block sprite units. Other UV scales or skewed charts
+// have no matching physical hit and retain polygon motion instead of inventing one.
+bool plaguePomUnitMapping(vec3 dPosX, vec3 dPosY, vec2 dUvX, vec2 dUvY,
+                          vec2 spriteSize, vec3 tangent, vec3 bitangent) {
+    float determinant = dUvX.x * dUvY.y - dUvY.x * dUvX.y;
+    // Match terrain.fsh's existing TBN invertibility guard. Two RG16_UNORM endpoint errors
+    // bound the smallest usable sprite extent; the position/UV error bound below uses both ends.
+    if (!(abs(determinant) > 1e-12) || any(lessThanEqual(spriteSize, vec2(2.0 / 65535.0)))) {
+        return false;
+    }
+    vec3 axisU = (dPosX * dUvY.y - dPosY * dUvX.y) * (spriteSize.x / determinant);
+    vec3 axisV = (dPosY * dUvX.x - dPosX * dUvY.x) * (spriteSize.y / determinant);
+    // Two endpoint quanta bound Fornax's 1/2048-block positions and RG16_UNORM UVs.
+    // See chunk_vertex.glsl; this is a packing tolerance, not a relief-strength threshold.
+    vec2 tolerance = vec2(2.0 / 2048.0) + 2.0 / (65535.0 * spriteSize);
+    vec2 error = vec2(length(axisU - tangent), length(axisV - bitangent));
+    return all(lessThanEqual(error, tolerance))
+            && abs(dot(tangent, bitangent)) <= min(tolerance.x, tolerance.y);
+}
+
+vec2 plaguePomMotion(vec3 cameraRelativeHit, vec3 currentClip) {
+    vec4 previousClip = u_PrevProjectionMatrix * u_PrevModelViewMatrix
+            * vec4(cameraRelativeHit + u_CameraDelta.xyz, 1.0);
+    // A two-screen UV motion is the existing terrain gMotion sentinel for an invalid previous clip.
+    return previousClip.w > 0.0
+            ? (currentClip.xy / currentClip.z
+               - (previousClip.xy / previousClip.w - u_PrevJitterOffset)) * 0.5 : vec2(2.0);
+}
+
 // labPBR normal decode: byte 128 -> exactly 0.0, byte 255 -> +1.0 (byte 0 undershoots to -128/127,
 // absorbed by the unit-disc clamp at the decode site). Must land on exactly 0.0 at 128 since the
 // engine fills a missing _n with (128,128,255,255) and other call sites treat that as flat.

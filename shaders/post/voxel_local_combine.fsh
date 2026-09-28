@@ -21,7 +21,7 @@ uniform sampler2D u_VoxelLocalUnshadowed; // voxelLocalUnshadowed, RGB the light
 uniform sampler2D u_Depth; // builtin.depth
 uniform sampler2D u_GNormal; // builtin.gNormal
 uniform sampler2D u_CloudShadowMask; // cloudShadowMask, carried into alpha for the resolve
-uniform sampler2D u_VoxelLocalVisAccum; // voxelLocalVisAccum, r = visibility already averaged over frames
+uniform sampler2D u_VoxelLocalVisAccum; // voxelLocalVisAccum, RGB channel visibility
 
 in vec2 texCoord;
 out vec4 fragColor;
@@ -49,11 +49,11 @@ void main() {
     vec3 n = texture(u_GNormal, texCoord).xyz;
     if (depth <= 0.0 || dot(n, n) <= 1e-6) {
 #if PLAGUE_LOCAL_DEBUG == 1
-        fragColor = vec4(vec3(texture(u_VoxelLocalVisAccum, texCoord).r), cloudShadow);
+        fragColor = vec4(texture(u_VoxelLocalVisAccum, texCoord).rgb, cloudShadow);
 #elif PLAGUE_LOCAL_DEBUG == 2
         fragColor = vec4(light.rgb, cloudShadow);
 #else
-        fragColor = vec4(light.rgb * texture(u_VoxelLocalVisAccum, texCoord).r, cloudShadow);
+        fragColor = vec4(light.rgb * texture(u_VoxelLocalVisAccum, texCoord).rgb, cloudShadow);
 #endif
         return;
     }
@@ -69,7 +69,7 @@ void main() {
     vec2 place = texCoord * accumSize - 0.5;
     ivec2 nearest = ivec2(floor(place));
     vec2 offset = place - vec2(nearest);
-    float total = 0.0;
+    vec3 total = vec3(0.0);
     float weight = 0.0;
     for (int y = 1 - PLAGUE_LOCAL_VIS_RADIUS; y <= PLAGUE_LOCAL_VIS_RADIUS; ++y) {
         for (int x = 1 - PLAGUE_LOCAL_VIS_RADIUS; x <= PLAGUE_LOCAL_VIS_RADIUS; ++x) {
@@ -94,16 +94,16 @@ void main() {
             if (tapWeight <= 0.0) {
                 continue;
             }
-            total += texelFetch(u_VoxelLocalVisAccum, tap, 0).r * tapWeight;
+            total += texelFetch(u_VoxelLocalVisAccum, tap, 0).rgb * tapWeight;
             weight += tapWeight;
         }
     }
 
     // A pixel whose every neighbour was rejected keeps its own sample rather than going dark.
-    float visibility = weight > 0.0 ? total / weight : texture(u_VoxelLocalVisAccum, texCoord).r;
+    vec3 visibility = weight > 0.0 ? total / weight : texture(u_VoxelLocalVisAccum, texCoord).rgb;
 #if PLAGUE_LOCAL_DEBUG == 1
-    // Grey: white is every emitter sample reaching this pixel, black is none of them.
-    fragColor = vec4(vec3(visibility), cloudShadow);
+    // Channels report their own surviving source energy.
+    fragColor = vec4(visibility, cloudShadow);
 #elif PLAGUE_LOCAL_DEBUG == 2
     // The light with nothing in the way. Deterministic, so any grain here is not the sampling.
     fragColor = vec4(light.rgb, cloudShadow);

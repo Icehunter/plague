@@ -63,16 +63,17 @@ covers what the pack does, not the engine under it.
   Visible emission and received light share the calibrated scale in either local-light mode;
   switching both modes off keeps legacy lighting.
   The owner has checked the direct-light appearance in game; its GPU cost remains high.
-- *Experiment, off by default, not yet checked in game:* Ray Tracing → Traced Block Light sends one
-  Metal ray per cell of a 512x512 grid toward a glowing block, drawn in proportion to its share, at
-  a fresh point on its face each frame, so grates, fences and leaves shadow at their true shape.
-  Independent of Local Coloured Light: per pixel, the traced answer is used where a ray answered
-  that cell; where none did, Local Coloured Light's own voxel probes are used if that option is on,
-  otherwise it waits for a valid trace without restoring the merged block-light map. The grid
-  averages answers over up to 24 frames with a per-cell
-  age counter and a drift watch, then hands the fraction to the same filter and multiply the voxel
-  probes use. Needs a ray-tracing tier; without one its direct light is unavailable. Switching
-  traced shadows does not change visible lamp emission brightness.
+- *Experiment, off by default:* Ray Tracing → Traced Block Light sends one hardware ray per active
+  cell of a 512x512 grid toward a glowing block. Source selection follows its RGB material
+  contribution, with a fresh point sampled on its face each frame.
+  With Local Coloured Light enabled, RT handles nearby receivers and voxel probes handle distant
+  ones. Traced Block Light Distance defaults to two chunks, with a one-chunk transition; covered
+  nearby pixels skip the voxel probes. Both estimators use the same sources and material response.
+  Missing current RT answers use voxel coverage when available, without restoring vanilla block
+  light. The grid averages RGB estimates over up to 24 frames. RT-only mode can keep a held
+  estimate while waiting for a current answer. Needs a ray-tracing tier; without one RT-only
+  direct light is unavailable. Switching traced shadows does not change visible lamp emission.
+  The distance handoff's appearance and frame cost still need a client check.
 - *Experiment, off by default, not yet checked in game:* Ray Tracing → Bounce Light works with any
   lighting setup and adds one bounce on top: one ray per grid cell, and at the hit a sun ray and a
   lamp ray, so a lit wall lights the floor in front of it and a lamp's light reaches a second
@@ -142,7 +143,8 @@ covers what the pack does, not the engine under it.
 
 - Screen-space reflections: one mirror ray per pixel marched through a Hi-Z depth pyramid, blurred by
   roughness, built up across frames, blended so it adds no light that was not there, with a
-  procedural-sky fallback for rays that leave the screen.
+  procedural-sky fallback for rays that leave the screen. The mirror direction does not vary with
+  screen-pixel noise; roughness stays in the reflection filtering.
 - Two real tiers: Fancy at full resolution and Fast at half resolution with a joint-bilateral
   upsample. Fast is a quarter of the rays, not a coarser ray. Controls for strength, distance and
   step budget.
@@ -203,14 +205,27 @@ covers what the pack does, not the engine under it.
   **No IPBR:** Plague is labPBR or vanilla, decided day one.
 - Parallax occlusion mapping with self-shadowing, a distance fade rather than a cutoff line, an
   opt-in cutout-block arm, and three diagnostic views. Quality, depth and distance controls.
+  Deferred motion follows the virtual height hit on orthogonal UV charts whose sprite axes each
+  span one block. Other mappings retain polygon motion. Physical depth and light-ray origins stay
+  on the model surface.
 - Surface wetness scaled by labPBR porosity; wet surfaces darken and slick up.
 - Puddles that form where rain collects and dry slowly after it stops.
 - Puddle ripples keyed off rain actually falling, held to the deeper middle of each puddle.
 - Separate rain-splash rings on water and puddles, each on its own grid cell with its own timing,
   working by tilting the surface so they catch light and reflections.
 - Metals reflect with their own colour; grazing angles get their sheen.
-- Refraction through glass, ice and stained panes, bent by each pane's own labPBR F0. Packs that
-  paint no material map fall back to the format's glass entry rather than bending nothing.
+- Experimental glass transport in voxel and traced lighting: certified box unions, including
+  supported connected panes, have entry and exit refraction, Fresnel reflection and
+  thickness-dependent RGB absorption. Photon paths illuminate
+  their receiving surfaces at full pixel resolution, preserving albedo, normal and roughness detail.
+  Source-anchored photon samples retain RGB energy and incoming directions across camera motion.
+  The current material and view are shaded afresh, without a caustic colour-history settling window.
+  Geometry and source changes rebuild the local photon set before shading. Finite sampling can
+  leave spatial error. Camera paths sum the first interface's Fresnel reflection and transmission,
+  with later boundaries still sampled stochastically. Unsupported models or unresolved paths retain
+  their vanilla-lit material tint and screen-space effect, which does not transport light through
+  their volume. The sampling and material changes have offline checks; their GPU appearance and
+  performance require a client check.
 
 ## Snow: *opt-in, default off*
 

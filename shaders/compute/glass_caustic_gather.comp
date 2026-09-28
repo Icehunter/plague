@@ -1,0 +1,117 @@
+#version 450
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:glass_options.glsl>
+#moj_import <fornax_runtime:shadow_options.glsl>
+#moj_import <fornax_runtime:glass_photons.glsl>
+#moj_import <fornax_runtime:color.glsl>
+#moj_import <fornax_runtime:brdf.glsl>
+#moj_import <fornax_runtime:geometric_normal.glsl>
+#moj_import <fornax_runtime:glass_receiver_grid.glsl>
+#moj_import <fornax_runtime:glass_photon_cache.glsl>
+#moj_import <fornax_runtime:glass_sun_grid.glsl>
+#moj_import <fornax_runtime:glass_beam.glsl>
+#moj_import <fornax_runtime:glass_beam_index.glsl>
+layout(local_size_x=8,local_size_y=8,local_size_z=1) in;
+layout(set=0,binding=2) uniform sampler2D u_Depth;
+layout(set=0,binding=3) uniform sampler2D u_GNormal;
+layout(set=0,binding=4) uniform sampler2D u_GAlbedo;
+layout(std430,set=0,binding=5) readonly buffer GlassPhotons { vec4 photonWords[]; };
+layout(std430,set=0,binding=6) readonly buffer GlassHeads { uint headWords[]; };
+layout(std430,set=0,binding=7) readonly buffer GlassLinks { uvec4 linkWords[]; };
+#define PLAGUE_GLASS_BINDING_START 8
+#moj_import <fornax_runtime:glass_compute_scene.glsl>
+#moj_import <fornax_runtime:glass_beam_visibility.glsl>
+layout(set=0,binding=15) uniform sampler2D u_GMaterial;
+layout(std430,set=0,binding=16) readonly buffer GlassCache { uint cacheWords[]; };
+layout(std430,set=0,binding=17) readonly buffer GlassBeams { vec4 beamWords[]; };
+layout(rgba16f,set=0,binding=18) uniform writeonly image2D u_Local;
+layout(rgba16f,set=0,binding=19) uniform writeonly image2D u_Sun;
+
+bool plagueGlassSunDomain(vec3 point,vec3 light,out float sourceDistance) {
+#ifndef SHADOWS
+    sourceDistance=0.0;
+    return false; // No sun photons were certified against the absent raster shadow map.
+#else
+    // Match the photon launch plane and leave a full kernel inside its footprint. Outside this
+    // finite domain no sampled path can replace straight sunlight, so keep the existing lighting.
+    vec3 tangent,bitangent; ivec2 first; float plane;
+    plagueGlassSunGrid(light,tangent,bitangent,first,plane);
+    float inner=PLAGUE_GLASS_SUN_RADIUS-PLAGUE_GLASS_GATHER_RADIUS;
+    vec3 absolute=point+u_CameraAbs;
+    vec2 centre=(vec2(first)+float(PLAGUE_GLASS_SUN_GRID_SIZE)/2.0)*PLAGUE_GLASS_SUN_CELL;
+    sourceDistance=plane-dot(absolute,light);
+    return light.y>0.0 && u_WorldBounds.w==0.0
+        && abs(dot(absolute,tangent)-centre.x)<inner && abs(dot(absolute,bitangent)-centre.y)<inner
+        && sourceDistance>PLAGUE_GLASS_EPSILON && sourceDistance<PLAGUE_GLASS_SUN_RADIUS*3.0;
+#endif
+}
+void main() {
+    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),size=imageSize(u_Local);
+    if(any(greaterThanEqual(pixel,size))) return;
+    ivec2 fullSize=textureSize(u_Depth,0);
+    ivec2 sourcePixel=plagueGlassReceiverTexel(pixel,size,fullSize);
+    // Depth belongs to a full-resolution texel centre; a half-texel ray offset can exceed the
+    // geometric plane tolerance. The 0.5 offset is the raster pixel-centre convention.
+    vec2 sourceUv=(vec2(sourcePixel)+0.5)/vec2(fullSize);
+    float depth=texelFetch(u_Depth,sourcePixel,0).r;
+    vec4 packed=texelFetch(u_GNormal,sourcePixel,0);
+    vec3 local=vec3(0.0),sun=vec3(0.0);
+    float directSun=1.0;
+    if(depth>0.0 && dot(packed.xyz,packed.xyz)>0.0) {
+        vec4 world=u_InvProjModelView*vec4(sourceUv*2.0-1.0,depth,1.0);
+        vec3 point=world.xyz/world.w,normal=normalize(packed.xyz);
+        vec3 cacheOrigin=vec3(ivec3(cacheWords[4],cacheWords[5],cacheWords[6]));
+        vec3 transportPoint=point+(u_CameraAbs-cacheOrigin);
+        vec3 geometric=plagueDecodeGeometricNormal(packed.a,normal),view=normalize(-point);
+        vec3 albedo=plagueSrgbToLinear(texelFetch(u_GAlbedo,sourcePixel,0).rgb);
+        vec3 encoded=texelFetch(u_GMaterial,sourcePixel,0).rgb;
+        PlagueMaterial material=plagueDecodeMaterial(encoded.r,encoded.g,encoded.b);
+        vec3 cacheOffset=cacheOrigin-u_CameraAbs;
+        PlagueGlassMedium receiverMedium;
+        bool receiverMediumReady=false;
+        int topLevel=plagueGlassBeamTopLevel(fullSize);
+        for(int level=0;level<=topLevel;++level) {
+            ivec3 key=plagueGlassBeamCell(sourcePixel,level);
+            uint node=headWords[plagueGlassBeamIndexBucket(key)];
+            // Each photon has at most four nodes. Exact keys reject collisions without dropping energy.
+            for(uint visit=0u;node!=0u && visit<PLAGUE_GLASS_PHOTONS*PLAGUE_GLASS_BEAM_LINKS_PER_PHOTON;++visit) {
+                if(node>PLAGUE_GLASS_PHOTONS*PLAGUE_GLASS_BEAM_LINKS_PER_PHOTON) break;
+                uvec4 link=linkWords[node-1u];
+                uint index=(node-1u)/PLAGUE_GLASS_BEAM_LINKS_PER_PHOTON;
+                node=link.x;
+                if(any(notEqual(ivec3(link.yzw),key))) continue;
+                if(index>=PLAGUE_GLASS_PHOTONS) break;
+                uint base=index*PLAGUE_GLASS_PHOTON_WORDS;
+                vec3 p=photonWords[base].xyz;
+                vec3 difference=p-transportPoint;
+                vec3 receiverNormal=photonWords[base+3u].xyz;
+                uint beamBase=index*PLAGUE_GLASS_BEAM_WORDS;
+                if(dot(receiverNormal,geometric)<0.99 || abs(dot(difference,geometric))>PLAGUE_GLASS_EPSILON*8.0) continue;
+                float distanceSquared=dot(difference,difference);
+                if(distanceSquared>=PLAGUE_GLASS_GATHER_RADIUS*PLAGUE_GLASS_GATHER_RADIUS) continue;
+                vec3 incoming=photonWords[base+2u].xyz;
+                float cosine=max(dot(normal,incoming),0.0);
+                float geometricCosine=max(dot(geometric,incoming),0.0);
+                if(cosine<=0.0 || geometricCosine<=0.0) continue;
+                if(beamWords[beamBase+5u].w==-2.0 && !plagueGlassBeamLastLegVisible(
+                        plagueGlassBoundaryOffset(point,geometric,geometric),incoming,beamWords[beamBase+6u],
+                        beamWords[beamBase+7u].xyz,beamWords[beamBase+8u].xyz,cacheOffset,
+                        (int(beamWords[beamBase+9u].w)&65536)!=0)) continue;
+                PlagueBrdf response=plagueEvaluateBrdf(material,albedo,normal,view,incoming);
+                vec3 bsdf=(response.diffuse*albedo+response.specular)/geometricCosine;
+                vec4 energy=photonWords[base+1u];
+                vec3 contribution=bsdf*energy.rgb*plagueGlassKernel(distanceSquared);
+                if(energy.a>0.0) sun+=contribution; else local+=contribution;
+            }
+        }
+        vec3 sunDirection=-normalize(vec3(u_SunViewProj[0][2],u_SunViewProj[1][2],u_SunViewProj[2][2]));
+        float sunReach;
+        if(dot(geometric,sunDirection)>0.0 && plagueGlassSunDomain(point,sunDirection,sunReach)
+                && plagueGlassSegmentIntersects(point+geometric*PLAGUE_GLASS_EPSILON*2.0,
+                    sunDirection,sunReach)) directSun=0.0;
+    }
+    imageStore(u_Local,pixel,vec4(local,directSun));
+    imageStore(u_Sun,pixel,vec4(sun,1.0));
+}

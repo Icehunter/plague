@@ -2,10 +2,8 @@
 
 // Screen-space reflections: one mirror ray per pixel, marched through the Hi-Z pyramid.
 //
-// One mirror ray, not a roughness cone: a per-pixel GGX cone against spatially-static noise gives
-// adjacent pixels permanently different hits — a stable speckle no temporal filter can average away.
-// The glossy lobe is reconstructed spatially instead, by ssr_blur's roughness-driven radius; the
-// jitter here only breaks up banding.
+// The ray follows the receiver's mirror direction. ssr_blur reconstructs the material's glossy
+// lobe; a screen-pixel direction perturbation would change a fixed receiver's hit as the view turns.
 //
 // Hit acceptance is crossing + linear thickness, never proximity: accepting a "near" ray grows a
 // false outline around every reflected silhouette, and dithers pixel to pixel at distance.
@@ -69,13 +67,6 @@ vec3 projectToScreen(vec3 pos) {
     return vec3((clip.xy / clip.w) * 0.5 + 0.5, clip.z / clip.w);
 }
 
-/** Per-pixel jitter, spatially static. Only ever rotates the ray inside a ~4 degree cap. */
-vec2 rayJitter(vec2 fragCoord) {
-    float a = fract(sin(dot(fragCoord, vec2(12.9898, 78.233))) * 43758.5453);
-    float b = fract(sin(dot(fragCoord, vec2(39.3468, 11.135))) * 24634.6345);
-    return vec2(a, b);
-}
-
 void main() {
     float depth = texture(u_Depth, texCoord).r;
     if (depth <= 0.0) {          // reversed-Z: 0.0 is the cleared far plane, i.e. sky
@@ -110,8 +101,7 @@ void main() {
     // Mirror direction: the bump normal's reflection folded back above the geometric horizon
     // instead of rejected, the same walk the world reflection pass uses (Schuessler, Heitz,
     // Hanika and Dachsbacher, Microfacet-based Normal Mapping for Robust Monte Carlo Path
-    // Tracing, 2017), then jittered inside a hard ~4 degree cap (see the header). alphaR is the
-    // usual perceptual-roughness square, used only to widen the cap toward the rough end.
+    // Tracing, 2017).
     vec3 wp = normal;
     vec3 wg = geometricNormal;
     vec3 mirror;
@@ -130,18 +120,10 @@ void main() {
     }
     if (dot(mirror, wg) < 1e-3) mirror = normalize(mirror + wg * (1e-3 - dot(mirror, wg)));
 
-    vec2 xi = rayJitter(gl_FragCoord.xy);
-    float alphaR = (1.0 - smoothness) * (1.0 - smoothness);
-    vec3 up = abs(mirror.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-    vec3 t = normalize(cross(up, mirror));
-    vec3 b = cross(mirror, t);
-    float cosTheta = mix(1.0, mix(1.0, 0.998, alphaR), xi.x);
-    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
-    float phi = xi.y * 6.2831853;
-    vec3 rayDir = normalize(t * (sinTheta * cos(phi)) + b * (sinTheta * sin(phi)) + mirror * cosTheta);
+    vec3 rayDir = mirror;
 
-    // The jitter cone can tip an already-at-the-horizon mirror back below the geometric plane by
-    // up to that same cap; nudge it back up rather than rejecting the pixel outright.
+    // The horizon nudge above divides by the renormalized length, which can leave the dot product
+    // a hair under 1e-3; catch that residual here rather than rejecting the pixel outright.
     if (dot(rayDir, geometricNormal) < 1e-3) {
         rayDir = normalize(rayDir + geometricNormal * (1e-3 - dot(rayDir, geometricNormal)));
     }

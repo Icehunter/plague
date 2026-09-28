@@ -1,0 +1,10 @@
+#version 450
+#moj_import <fornax_runtime:glass_beam_index.glsl>
+layout(local_size_x=256,local_size_y=1,local_size_z=1) in;
+// The depth input routes this pass into the graphics stream with trace, bin and gather.
+layout(set=0,binding=0) uniform sampler2D u_Depth;
+layout(std430,set=0,binding=1) writeonly buffer GlassHeads { uint headWords[]; };
+void main() {
+    uint index=gl_GlobalInvocationID.x;
+    if(index<PLAGUE_GLASS_BEAM_INDEX_HEADS) headWords[index]=0u; // Zero is no node; stored indices are one-based.
+}

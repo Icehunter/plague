@@ -1,5 +1,7 @@
 #version 330 core
 #moj_import <fornax_runtime:geometric_normal.glsl>
+#moj_import <fornax_runtime:glass_options.glsl>
+#moj_import <fornax_runtime:glass_optics.glsl>
 
 // Three output shapes selected by the engine's defines: USE_DEFERRED (G-buffer, SOLID/CUTOUT),
 // USE_WATER_PREPASS (single wave-normal target), neither (forward colour, TRANSLUCENT). One
@@ -44,8 +46,8 @@ const float PLAGUE_ATLAS_GHOST_DIST = 32.0;
 #define PLAGUE_WATER_INTERACTION 2 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="High" 2="Epic"}
 #define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Wave Motion" {0="Off" 1="Standard"}
 
-// Screen-space refraction on glass, ice and stained panes. A gate, not a magnitude: strength is
-// u_RefractStrength. Compile-time so Off drops the block and both its texture reads.
+// Enables volume refraction where the optical scene certifies the ray. Uncertified geometry
+// retains the screen-space fallback below, whose magnitude is u_RefractStrength.
 #define PLAGUE_GLASS_REFRACTION 1 //[0 1] compile "Glass Refraction" {0="Off" 1="On"}
 // KEPT COMPILE, deliberately: `#if PLAGUE_PUDDLE_RIPPLE_PCT > 0` elides the whole impact evaluation,
 // and a runtime version would keep that code resident in the hottest shader in the pack.
@@ -90,8 +92,8 @@ uniform sampler2D u_GeomInput2;
 // waterWaveB.history: previous actor-centred (pressure, velocity, dPdx, dPdy). Appended after the
 // three established slots so every existing lookup keeps its index.
 uniform sampler2D u_GeomInput3;
-// sceneHdrComposited: scene-linear HDR, final for the frame by the translucent draw. The background
-// refraction bends. TRANSLUCENT ONLY: SOLID and CUTOUT share this shader and bind group but run
+// glassView: linear HDR plus a certified first-glass distance in alpha, or -1 when unsupported.
+// TRANSLUCENT ONLY: SOLID and CUTOUT share this shader and bind group but run
 // before the passes that write it, so they read last frame's colour with no error anywhere.
 uniform sampler2D u_GeomInput4;
 // builtin.depth_opaque: reversed-Z opaque depth, captured at the end of the graph so a translucent
@@ -223,6 +225,10 @@ layout(std140) uniform u_PbrSettings {
 // imports means the offline #define only shadows the block's later use, not its declaration; an
 // import placed above the block would let `#define u_Exposure 1.0` corrupt the member itself.
 #moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:local_light_mode.glsl>
+#if !defined(USE_DEFERRED) && !defined(USE_WATER_PREPASS) && (PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0)
+#moj_import <fornax_runtime:forward_local_light.glsl>
+#endif
 // Shared fog + sky colour. One definition across five call sites (gbuffer_resolve, water_composite,
 // banner_patterns, particles_translucent, here) that must agree or glass hazes to a different colour.
 #moj_import <fornax_runtime:fog.glsl>
@@ -242,6 +248,10 @@ vec4 plagueAtmoFetchAerial(vec2 uv) {
 #moj_import <fornax_runtime:parallax_terrain.glsl>
 
 in vec4 v_Color;
+#if PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0
+in vec4 v_ForwardVanillaColor;
+in vec4 v_ForwardSkyColor;
+#endif
 in vec4 v_RawTint;
 in vec2 v_TexCoord;
 in vec3 v_WorldPos;
@@ -312,6 +322,9 @@ vec3 plagueInteractionNormal(vec3 baseNormal, vec3 worldPos, vec3 faceNormal) {
 }
 
 void main() {
+#if !defined(USE_DEFERRED) && !defined(USE_WATER_PREPASS) && (PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0)
+    vec2 forwardLocalJitter=plagueLocalJitter(v_WorldPos);
+#endif
     vec3 faceNormal = normalize(v_FaceNormal);
     vec3 dPosX = dFdx(v_WorldPos);
     vec3 dPosY = dFdy(v_WorldPos);
@@ -401,6 +414,7 @@ void main() {
     // Ray depth reached, 0..1 (1.0 = polygon plane). MUST default to 1.0: a fragment that never
     // marches would otherwise read as fully displaced and self-shadow a surface with no displacement.
     float pomHit = 1.0;
+    float pomMotionDistance = 0.0;
 
     // The sprite rectangle covering this fragment, from the atlas rather than from the geometry.
     vec4 spriteBounds = fornax_spriteGridCell(u_GeomInput0, v_TexCoord);
@@ -453,6 +467,13 @@ void main() {
                     pomKnownHeight, pomCrossed);
             pomHeightKnown = !pomCrossed;
             uv = spriteToAtlas(local, spriteBounds);
+#ifdef USE_DEFERRED
+            if (pomCrossed && pomHit >= 0.0 && pomHit <= 1.0
+                    && viewTangent.z >= PLAGUE_POM_MIN_RAY_Z
+                    && plaguePomUnitMapping(dPosX, dPosY, ddx, ddy, spriteSize, tangent, bitangent)) {
+                pomMotionDistance = (1.0 - pomHit) * u_PomDepth / viewTangent.z;
+            }
+#endif
         }
     }
 
@@ -812,6 +833,11 @@ void main() {
     gMotionOut = v_MotionPreviousClip.z > 0.0
             ? (v_MotionCurrentClip.xy / v_MotionCurrentClip.z
                - v_MotionPreviousClip.xy / v_MotionPreviousClip.z) * 0.5 : vec2(2.0);
+    // The virtual hit stays on this pixel's view ray, but moves differently under camera
+    // translation. Motion follows that hit; raster depth and light-ray origins keep the polygon.
+    if (pomMotionDistance > 0.0) {
+        gMotionOut = plaguePomMotion(v_WorldPos - viewWorld * pomMotionDistance, v_MotionCurrentClip);
+    }
 #if PLAGUE_SOURCE_RADIANCE > 0
     // Preview deliberately invalidates normal albedo/material RGB for intermediate lighting passes;
     // source_radiance_preview replaces their final output. Keep alpha and the surface class intact.
@@ -860,6 +886,23 @@ void main() {
     // is split between porosity and SSS. Inter-level filtering would invent a third material.
     vec4 forwardMaterialSample = plaguePagedMaterialLod(uv, ddx, ddy, spriteBounds, haveBounds);
 
+#if PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GLASS_REFRACTION != 0
+    // A positive marker certifies every translucent model on the original raster ray as a
+    // represented closed glass volume. Without that certificate, suppressing a later pane erases it.
+    ivec2 glassPixel=ivec2(gl_FragCoord.xy);
+    float firstGlassDistance=texelFetch(u_GeomInput4,glassPixel,0).a;
+    float glassOpaqueDepth=texelFetch(u_GeomInput5,glassPixel,0).r;
+    vec2 glassUv=(vec2(glassPixel)+0.5)/vec2(textureSize(u_GeomInput4,0));
+    vec4 glassOpaquePoint=u_InvProjModelView*vec4(glassUv*2.0-1.0,max(glassOpaqueDepth,1e-6),1.0);
+    // Four shared voxel tolerances cover raster reconstruction and the boundary's two nudges.
+    float glassTolerance=PLAGUE_GLASS_EPSILON*4.0;
+    float fragmentDistance=length(v_WorldPos);
+    float glassRayEnd=glassOpaqueDepth>0.0 ? length(glassOpaquePoint.xyz/glassOpaquePoint.w) : PLAGUE_GLASS_VIEW_REACH;
+    if(!isWater && forwardMaterialSample.g<(229.5/255.0) && firstGlassDistance>0.0
+            && fragmentDistance+glassTolerance>=firstGlassDistance
+            && fragmentDistance<=glassRayEnd+glassTolerance) discard;
+#endif
+
     bool forwardNormalSignal = any(greaterThan(
             abs(forwardNormalSample - FORWARD_NORMAL_FALLBACK),
             vec4(FORWARD_SIDECAR_EPSILON)));
@@ -875,7 +918,11 @@ void main() {
     vec3 forwardWorldNormal = faceNormal;
     PlagueMaterial forwardMaterial = plagueDecodeMaterial(0.0, 0.0, 0.0);
 
+#if PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0
+    if (!isWater) {
+#else
     if (!isWater && forwardHasLabPbrSignal) {
+#endif
         float forwardBakedAo = 1.0;
 
         if (forwardNormalSignal) {
@@ -900,6 +947,37 @@ void main() {
                 ? normalize(v_SunDirection) : vec3(0.0, 1.0, 0.0);
         vec3 forwardViewDir = length(v_WorldPos) > 1e-6
                 ? normalize(-v_WorldPos) : faceNormal;
+
+        if (forwardMaterialSignal) {
+            forwardMaterial = plagueDecodeMaterial(
+                    forwardMaterialSample.r, forwardMaterialSample.g, forwardMaterialSample.b);
+        }
+        vec3 forwardAuthoredAlbedo = clamp(
+                plagueSrgbToLinear(albedo.rgb) * plagueSrgbToLinear(v_RawTint.rgb) * v_RawTint.a,
+                0.0, 1.0);
+        vec3 forwardWetAlbedo = forwardAuthoredAlbedo;
+#if PLAGUE_WETNESS_PCT > 0
+        if (forwardMaterialSignal) {
+            float forwardWetness = plagueSurfaceWetness(
+                    v_Wetness, v_SkyLight, forwardWorldNormal.y)
+                    * (float(PLAGUE_WETNESS_PCT) / 100.0);
+            plagueApplyWetness(forwardMaterial, forwardWetAlbedo, clamp(forwardWetness, 0.0, 1.0));
+        }
+#endif
+        vec3 forwardLocalRadiance=vec3(0.0);
+#if PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0
+        // Unresolved translucent dielectrics need transmission, including their opaque painted
+        // borders. Only conductors let the opaque BRDF query replace the whole block-light term.
+        bool forwardOpaqueLight = forwardMaterial.metalness == 1.0;
+        bool forwardLocalValid=false;
+        if (forwardOpaqueLight) {
+            forwardLocalValid=plagueForwardLocalLight(
+                    v_WorldPos,faceNormal,forwardWorldNormal,forwardViewDir,
+                    forwardMaterial,forwardWetAlbedo,forwardLocalJitter,forwardLocalRadiance);
+        }
+        forwardBase=albedo*(forwardLocalValid ? v_ForwardSkyColor : v_ForwardVanillaColor);
+        fragColor=forwardBase;
+#endif
 
         // Same time/weather colour tables as the resolve. The normal map enters as a RELATIVE
         // directional response since baseline already owns vanilla's lightmap.
@@ -931,26 +1009,7 @@ void main() {
         }
 
         if (forwardMaterialSignal) {
-            forwardMaterial = plagueDecodeMaterial(
-                    forwardMaterialSample.r, forwardMaterialSample.g,
-                    forwardMaterialSample.b);
-
-            // Porosity is meaningful only while wet. Apply its authored darkening as a ratio so the
-            // already-established forward lightmap/tint baseline remains the source of illumination.
-            //
-            // Same tint/shade split as the deferred arm's rawAlbedo: v_RawTint.rgb (tint) is
-            // decoded, v_RawTint.a (shade*AO, already linear) is not. No re-encode here — this
-            // feeds shader-linear math directly, never an 8-bit target.
-            vec3 forwardAuthoredAlbedo = clamp(
-                    plagueSrgbToLinear(albedo.rgb) * plagueSrgbToLinear(v_RawTint.rgb) * v_RawTint.a,
-                    0.0, 1.0);
-            vec3 forwardWetAlbedo = forwardAuthoredAlbedo;
 #if PLAGUE_WETNESS_PCT > 0
-            float forwardWetness = plagueSurfaceWetness(
-                    v_Wetness, v_SkyLight, forwardWorldNormal.y)
-                    * (float(PLAGUE_WETNESS_PCT) / 100.0);
-            forwardWetness = clamp(forwardWetness, 0.0, 1.0);
-            plagueApplyWetness(forwardMaterial, forwardWetAlbedo, forwardWetness);
             forwardScene *= forwardWetAlbedo / max(forwardAuthoredAlbedo, vec3(1e-4));
 #endif
 
@@ -993,6 +1052,10 @@ void main() {
                     forwardWetAlbedo, forwardEmission);
             forwardScene += forwardRadiance;
         }
+
+        // The query includes source RGB, surface BRDF and visibility. Add once in scene-linear
+        // space; multiplying by albedo or vanilla block light again would double the response.
+        forwardScene += forwardLocalRadiance;
 
         fragColor.rgb = clamp(plagueTonemapAndGrade(max(forwardScene, vec3(0.0)))
                 + forwardResidual, 0.0, 1.0);

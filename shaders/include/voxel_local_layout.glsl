@@ -22,6 +22,8 @@ const int PLAGUE_LOCAL_RECORD_BOX = 24;
 // cells it covers, four bits each. The two spans run along the face in the order a face reads its
 // own axes: a Y face spans x then z, a Z face spans x then y, an X face spans y then z.
 const int PLAGUE_LOCAL_RECORD_RUN = 7;
+// Avoid negative integer remainder, whose GPU lowering differs across traversal backends.
+int plagueLocalSectionMod(int a,int b) { return a>=0 ? a%b : b-1-((-1-a)%b); }
 int plagueLocalRunFace(uint run) { return int(run & 7u); }
 vec2 plagueLocalRunSpan(uint run) {
     return vec2(float((run >> 3) & 15u) + 1.0, float((run >> 7) & 15u) + 1.0);

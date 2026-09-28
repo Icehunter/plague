@@ -21,6 +21,11 @@
 #define PLAGUE_ATMO_READS_SKYVIEW
 #define PLAGUE_ATMO_READS_TRANSMITTANCE
 #moj_import <fornax_runtime:atmo_lut.glsl>
+#moj_import <fornax_runtime:glass_options.glsl>
+#if PLAGUE_GLASS_TRANSPORT != 0
+#define PLAGUE_GLASS_BINDING_START 22
+#moj_import <fornax_runtime:glass_compute_scene.glsl>
+#endif
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
@@ -30,7 +35,8 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 // lamp hits, 11 the lamp light at each hit, 12 the surface normal, 13 the transmittance table,
 // 14 last frame's direction, 15 last frame's moments, 16 last frame's own surface from gi_surface,
 // 17..21 the stationary surface cache (light, direction, moments, surface, camera), then the
-// three outputs, 22 the bounce, 23 its direction and 24 its moments. Inputs are
+// 22..28 the optical scene and 29..30 the existing sun/lamp requests, then the
+// three outputs, 31 the bounce, 32 its direction and 33 its moments. Inputs are
 // APPENDED, never inserted: an inserted one re-points every binding after it with no error
 // anywhere, and the outputs sit behind them all.
 layout(std430, set = 0, binding = 2) readonly buffer GiRayHits {
@@ -53,8 +59,8 @@ layout(std430, set = 0, binding = 9) readonly buffer GiRayRequests {
 layout(std430, set = 0, binding = 10) readonly buffer GiLampHits {
     uint words[];
 } lampHits;
-// One vec4 a cell from gi_lamp_seed: rgb the summed lamp light arriving at the hit, w 1 where a
-// lamp ray was sent.
+// One vec4 a cell from gi_lamp_seed: rgb the selected lamp's importance estimate, w 1 where a
+// lamp ray was sent. Visibility belongs to that selected lamp's RGB contribution.
 layout(std430, set = 0, binding = 11) readonly buffer GiLampShade {
     vec4 words[];
 } lampShade;
@@ -68,9 +74,11 @@ layout(rgba16f, set = 0, binding = 18) uniform readonly image2D u_CacheDir;
 layout(rgba16f, set = 0, binding = 19) uniform readonly image2D u_CacheMoments;
 layout(rgba16f, set = 0, binding = 20) uniform readonly image2D u_CacheSurface;
 layout(rgba32f, set = 0, binding = 21) uniform readonly image2D u_CacheTransform;
-layout(rgba16f, set = 0, binding = 22) uniform writeonly image2D u_OutBounce;
-layout(rgba16f, set = 0, binding = 23) uniform writeonly image2D u_OutDir;
-layout(rgba16f, set = 0, binding = 24) uniform writeonly image2D u_OutMoments;
+layout(std430, set = 0, binding = 29) readonly buffer GiSunRequests { vec4 words[]; } sunRequests;
+layout(std430, set = 0, binding = 30) readonly buffer GiLampRequests { vec4 words[]; } lampRequests;
+layout(rgba16f, set = 0, binding = 31) uniform writeonly image2D u_OutBounce;
+layout(rgba16f, set = 0, binding = 32) uniform writeonly image2D u_OutDir;
+layout(rgba16f, set = 0, binding = 33) uniform writeonly image2D u_OutMoments;
 
 #define PLAGUE_GI_HISTORY_DEPTH u_Depth
 #define PLAGUE_GI_HISTORY_NORMAL u_SurfaceNormal
@@ -292,6 +300,16 @@ void main() {
     float distance = uintBitsToFloat(hits.words[base + PLAGUE_GI_WORD_DISTANCE]);
     uint flags = hits.words[base + PLAGUE_GI_WORD_FLAGS];
     vec3 bounceDir = normalize(bounce.words[index * 2u + 1u].xyz);
+#if PLAGUE_GLASS_TRANSPORT != 0
+    float bounceReach=bounce.words[index*2u+1u].w;
+    if(distance>=0.0) bounceReach=min(bounceReach,distance+PLAGUE_GLASS_EPSILON*2.0);
+    if(plagueGlassSegmentIntersects(bounce.words[index*2u].xyz,bounceDir,bounceReach)) {
+        // Diffuse GI has no refracted continuation yet. Rejecting its straight path avoids
+        // unfiltered sky or material colour leaking through a certified dielectric volume.
+        plagueGiStore(cell,vec3(0.0),vec3(0.0),uv,depth);
+        return;
+    }
+#endif
 
     // A bounce that met nothing escaped to the sky, and carries the sky's own colour in the
     // direction it left. Outdoors that is most of the fill light, so it is not a black miss.
@@ -325,6 +343,11 @@ void main() {
     float sunDistance = uintBitsToFloat(sun.words[base + PLAGUE_GI_WORD_DISTANCE]);
     // A miss on a sun ray is the good case: nothing stood between the hit and the sun.
     float lit = (int(sunTier) != FORNAX_RAY_TIER_NONE && sunDistance < 0.0) ? 1.0 : 0.0;
+#if PLAGUE_GLASS_TRANSPORT != 0
+    vec4 sunRay=sunRequests.words[index*2u+1u];
+    if(lit>0.0 && sunRay.w>0.0
+            && plagueGlassSegmentIntersects(sunRequests.words[index*2u].xyz,normalize(sunRay.xyz),sunRay.w)) lit=0.0;
+#endif
     // What a matte surface sends back: albedo over pi, times the light landing on it. The light
     // landing is the sun's radiance times the cosine at that surface, so a face the sun rakes
     // across returns far less than one facing it. Both terms were missing, which is why a snow
@@ -347,10 +370,8 @@ void main() {
             * plagueAtmoTransmittanceToLight(plagueAtmoCameraRadius(), sunDir.y);
     vec3 carried = albedo * (lit * cosine / PLAGUE_GI_PI) * sunlight;
 
-    // The lamp ray. gi_lamp_seed added up what every glowing block in reach sends the hit, cosine
-    // and falloff included, and sent one ray at one of them. A miss on that ray is the good case.
-    // The sum over pi is the light the hit sends back per unit of its own colour, the same
-    // reading the sun term above makes; the slider scales only this, the glowing blocks' share.
+    // The selected lamp's RGB importance estimate is paired with its own visibility.
+    // The slider scales only the glowing blocks' share of the diffuse bounce.
     //
     // No emission term for the hit itself. A glowing block is found by aiming a ray at it from the
     // list, which every cell does every frame. Counting it again where a bounce happens to land on
@@ -361,6 +382,11 @@ void main() {
         uint lampTier = lampHits.words[base + PLAGUE_GI_WORD_TIER];
         float lampDistance = uintBitsToFloat(lampHits.words[base + PLAGUE_GI_WORD_DISTANCE]);
         float clear = (int(lampTier) != FORNAX_RAY_TIER_NONE && lampDistance < 0.0) ? 1.0 : 0.0;
+#if PLAGUE_GLASS_TRANSPORT != 0
+        vec4 lampRay=lampRequests.words[index*2u+1u];
+        if(clear>0.0 && lampRay.w>0.0
+                && plagueGlassSegmentIntersects(lampRequests.words[index*2u].xyz,normalize(lampRay.xyz),lampRay.w)) clear=0.0;
+#endif
         carried += albedo * (clear * u_GiLightStrength / PLAGUE_GI_PI) * lamp.rgb;
     }
     plagueGiStore(cell, carried, plagueGiWeight(carried) > 1e-6 ? bounceDir : vec3(0.0), uv, depth);

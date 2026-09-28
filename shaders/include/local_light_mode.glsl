@@ -9,8 +9,8 @@
 #define PLAGUE_LOCAL_SHADOWS 0 //[0 1] compile "Traced Block Light" {0="Off" 1="On"}
 #endif
 
-// A lightmap combines all placed lamps. Replacement must mute its block axis everywhere,
-// including unsupported receivers; cache validity cannot identify an individual lamp's share.
+// A lightmap combines all placed lamps, so local replacement mutes its whole block axis.
+// Forward terrain retains a separate full lightmap and substitutes only after its RGB query succeeds.
 vec2 plagueLightingTexCoord(vec2 coordinate) {
 #if PLAGUE_LOCAL_LIGHTING != 0
     coordinate.x = 0.5 / 16.0; // Centre of vanilla's block-light-zero column in the 16x16 LUT.

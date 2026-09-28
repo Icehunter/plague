@@ -17,4 +17,9 @@ vec2 plagueGiGridPlace(vec2 screenUv, vec2 size) {
     return (screenUv - u_JitterOffset * 0.5) * size - 0.5;
 }
 
+vec2 plagueGiDepthUv(vec2 uv, ivec2 size) {
+    // Nearest raster depth belongs to this texel centre, including clamped screen-edge samples.
+    return (clamp(floor(uv * vec2(size)), vec2(0.0), vec2(size) - 1.0) + 0.5) / vec2(size);
+}
+
 #endif

@@ -121,7 +121,7 @@ vec3 plagueVoxelSurfaceDirect(PlagueVoxelSurface surface, vec3 viewDir, vec3 sun
     localBlockLight = 0.0;
 #endif
     vec3 reflectedUnshadowed;
-    float reflectedVisibility;
+    vec3 reflectedVisibility;
     // The camera-column water height cannot classify a reflected surface (dry caves may be below
     // zero). Water reflection recovery already bypasses wet eyes; keep that same boundary here.
     if (u_WaterState.x >= 0.5

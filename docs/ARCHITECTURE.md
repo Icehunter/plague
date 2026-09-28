@@ -16,7 +16,8 @@ feature that is off costs nothing because its passes are not in the graph at all
 
 ## The frame, in order
 
-`graph.toml` declares **139 passes** writing **181 targets**. They run in file order. Grouped by job:
+`graph.toml` declares **178 passes** and **227 explicit targets**. Consolidation passes also create
+array targets. They run in file order. Grouped by job:
 
 ### 0. Atmosphere: 4 compute passes
 
@@ -99,6 +100,12 @@ Fornax's integer sidecar rectangles; misaligned leading edges are excluded where
 can overlap during mip reduction. This keeps emission and metal codes from crossing sprite boundaries.
 Missing bounds use level zero; missing overflow material pages use the engine's neutral layer.
 
+Deferred terrain motion follows the virtual POM hit on supported UV charts: the two sprite-local
+axes must be orthogonal and each span one world block, within vertex-encoding precision. The
+completed height intersection supplies the distance along the view ray. Unsupported charts,
+grazing clamps and incomplete marches retain polygon motion. Raster depth and light-ray origins
+remain on the polygon; POM changes material lookup and its reprojection, not physical geometry.
+
 ### 2. Screen-space occlusion and reflection
 
 `ssao_raw` → `ssao_blur`, then `hiz` (a mip chain over depth), then the reflection tier:
@@ -120,6 +127,10 @@ reflections add the wobble difference back into the motion vector; water works t
 straight from its own last-frame clip position. Both drop history when the engine asks for a
 reset. Matching the current depth is only a guess: it cannot tell that the pixel, or the thing
 it reflected, is the same one.
+
+Opaque SSR traces the receiver's deterministic mirror direction. Screen-pixel noise does not tilt
+that ray; roughness is represented by the existing reflection-lobe filtering. Rotating a stationary
+eye therefore does not change the ray merely by moving the receiver to another screen pixel.
 
 ### 3. The deferred resolve: 2 passes
 
@@ -160,6 +171,104 @@ The complete raster map remains available for distant receivers and incomplete R
 implementation therefore adds tracing and mesh maintenance; it does not promise zero raster cost.
 Offline depth fixtures verify selection and filtering, while actual caster coverage, appearance and
 frame time require engine tests and the owner's client session.
+
+### Glass transport
+
+`glass_photon_cache` validates exact section geometry tokens and source records before reusing
+local photons. It reads the admitted voxel source inventory, including its shaped face bounds,
+instead of the atomic 256-entry analytic list. A section-centred eligibility region includes the
+glass view distance, local path reach and eye movement within the section. Eligible faces receive
+equal integer shares of 32,768 paths; each share normalizes its own Lambertian flux. The unused
+division remainder emits nothing. Halton points and their Cranley-Patterson shift are keyed to
+absolute source geometry and sample ordinal. Source order cannot change an emitter's sample set.
+
+`glass_photon_trace` fills the complete local set on invalidation and retains it on subsequent
+frames. Records contain RGB flux, arrival direction and geometry in an integer-origin coordinate
+frame. Camera rotation and movement within the coverage section need no local retracing. Changed
+geometry, source records, publication generations or coverage rebuild the set before gathering.
+Lightmap-only revisions do not change optical geometry. Changing the eligible source count can
+change each source's finite sample quota. This is cached finite quadrature, not progressive
+convergence toward an unlimited path count.
+
+Sun and moon photons use two fixed samples per world-anchored launch cell and are retraced for the
+current celestial direction and shadow map. Their plane stays between one and two launch radii
+above the eye; three radii of trace reach cover receivers one radius below it.
+
+`glass_photon_reset` and `glass_photon_bin` index projected photon footprints in a screen-tile
+hierarchy, with at most four owned links per photon. Exact tile keys reject hash collisions;
+world-space radius and receiver-plane checks still decide membership. `glass_caustic_gather`
+evaluates each receiver at full resolution using the current material and view. Dividing by the
+geometric cosine preserves the BRDF's shading-normal cosine and the normal map's relief.
+The companion visibility record retains the last optical interface or emitting boundary.
+Gathered samples must reach that boundary without crossing a blocker or a different optical medium.
+
+The gather writes local and celestial radiance separately. The material resolve fetches its own
+pixel from their consolidated array at appended input 23 and applies the celestial light colour.
+The compute gather binds albedo and material as separate G-buffer images; virtual consolidated
+arrays are available only to raster consumers. `glass_receiver_grid.glsl` selects depth texels with
+integer arithmetic, including at odd image sizes. Depth reconstructs the actual jittered sample.
+Direct lamp visibility retains RGB weights per sampled source; direct paths through glass belong
+to the photon estimator.
+
+The gather shades the retained arrival directions with the current pixel's material, shading
+normal and view direction on every frame. It sends that result directly to consolidation, with
+no caustic RGB history or material-neighbourhood filter. Newly visible receivers can query the
+same transport data immediately. The direct-sun ownership mask also comes from the current frame.
+Finite photon density can leave fixed spatial sampling error; rough camera paths through glass
+remain a separate source of noise.
+
+`glass_scene.glsl` shares geometric boundary traversal between camera and light paths. Fornax's
+face sidecar certifies closed unions of axis-aligned model boxes and reports render layers and UV
+maps. Wrapped models obtain these facts from complete renderer-owned emissions, including faces
+culled from the visible mesh. A state's box shape may propose connected geometry, but its union's
+exterior must match those emitted rectangles before it receives a closure certificate. Flush
+internal joints need no artificial caps. A mismatched candidate falls back to model reconstruction.
+
+When a direction contains incompatible affine maps, the sidecar can instead provide the centre
+and area of its largest emitted material rectangle. `glass_scene.glsl` selects the largest valid
+material sample across the model; this record supplies neither spatial UV coverage nor a closure
+proof. The independent geometry certificate and render-layer checks still apply, and malformed
+records are ignored. Missing captures or material evidence cannot certify glass. A connected pane
+can therefore establish its material without inventing one affine map across broad faces and caps.
+Plague selects dielectrics from those facts and resource materials. Refraction follows Snell's
+law, Fresnel selects reflected or transmitted branches, and Beer-Lambert absorption multiplies the
+incoming RGB by thickness-dependent transmission. Linear material colour means transmission through
+one block; it is a pack convention because labPBR supplies no bulk absorption channel. Smoothness
+controls a GGX interface. Normal-map relief does not alter the optical boundary.
+
+`glass_view` follows camera paths after the water composite and before temporal accumulation. Its
+alpha certifies that the original raster ray contains only supported glass before the opaque depth;
+forward terrain uses that certificate to avoid drawing the represented glass twice. Unsupported
+models or incomplete paths retain the existing raster effect. An exit touching an opaque lamp can
+end at that lamp; a painted glass texel without opaque backing still keeps its raster surface.
+The first optical interface samples one GGX normal and evaluates both Fresnel branches, summing
+their contributions with weights F and 1-F. Later boundaries remain stochastic. Total internal
+reflection gives the reflected branch full weight; geometric hemisphere rejection is a valid zero.
+When either branch cannot resolve its receiver, the original Fresnel choice selects its unweighted
+path or raster fallback. This preserves the previous estimator's fallback behaviour without
+renormalizing successful branches. It removes first-choice variance, not roughness or later-bounce
+variance, and can require two camera paths.
+
+The off pass copies the scene with an invalid certificate. Recovered screen radiance requires
+agreement with the traced receiver; offscreen recovery includes local emitters and emission only.
+Ordinary diffuse GI rejects straight connections through glass; refracted diffuse GI paths are not
+implemented.
+
+Unresolved forward conductors use six appended terrain texel buffers to evaluate source RGB, material
+response and voxel visibility at the fragment's own position. A valid query replaces the vanilla
+block-light contribution; missing geometry or source data retains the original lightmap. Unresolved
+dielectrics retain the full vanilla-lit material tint, including opaque painted borders. An opaque
+surface-light query cannot replace transmission lighting merely because its result is valid and
+black. This fallback preserves raster appearance; it does not supply volume absorption or refracted
+illumination. The conductor query has no visibility history or dynamic-entity shadows. Its buffers
+remain allocated while the producers are disabled because terrain has unconditional input bindings. At a nine-section
+window the existing grid allocation uses at least 27.90 MiB with Standard light detail, or 67.77 MiB
+with High, excluding CPU geometry and allocator overhead.
+
+The same optical representation runs under voxel and hardware RT lighting. Its fixed photon count,
+finite light domain, gather radius and camera traversal limits make this an approximation; shader
+compilation, CPU optical checks and GPU classifier fixtures do not establish its final client
+appearance, per-position capture coverage or frame cost.
 
 ### 4. Clouds
 
@@ -564,34 +673,37 @@ fade and no limit of three contributing faces. Adding known lamps adds their con
 #### Traced lamp shadows and the bounce
 
 `PLAGUE_LOCAL_LIGHTING`, `PLAGUE_LOCAL_SHADOWS` and `PLAGUE_GI` are independent: each may be on or
-off in any combination. Per pixel, direct visibility comes from a valid traced answer, else the
-voxel probes if Local Coloured Light is on, else no local direct contribution. Neither direct
-mode restores vanilla block light on missing source data.
-Bounce Light adds on top of whatever that cascade produced, in every combination, including with
-both other options off.
+off in any combination. With both direct modes enabled, RT handles nearby surfaces and voxel
+visibility handles distant ones. `u_LocalRtDistance` sets a spherical RT range in chunks, default
+two. The final 16 blocks blend into voxel visibility. This range selects the shadow method; each
+lamp keeps its own light falloff. RT alone has no camera-distance cutoff in these passes. Neither
+direct mode restores vanilla block light on missing source data. Bounce Light adds to the direct
+light in every combination, including with both direct modes off.
 
-`voxel_local_sources` (the per-cell radiance the direct light, the traced shadows and the bounce
-all read) runs whenever any lighting mode is on. `voxel_local_direct` (the light itself, exact
-per pixel) runs only when `PLAGUE_LOCAL_LIGHTING` or `PLAGUE_LOCAL_SHADOWS` is on.
-`voxel_local_visibility` and
-`voxel_local_accum` are the voxel probes' own visibility pass and its temporal accumulation; they
-run whenever `PLAGUE_LOCAL_LIGHTING` is on, independent of whether traced shadows also run,
-accumulating into `voxelLocalVisVoxel`.
+`voxel_local_sources` supplies source-face radiance for direct light, traced shadows and the bounce
+whenever any lighting mode is on. `voxel_local_direct` computes the material-weighted source sum
+per pixel when `PLAGUE_LOCAL_LIGHTING` or `PLAGUE_LOCAL_SHADOWS` is on.
+`voxel_local_visibility` and `voxel_local_accum` run after traced visibility resolves. Near pixels
+with a complete set of compatible, current RT donors skip the voxel emitter scan and probes;
+transition, distant and uncovered pixels retain voxel estimates in `voxelLocalVisVoxel`.
 
-`PLAGUE_LOCAL_SHADOWS` on runs `gi_light_seed` (one ray per cell of a 512x512 grid, lamp drawn by
-share, face point walked by R2), `gi_light_trace` (a `ray_query` visibility pass) and
-`gi_light_resolve` (per-cell age counter to 24 frames, drift watch, reprojection by motion vector
-with depth and normal rejection), writing `giLightVisRaw`. The merge pass `gi_light_upsample` runs
-whenever `PLAGUE_LOCAL_LIGHTING` or `PLAGUE_LOCAL_SHADOWS` is on: a depth and normal aware 2x2 read
-of `giLightVisRaw` gives the traced answer where a ray answered that cell (its frame-gathered count
-is nonzero); where none did, it falls back to `voxelLocalVisVoxel` if Local Coloured Light is on,
-else reports nothing found. It writes the merged fraction, and whether anything answered, into
-`voxelLocalVisAccum`, packed as `r` = fraction and `g` = answered (1 or 0). `voxel_local_combine`
-reads that target either way. `voxelLocalDirect` carries the resulting radiance in RGB and only
-the cloud shadow in alpha; no quantized reach mask changes the lightmap contribution. Bounce-only
-mode retains vanilla direct light because the bounce chain supplies only indirect light.
-The light list (`light_list_reset`, `light_list_build`, engine-dispatched) is built ahead of these
-passes whenever `PLAGUE_LOCAL_SHADOWS` or `PLAGUE_GI` is on, and shared with the bounce.
+`PLAGUE_LOCAL_SHADOWS` runs `gi_light_seed`, `gi_light_trace` and `gi_light_resolve`. The seed sends
+one ray per active cell of a 512x512 grid. It selects a source by its RGB material contribution and
+samples a point uniformly across that source face. The trace pass asks whether the segment is
+blocked. The resolve averages RGB visibility estimates for up to 24 frames in `giLightVisRaw`,
+using motion vectors and surface planes to reject history from a different surface.
+
+`gi_light_upsample` merges the results whenever either direct mode is on. Its 2x2 RT lookup accepts
+positive ages as current answers. Negative ages hold RGB history: RT-only mode can shade from
+them, but they cannot skip voxel work or replace voxel fallback when both modes are on. RT and
+voxel weights sum to one through the transition. The merged RGB estimate and an answered flag in
+alpha enter `voxelLocalVisAccum`. `voxel_local_combine` multiplies this estimate by the source sum
+and writes radiance to `voxelLocalDirect.rgb`, with the cloud shadow in alpha. Bounce-only mode
+retains vanilla direct light because the bounce chain supplies only indirect light.
+Direct light and both visibility backends share `local_light_source.glsl`: the same 4096-record
+inventory, receiver-neighbour section ranges, actual source boxes and material response. The
+separate capped analytic light list (`light_list_reset`, `light_list_build`) serves bounce.
+Glass photon launch reads the full source inventory directly.
 
 `PLAGUE_GI` is independent of the other two and adds one bounce: `gi_seed_rays` (cosine hemisphere ray
 per cell) -> `gi_trace` (closest hit) -> `gi_shadow_seed`/`gi_shadow_trace` (sun ray from the
@@ -631,9 +743,8 @@ level-zero atlas texel accepted by the ray's alpha test, tagged by flag bit13. `
 can round across several texels on large atlases and shade a hole or neighboring sprite instead
 of the accepted surface. This graph requires an engine that recognizes the encoding option.
 
-The resolve composites `kD * albedo * giBounce` on top of the local light. Each
-`ray_query` pass is one Metal round trip per frame; the frame runs four of them with both
-features on, plus the sun shadow's own.
+The resolve adds `kD * albedo * giBounce` to the local light. Ray-query passes use the engine's
+tracing backend. Local shadows and GI together run four such passes, plus the sun shadow work.
 
 With `PLAGUE_GI_VIEW` enabled, `gi_debug_view` displays the filtered bounce before bump shaping.
 Its appended 2D sampler bindings expose raw/filtered light and direction, moments/history age,
@@ -690,7 +801,8 @@ area-light response.
 Primary lighting has a separate HDR target so its cost and output can be measured. RGB holds local
 radiance; alpha carries the cloud-shadow mask. Resolve reads both through its existing input 15,
 keeping the Metal sampler budget the same. With local lighting Off,
-`voxel_local_off` copies only the cloud mask into the same target. The source producer does not run.
+`voxel_local_off` copies only the cloud mask into the same target. The source producer stops only
+when GI and glass transport are also off.
 Secondary voxel surfaces use the same direct-light transport, without a primary screen cache.
 This is direct lighting, not bounced GI; reflected hits have no per-hit fluid classification and
 the local transport does not integrate water absorption along a segment.

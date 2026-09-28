@@ -71,6 +71,7 @@ sliders = [
     "u_BlockLightTemp",
     "u_ShadowDistance",
     "u_RtShadowDistance",
+    "u_LocalRtDistance",
     "u_SsaoRadius",
     "u_SsaoStrength",
     "u_SsrStrength",
@@ -509,6 +510,7 @@ elements = [
 title = "Ray Tracing (Experimental)"
 elements = [
     "PLAGUE_LOCAL_SHADOWS",
+    "u_LocalRtDistance|requires:PLAGUE_LOCAL_SHADOWS",
     "PLAGUE_GI",
     "u_GiLightStrength|requires:PLAGUE_GI",
     "PLAGUE_GI_VIEW|requires:PLAGUE_GI",
@@ -679,6 +681,7 @@ elements = [
     "u_BumpStrength",
     "u_AOStrength",
     "u_AuthoredEmission",
+    "PLAGUE_GLASS_TRANSPORT",
     "PLAGUE_GLASS_REFRACTION",
     "u_RefractStrength|requires:PLAGUE_GLASS_REFRACTION",
     "PLAGUE_WETNESS_PCT",
@@ -866,6 +869,9 @@ Supported sources light surfaces within 12 blocks, with a smooth fade from 9 to 
 This distance is measured from each source, not from the camera. Missing sources remain dark \
 until their data is available.
 
+With Traced Block Light enabled, rays handle nearby surfaces and this mode takes over farther \
+away. Surfaces with complete nearby ray answers skip the voxel shadow work.
+
 This is direct light only. Bounce Light adds illumination reflected from other surfaces."""
 PLAGUE_SOURCE_DIAGNOSTIC = """
 A test view for checking which blocks the pack can read as light sources. It is not coloured \
@@ -909,11 +915,19 @@ PLAGUE_LOCAL_SHADOWS = """
 Light from glowing blocks, with shadows from real rays, sent toward a glowing block once per \
 cell of a coarse grid each frame, so grates, fences and leaves shadow at their true shape.
 
-Works with or without Local Coloured Light: where a ray gets no answer for a cell, this falls \
-back to Local Coloured Light if that is on, otherwise it waits for valid ray data. Minecraft's \
-merged block light stays replaced, so missing data cannot erase shadows or add held light twice.
+With Local Coloured Light enabled, rays handle nearby surfaces and voxel shadows take over \
+through the final chunk of Traced Block Light Distance. Missing current ray answers also use \
+voxel shadows. Without Local Coloured Light, ray lighting keeps its full available range. \
+Minecraft's merged block light stays replaced.
 
 Needs a graphics card that can trace rays; without one this direct light is unavailable."""
+u_LocalRtDistance = """
+Nearby range for Traced Block Light when Local Coloured Light is also enabled, measured \
+from the camera in three dimensions. One chunk is 16 blocks.
+
+The final chunk blends into voxel shadows. Complete nearby ray answers skip voxel shadow work; \
+missing ray answers still use voxel shadows. This changes which shadow method runs, not the \
+distance a lamp illuminates. It has no effect when only Traced Block Light is enabled."""
 PLAGUE_GI = """
 Light that bounces: one ray per cell of a coarse grid, leaving each surface you can see and \
 carrying back what it finds. Works with any lighting setup, and adds one bounce of it on top of \
@@ -2054,17 +2068,23 @@ showing through, not one flat white slab. Grass and flowers are untouched, becau
 sit on them."""
 
 u_RefractStrength = """
-How far glass bends what is behind it.
+How far the fallback glass effect shifts the background.
 
-Low gives a thin window, high gives a thick, uneven slab. Set it while looking through a pane \
-at something with detail a few blocks behind it."""
+Applies to models that cannot use Glass Light Transport. Closed glass uses its actual thickness \
+and material index of refraction; this slider does not change those physical angles."""
+
+PLAGUE_GLASS_TRANSPORT = """
+Traces light through closed glass volumes, preserving tint and illuminating the surfaces it reaches. \
+Uses the same optical boundaries with voxel and traced lighting. Photon reconstruction can look grainy \
+while temporal antialiasing settles; unsupported open or non-box models keep their existing rendering.
+"""
 
 PLAGUE_GLASS_REFRACTION = """
-Bends the view through glass, ice and stained panes, the way real glass shifts what is behind \
-it.
+Bends the view through glass and stained panes.
 
-How far it bends comes from the resource pack's own material data. Set the amount with Glass \
-Warp Strength below. Panes that are almost fully see-through do not bend the view."""
+With Glass Light Transport, rays follow the entry and exit faces of supported closed models. \
+Material reflectance sets the refractive index and tint absorbs light according to thickness. \
+Unsupported models keep the screen-space effect controlled by Glass Warp Strength."""
 
 PLAGUE_WETNESS_PCT = """
 Makes rain wet the world: puddles in low spots, and a darker, slicker look on everything the \

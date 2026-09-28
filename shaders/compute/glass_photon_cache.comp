@@ -1,0 +1,87 @@
+#version 450
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:glass_optics.glsl>
+#moj_import <fornax_runtime:glass_photon_cache.glsl>
+layout(local_size_x=256,local_size_y=1,local_size_z=1) in;
+layout(std430,set=0,binding=1) readonly buffer Sections { uint sectionWords[]; };
+layout(std430,set=0,binding=2) readonly buffer Sources { uint sourceWords[]; };
+layout(set=0,binding=3) uniform sampler2D u_Depth;
+layout(std430,set=0,binding=4) readonly buffer Occupancy { uint occupancyWords[]; };
+layout(std430,set=0,binding=5) readonly buffer Payload { uint payloadWords[]; };
+layout(std430,set=0,binding=6) readonly buffer Palette { uint paletteWords[]; };
+layout(std430,set=0,binding=7) readonly buffer Summary { uint summaryWords[]; };
+layout(std430,set=0,binding=8) readonly buffer Faces { uint faceWords[]; };
+layout(std430,set=0,binding=9) buffer Cache { uint cacheWords[]; };
+shared uint changed;
+shared uint sources;
+void main() {
+    uint lane=gl_LocalInvocationID.x;
+    ivec3 origin=ivec3(floor(u_CameraAbs/16.0))*16+ivec3(8);
+    int d=u_VoxelWindow.w;
+    bool valid=d>0 && d<=33 && sectionWords.length()==d*d*d*8
+        && occupancyWords.length()==d*d*d*128 && payloadWords.length()==d*d*d*1024
+        && paletteWords.length()==d*d*d*1536 && summaryWords.length()==d*d*d
+        && faceWords.length()==d*d*d*96*42
+        && sourceWords.length()==PLAGUE_LOCAL_SOURCE_WORDS
+        && sourceWords[0]==2u && sourceWords[1]==uint(PLAGUE_LOCAL_CAPACITY)
+        && sourceWords[2]<=uint(PLAGUE_LOCAL_CAPACITY) && sourceWords[3]!=0u;
+    uint count=valid?sourceWords[2]:0u;
+    if(lane==0u) {
+        changed=(!valid || cacheWords[0]!=PLAGUE_GLASS_CACHE_TAG
+            || cacheWords[3]!=uint(sectionWords.length()) || cacheWords[7]!=count
+            || any(notEqual(ivec3(cacheWords[4],cacheWords[5],cacheWords[6]),origin))
+            || (valid && (cacheWords[8]!=sourceWords[3] || cacheWords[9]!=sourceWords[4]
+                || cacheWords[10]!=sourceWords[5])))?1u:0u;
+        sources=0u;
+    }
+    barrier();
+    if(valid) {
+        for(uint word=lane;word<uint(sectionWords.length());word+=256u) {
+            // Lightmap content revisions do not change optical geometry. Owner, generation,
+            // geometry revision and publication validity cover empty traversed sections too.
+            if((word&7u)==5u || (word&7u)==7u) continue;
+            uint value=sectionWords[word];
+            int destination=PLAGUE_GLASS_CACHE_SECTIONS+int(word);
+            if(cacheWords[destination]!=value) atomicOr(changed,1u);
+            cacheWords[destination]=value;
+        }
+        for(uint index=lane;index<count;index+=256u) {
+            int row=PLAGUE_LOCAL_RECORDS+int(index)*PLAGUE_LOCAL_RECORD_WORDS;
+            int old=PLAGUE_GLASS_CACHE_ROWS+int(index)*PLAGUE_LOCAL_RECORD_WORDS;
+            for(int word=0;word<PLAGUE_LOCAL_RECORD_WORDS;++word) {
+                uint value=sourceWords[row+word];
+                if(cacheWords[old+word]!=value) atomicOr(changed,1u);
+                cacheWords[old+word]=value;
+            }
+            vec3 radiance=uintBitsToFloat(uvec3(sourceWords[row+11],sourceWords[row+15],sourceWords[row+19]));
+            if(sourceWords[row+6]!=1u || any(isnan(radiance)) || any(isinf(radiance))
+                || max(radiance.r,max(radiance.g,radiance.b))<=0.0) continue;
+            ivec3 cell=ivec3(sourceWords[row],sourceWords[row+1],sourceWords[row+2]);
+            uint run=sourceWords[row+PLAGUE_LOCAL_RECORD_RUN];
+            int face=plagueLocalRunFace(run);
+            vec2 span=plagueLocalRunSpan(run);
+            vec3 lo,hi; plagueLocalUnpackBox(sourceWords[row+PLAGUE_LOCAL_RECORD_BOX],lo,hi);
+            hi[face<4?0:1]+=span.x-1.0;
+            hi[face<2?2:face<4?1:2]+=span.y-1.0;
+            vec3 relative=vec3(origin-cell),nearest=clamp(relative,lo,hi);
+            // View reach plus path reach plus the section's half-diagonal includes every source
+            // that can illuminate a visible glass receiver as the eye moves inside this section.
+            float radius=PLAGUE_GLASS_VIEW_REACH+PLAGUE_LOCAL_REACH+sqrt(3.0)*8.0;
+            if(length(relative-nearest)>radius) continue;
+            uint destination=atomicAdd(sources,1u);
+            cacheWords[PLAGUE_GLASS_CACHE_SOURCES+int(destination)]=index;
+        }
+    }
+    barrier();
+    if(lane==0u) {
+        cacheWords[0]=valid?PLAGUE_GLASS_CACHE_TAG:0u;
+        cacheWords[1]=changed;
+        cacheWords[2]=sources;
+        cacheWords[3]=uint(sectionWords.length());
+        if(changed!=0u) for(int axis=0;axis<3;++axis) cacheWords[4+axis]=uint(origin[axis]);
+        cacheWords[7]=count;
+        for(int word=0;word<3;++word) cacheWords[8+word]=valid?sourceWords[3+word]:0u;
+    }
+}

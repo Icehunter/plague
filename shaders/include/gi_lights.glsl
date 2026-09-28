@@ -95,10 +95,8 @@ struct PlagueGiPick {
     PlagueGiLight light;
     // Every candidate's share added up, which is what the one chosen ray stands in for.
     float weightSum;
-    // The same total, kept per channel. Only the RAY has to pick one light; the colour does not,
-    // and a colour that picks flickers between a red lamp and a white one from frame to frame for
-    // no reason. Adding every candidate's colour here costs nothing on top of the scan and leaves
-    // the shading steady, so the one thing left varying is the visibility the ray answers.
+    // Unshadowed RGB sum, used as the direct visibility estimator's per-channel denominator.
+    // A selected shadow ray must weight its own lamp's colour, not tint this whole sum.
     vec3 colourSum;
     bool valid;
 };

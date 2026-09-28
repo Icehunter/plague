@@ -60,7 +60,7 @@ void main() {
     if(abs(surfaceClass-0.5)>=0.125) material.subsurface=0.0;
     vec3 radiance;
     vec3 unshadowed;
-    float visibility;
+    vec3 visibility;
     if(plagueLocalLight(point,geometricNormal,normal,viewDir,material,albedo,jitterUV,radiance,
             unshadowed,visibility)) {
         fragColor=vec4(unshadowed,1.0);

@@ -14,6 +14,10 @@
 #define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Wave Motion" {0="Off" 1="Standard"}
 
 out vec4 v_Color;
+#if PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0
+out vec4 v_ForwardVanillaColor;
+out vec4 v_ForwardSkyColor;
+#endif
 // Tint WITHOUT the lightmap folded in: the deferred resolve applies lighting itself, so baking it
 // in here would light twice.
 out vec4 v_RawTint;
@@ -188,6 +192,12 @@ void main() {
     v_MotionPreviousClip = vec3(previousClipPosition.xy - u_PrevJitterOffset * previousClipPosition.w, previousClipPosition.w);
 
     v_Color      = _vert_color * texture(u_LightTex, plagueLightingTexCoord(_vert_tex_light_coord));
+#if PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0
+    v_ForwardVanillaColor = _vert_color * texture(u_LightTex, _vert_tex_light_coord);
+    // Centre of the vanilla 16x16 lightmap's zero-blocklight column. Used only when the
+    // fragment has a valid replacement, so missing voxel evidence cannot erase its lighting.
+    v_ForwardSkyColor = _vert_color * texture(u_LightTex, vec2(0.5 / 16.0, _vert_tex_light_coord.y));
+#endif
     v_RawTint    = _vert_color;
     v_WorldPos   = worldPosition;
     v_WaterBasePos = waterBasePosition;

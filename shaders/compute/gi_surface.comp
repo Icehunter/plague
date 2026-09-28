@@ -29,7 +29,7 @@ void main() {
     ivec2 size = imageSize(u_OutSurface);
     ivec2 cell = ivec2(gl_GlobalInvocationID.xy);
     if (cell.x >= size.x || cell.y >= size.y) return;
-    vec2 uv = plagueGiCellUv(vec2(cell), vec2(size));
+    vec2 uv = plagueGiDepthUv(plagueGiCellUv(vec2(cell), vec2(size)), textureSize(u_Depth, 0));
 
     float depth = texture(u_Depth, uv).r;
     vec4 packed = texture(u_GNormal, uv);
