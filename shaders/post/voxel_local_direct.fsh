@@ -4,6 +4,7 @@
 #moj_import <fornax_runtime:brdf.glsl>
 #moj_import <fornax_runtime:geometric_normal.glsl>
 #moj_import <fornax_runtime:local_light_mode.glsl>
+#define MICROFACET_NORMAL_MAP 1 //[0 1] compile "Microfacet Normal Mapping" {0="Off" 1="On"}
 
 uniform sampler2D u_GNormal; // builtin.gNormal
 uniform sampler2DArray u_ConsolidatedGbuf; // consolidated GBuffer: albedo/material/AO

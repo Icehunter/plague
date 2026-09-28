@@ -2,6 +2,7 @@
 #define PLAGUE_LOCAL_LIGHT_SOURCE
 #moj_import <fornax_runtime:voxel_local_layout.glsl>
 #moj_import <fornax_runtime:light_rect_flux.glsl>
+#moj_import <fornax_runtime:microfacet_normal_map.glsl>
 
 // Both visibility backends use these offers and the same complete inventory. A different
 // source cap or BRDF would shadow the direct RGB sum with an unrelated distribution.
@@ -155,6 +156,13 @@ bool plagueLocalSourceCandidate(int base,vec3 point,vec3 geometricNormal,vec3 no
     if(front>0.0) {
         if(dot(normal,dirRep)<=0.0) return false;
         PlagueBrdf brdf=plagueEvaluateBrdf(material,albedo,normal,viewDir,dirRep);
+        // Same fix as the sun uses (microfacet_normal_map.glsl). A bump leaning toward or
+        // away from THIS light changes its shine the same way it does for the sun.
+        // geometricNormal here is already the true surface normal the fix needs.
+#if MICROFACET_NORMAL_MAP != 0
+        brdf.specular=plagueEvaluateBrdfMicrofacetNormal(
+                material,albedo,geometricNormal,normal,viewDir,dirRep);
+#endif
         // Representative-point cosine floor bounds the area-light correction to 1000.
         float nDotL=max(dot(normal,dirRep),1e-3);
         offer=(brdf.diffuse*albedo*(1.0-transmission)+brdf.specular)*(front/nDotL);

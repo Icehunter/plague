@@ -11,6 +11,8 @@
 #moj_import <fornax_runtime:shadow_debug.glsl>
 #moj_import <fornax_runtime:atmo_debug_options.glsl>
 #moj_import <fornax_runtime:brdf.glsl>
+#moj_import <fornax_runtime:microfacet_normal_map.glsl>
+#define MICROFACET_NORMAL_MAP 1 //[0 1] compile "Microfacet Normal Mapping" {0="Off" 1="On"}
 #moj_import <fornax_runtime:env_brdf.glsl>
 #moj_import <fornax_runtime:atmosphere.glsl>
 #moj_import <fornax_runtime:sky.glsl>
@@ -733,6 +735,9 @@ int debugView = int(u_Param3 + 0.5);
     // write, so an unpopulated uniform would silently black out the whole frame with no error.
     vec3 n = normalSample.xyz;
     vec3 normal = dot(n, n) > 1e-6 ? normalize(n) : vec3(0.0, 1.0, 0.0);
+    // Falls back to the shading normal when no geometric normal was stored, which makes the
+    // two-facet model below treat the bump as flat (see microfacet_normal_map.glsl).
+    vec3 geomNormal = plagueDecodeGeometricNormal(normalSample.a, normal);
 
     vec3 s = u_SunDirection.xyz;
     vec3 sunDir = dot(s, s) > 1e-6 ? normalize(s) : normalize(vec3(0.3, 0.9, 0.2));
@@ -1078,6 +1083,14 @@ int debugView = int(u_Param3 + 0.5);
 #endif
 
     PlagueBrdf brdf = plagueEvaluateBrdf(mat, albedo, normal, viewDir, sunDir);
+#if MICROFACET_NORMAL_MAP != 0
+    // Changes only the sun's shine. A steep bump facing away from the sun stops sending back a
+    // highlight it could not really have, and one facing toward the sun gets extra shading from
+    // the groove's far side. The soft shading (diffuse) term is left alone.
+    vec3 microfacetSpecular = plagueEvaluateBrdfMicrofacetNormal(mat, albedo, geomNormal, normal,
+                                                                  viewDir, sunDir);
+    brdf.specular = microfacetSpecular;
+#endif
 
     // --- One labPBR surface response, shared by the diffuse and the reflection ---------------------
     //
