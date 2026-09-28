@@ -17,6 +17,10 @@
 uniform sampler2D u_SsrHalf; // ssrHalf: rgb = reflected colour, a = hit confidence, at half scale
 uniform sampler2D u_Depth; // builtin.depth (full res)
 uniform sampler2D u_GMaterial; // builtin.gMaterial: r = smoothness
+#define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "World Reflections" {0="Off" 1="On"}
+#if PLAGUE_VOXEL_REFLECTIONS != 0
+uniform sampler2D u_Input3; // appended input: voxelOpaqueReflection, traced at full resolution
+#endif
 
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
@@ -81,4 +85,13 @@ void main() {
     // weightSum is zero only when all four taps sit on a different surface (a thin silhouette);
     // taking the nearest-in-depth tap whole is blockier than bilinear but at least the right colour.
     fragColor = weightSum > 0.0 ? sum / weightSum : closest;
+#if PLAGUE_VOXEL_REFLECTIONS != 0
+    // The world answer joins here, at full resolution, so the half-res screen trace never
+    // resamples it. It fills in where the upsampled screen hit is weak; a == 0 is exactly the
+    // world value, a == 1 exactly the screen value, the same split ssr_blur makes on Epic.
+    vec4 world = texelFetch(u_Input3, ivec2(gl_FragCoord.xy), 0);
+    float screenConfidence = clamp(fragColor.a, 0.0, 1.0);
+    fragColor = vec4(mix(world.rgb, fragColor.rgb, screenConfidence),
+                     max(screenConfidence, world.a));
+#endif
 }

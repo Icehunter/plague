@@ -79,18 +79,17 @@ void main() {
     if (u_WaterState.x > 0.5) return;
 #ifdef PLAGUE_OPAQUE_REFLECTION
     ivec2 screenSize = textureSize(u_Input7, 0);
-    ivec2 coarseSize = ivec2(round(vec2(1.0) / u_PassTexelSize));
-    ivec2 coarseCell = ivec2(floor(texCoord * vec2(coarseSize)));
-    vec2 receiverUv = plagueOpaqueReceiverUv(coarseCell, coarseSize, screenSize);
+    // Traced at full resolution on both tiers, so each pixel is its own receiver. The screen
+    // trace (u_Input7) may be half resolution; it is only looked up at this pixel's UV.
+    vec2 receiverUv = texCoord;
     float depth = texture(u_Input1,receiverUv).r;
     vec4 packedNormal = texture(u_GNormal,receiverUv);
     // The cutoff is shared with ssr_trace/ssr_blur; below it the receiver never consumes a ray.
     if (depth<=0.0 || texture(u_GMaterial,receiverUv).r<0.1
             || dot(packedNormal.xyz,packedNormal.xyz)<1e-6) return;
-    // A coarse screen hit is already a shaded answer for this same receiver. Keep its
-    // confidence; tracing it again or scanning its entire footprint spent several extra ms.
-    vec4 screen = texelFetch(u_Input7, ivec2(receiverUv * vec2(screenSize)), 0);
-    if (screen.a > 0.0) { fragColor = screen; return; }
+    // Every receiver is traced, so this target holds the world answer alone. A screen hit is
+    // not copied in: it flips between hit and miss across jitter steps, and the merge downstream
+    // would then flip between two answers. The merge picks by screen confidence.
     vec3 normal = normalize(packedNormal.xyz);
     vec3 receiverNormal = plagueDecodeGeometricNormal(packedNormal.a,normal);
 #else
@@ -104,36 +103,29 @@ void main() {
 #endif
     vec4 h = u_InvProjModelView*vec4(receiverUv*2.0-1.0,depth,1.0);
     vec3 origin = h.xyz/h.w;
-    vec3 rayDirection = reflect(normalize(origin),normal);
 #ifdef PLAGUE_OPAQUE_REFLECTION
-    // Match SSR's opaque geometric hemisphere, including offscreen receivers. A blocked
-    // direction carries a black answer rather than requesting an environment replacement.
-    if (dot(rayDirection,receiverNormal)<=0.0) {
-        fragColor=vec4(0.0,0.0,0.0,1.0);
-        return;
+    // Schuessler et al., Microfacet-based Normal Mapping for Robust Monte Carlo Path Tracing (2017)
+    vec3 wo = -normalize(origin);
+    vec3 wp = normal;
+    vec3 wg = receiverNormal;
+    vec3 r;
+    if (dot(wp,wg) < 0.9999) {
+        vec3 wt = -normalize(wp - dot(wp,wg)*wg);
+        if (dot(wo,wp) > 1e-4) {
+            r = reflect(normalize(origin), wp);
+            if (dot(r,wg) <= 0.0) r = reflect(r, wt);
+            if (dot(r,wg) <= 0.0) r = reflect(r, wp);
+        } else {
+            r = reflect(normalize(origin), wt);
+            if (dot(r,wg) <= 0.0) r = reflect(r, wp);
+        }
+    } else {
+        r = reflect(normalize(origin), wp);
     }
-#endif
-    vec3 point,faceNormal,local; uint colour; int entry;
-    float state = plagueVoxelTraceMaterial(origin+receiverNormal*PLAGUE_COVERAGE_EPSILON,
-            rayDirection,point,faceNormal,colour,entry,local);
-#if PLAGUE_VOXEL_PROFILE_STAGE == 1
-    // Consume the trace outputs so a prefix draw retains the work its later stages would use.
-    // Integer scales come from the uint32 colour word and the low uint16 entry lane.
-    fragColor = vec4(point + faceNormal + local,
-            state + float(entry & 65535)/65535.0 + float(colour)/4294967295.0);
-    return;
-#endif
-    if (state!=1.0) return;
-    PlagueVoxelSurface surface;
-    if (!plagueVoxelSurfaceAt(point,faceNormal,colour,entry,local,surface)) return;
-#if PLAGUE_VOXEL_PROFILE_STAGE == 2
-    // This is an observable sink, not a colour approximation. It keeps decoded fields live.
-    fragColor = vec4(surface.position + surface.normal + surface.geometricNormal + surface.albedo
-            + vec3(surface.light,surface.ao), surface.emission + surface.material.alpha
-            + surface.material.f0 + surface.material.porosity + surface.material.subsurface
-            + float(surface.material.conductor) + surface.material.metalness
-            + float(surface.material.namedMetal) + float(surface.material.metalIndex));
-    return;
+    if (dot(r,wg) < 1e-3) r = normalize(r + wg*(1e-3 - dot(r,wg)));
+    vec3 rayDirection = r;
+#else
+    vec3 rayDirection = reflect(normalize(origin),normal);
 #endif
     float rain = clamp(u_SkyState.x,0.0,1.0);
     PlagueCustomPalette palette = PlagueCustomPalette(
@@ -168,24 +160,86 @@ void main() {
 #endif
     PlagueSurfaceLighting colours = plagueSurfaceLighting(lighting,skyColours,sunDir,sunDirTrue,
             rain,atmColorMult,u_SunDirection.w,u_CameraAbs.y,vec3(1));
-    vec3 specularAlbedo;
-    vec3 viewDir = normalize(origin-point);
-    vec3 radiance = plagueVoxelSurfaceDirect(surface,viewDir,sunDir,lighting,colours,specularAlbedo);
-#if PLAGUE_VOXEL_PROFILE_STAGE == 3
-    fragColor = vec4(radiance + specularAlbedo,1.0);
-    return;
-#endif
     // Not the eye-to-water air. A wider voxel window must never push the engine's border out.
     float renderDistance = u_Param2 > 1.0 ? u_Param2 : max(u_RenderFog.y,32.0);
-    if (any(greaterThan(specularAlbedo,vec3(0)))) {
-        vec3 reflected = plagueVoxelSurfaceReflection(surface,viewDir,sunDir,sunDirTrue,
-                skyColours,lighting,colours,atmColorMult,renderDistance);
-        float specularAO = plagueSpecularOcclusion(surface.ao,clamp(dot(surface.normal,viewDir),0.0,1.0),
-                sqrt(clamp(surface.material.alpha,0.0,1.0)));
-        radiance += reflected*specularAlbedo*specularAO;
+
+    vec3 traceOrigin = origin+receiverNormal*PLAGUE_COVERAGE_EPSILON;
+    vec3 throughput = vec3(1.0);
+    vec3 radiance = vec3(0.0);
+    int glassEntry = -1;
+    // Up to three see-through blocks, then a solid hit or the sky.
+    for (int layer = 0; layer < 4; ++layer) {
+        vec3 point,faceNormal,local; uint colour; int entry;
+        float state = plagueVoxelTraceMaterial(traceOrigin,rayDirection,point,faceNormal,colour,entry,local);
+#if PLAGUE_VOXEL_PROFILE_STAGE == 1
+        // Consume the trace outputs so a prefix draw retains the work its later stages would use.
+        // Integer scales come from the uint32 colour word and the low uint16 entry lane.
+        fragColor = vec4(point + faceNormal + local,
+                state + float(entry & 65535)/65535.0 + float(colour)/4294967295.0);
+        return;
+#endif
+        if (state!=1.0) {
+            if (layer==0) return;
+            // Past glass the grid ran out clear: the same sky or ground the secondary bounce uses.
+            if (state==5.0) {
+                radiance += throughput*(rayDirection.y >= 0.0
+                        ? plagueAtmoSkyView(rayDirection,sunDirTrue,plagueAtmoCameraRadius()).rgb
+                                *atmColorMult*colours.skyReflectionLift
+                        : PLAGUE_ENV_GROUND*colours.ambientColour);
+            }
+            break;
+        }
+        PlagueVoxelSurface surface;
+        if (!plagueVoxelSurfaceAt(point,faceNormal,colour,entry,local,surface)) {
+            if (layer==0) return;
+            break;
+        }
+#if PLAGUE_VOXEL_PROFILE_STAGE == 2
+        // This is an observable sink, not a colour approximation. It keeps decoded fields live.
+        fragColor = vec4(surface.position + surface.normal + surface.geometricNormal + surface.albedo
+                + vec3(surface.light,surface.ao), surface.emission + surface.material.alpha
+                + surface.material.f0 + surface.material.porosity + surface.material.subsurface
+                + float(surface.material.conductor) + surface.material.metalness
+                + float(surface.material.namedMetal) + float(surface.material.metalIndex));
+        return;
+#endif
+        vec3 specularAlbedo;
+        vec3 viewDir = normalize(origin-point);
+        vec3 shaded = plagueVoxelSurfaceDirect(surface,viewDir,sunDir,lighting,colours,specularAlbedo);
+#if PLAGUE_VOXEL_PROFILE_STAGE == 3
+        fragColor = vec4(shaded + specularAlbedo,1.0);
+        return;
+#endif
+        if (any(greaterThan(specularAlbedo,vec3(0)))) {
+            vec3 reflected = plagueVoxelSurfaceReflection(surface,viewDir,sunDir,sunDirTrue,
+                    skyColours,lighting,colours,atmColorMult,renderDistance);
+            float specularAO = plagueSpecularOcclusion(surface.ao,clamp(dot(surface.normal,viewDir),0.0,1.0),
+                    sqrt(clamp(surface.material.alpha,0.0,1.0)));
+            shaded += reflected*specularAlbedo*specularAO;
+        }
+        shaded = plagueVoxelReflectionFog(shaded,origin,point,surface.light.y,
+                lighting,atmColorMult,sunDirTrue,renderDistance);
+        float a = clamp(surface.coverage,0.0,1.0);
+        // 0.99: an 8-bit atlas alpha of 255 is solid; anything lower is a see-through texel.
+        // Cutout and cross entries already passed their own alpha test in the trace.
+        bool cutoutEntry = (texelFetch(u_VoxelPalette,entry*16).r & 0xc0000000u) != 0u;
+        if (a >= 0.99 || cutoutEntry) { radiance += throughput*shaded; break; }
+        // The main view blends glass over what is behind it; the reflection does the same.
+        // The same entry again is a joined pane with no face drawn between, so no second blend.
+        if (entry != glassEntry) {
+            radiance += throughput*a*shaded;
+            throughput *= 1.0-a;
+        }
+        glassEntry = entry;
+        // Leave this cell along the ray; local is the hit point inside the unit cell.
+        float exitDistance = 1e30;
+        for (int k = 0; k < 3; ++k) {
+            if (abs(rayDirection[k]) < 1e-6) continue;
+            exitDistance = min(exitDistance,
+                    ((rayDirection[k] > 0.0 ? 1.0 : 0.0) - local[k])/rayDirection[k]);
+        }
+        traceOrigin = point + rayDirection*(max(exitDistance,0.0) + PLAGUE_COVERAGE_EPSILON);
     }
-    radiance = plagueVoxelReflectionFog(radiance,origin,point,surface.light.y,
-            lighting,atmColorMult,sunDirTrue,renderDistance);
     fragColor = vec4(radiance,1.0);
 #endif
 }

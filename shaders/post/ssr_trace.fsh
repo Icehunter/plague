@@ -20,15 +20,12 @@
 
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:geometric_normal.glsl>
-// For plagueUntonemapApprox: sceneHistory is display-referred and everything downstream of this
-// pass is scene-referred linear HDR. One shared inverse, not a second hand-maintained copy.
-#moj_import <fornax_runtime:tonemap.glsl>
 
 uniform sampler2D u_GNormal; // builtin.gNormal
 uniform sampler2D u_Depth; // builtin.depth
 uniform sampler2D u_GMaterial; // builtin.gMaterial: r = smoothness, g = F0, b = porosity/SSS
 uniform sampler2D u_GMotion; // builtin.gMotion: reprojects the hit into last frame
-uniform sampler2D u_SceneHistory_history; // sceneHistory.history: last frame's finished image
+uniform sampler2D u_SceneHdrComposited_history; // last frame's linear HDR scene, before glass is drawn
 uniform sampler2D u_Hiz; // hiz: full mip chain, read with explicit levels
 // Appended last: positional inputs, append never insert. Both arms, ssr_trace_fancy and
 // ssr_trace_fast, share this one file.
@@ -108,10 +105,31 @@ void main() {
 
     vec3 origin = worldPosAt(texCoord, depth);
     vec3 viewDir = normalize(origin); // the camera sits at the origin in camera-relative space
+    vec3 geometricNormal = plagueDecodeGeometricNormal(packedNormal.a, normal);
 
-    // Mirror direction, jittered inside a hard ~4 degree cap (see the header). alphaR is the usual
-    // perceptual-roughness square, used only to widen the cap toward the rough end.
-    vec3 mirror = reflect(viewDir, normal);
+    // Mirror direction: the bump normal's reflection folded back above the geometric horizon
+    // instead of rejected, the same walk the world reflection pass uses (Schuessler, Heitz,
+    // Hanika and Dachsbacher, Microfacet-based Normal Mapping for Robust Monte Carlo Path
+    // Tracing, 2017), then jittered inside a hard ~4 degree cap (see the header). alphaR is the
+    // usual perceptual-roughness square, used only to widen the cap toward the rough end.
+    vec3 wp = normal;
+    vec3 wg = geometricNormal;
+    vec3 mirror;
+    if (dot(wp, wg) < 0.9999) {
+        vec3 wt = -normalize(wp - dot(wp, wg) * wg);
+        if (dot(-viewDir, wp) > 1e-4) {
+            mirror = reflect(viewDir, wp);
+            if (dot(mirror, wg) <= 0.0) mirror = reflect(mirror, wt);
+            if (dot(mirror, wg) <= 0.0) mirror = reflect(mirror, wp);
+        } else {
+            mirror = reflect(viewDir, wt);
+            if (dot(mirror, wg) <= 0.0) mirror = reflect(mirror, wp);
+        }
+    } else {
+        mirror = reflect(viewDir, wp);
+    }
+    if (dot(mirror, wg) < 1e-3) mirror = normalize(mirror + wg * (1e-3 - dot(mirror, wg)));
+
     vec2 xi = rayJitter(gl_FragCoord.xy);
     float alphaR = (1.0 - smoothness) * (1.0 - smoothness);
     vec3 up = abs(mirror.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
@@ -122,12 +140,10 @@ void main() {
     float phi = xi.y * 6.2831853;
     vec3 rayDir = normalize(t * (sinTheta * cos(phi)) + b * (sinTheta * sin(phi)) + mirror * cosTheta);
 
-    // A bump cannot reflect through its opaque supporting face. This is known occlusion,
-    // not a missing screen hit: black confidence prevents sky/world recovery behind the face.
-    vec3 geometricNormal = plagueDecodeGeometricNormal(packedNormal.a, normal);
-    if (dot(rayDir, geometricNormal) <= 0.0) {
-        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
+    // The jitter cone can tip an already-at-the-horizon mirror back below the geometric plane by
+    // up to that same cap; nudge it back up rather than rejecting the pixel outright.
+    if (dot(rayDir, geometricNormal) < 1e-3) {
+        rayDir = normalize(rayDir + geometricNormal * (1e-3 - dot(rayDir, geometricNormal)));
     }
 
     // --- The player's own reflection, opaque consumer -----------------------------------------
@@ -344,14 +360,9 @@ void main() {
         return;
     }
 
-    // Colour comes from last frame's finished image, reprojected: this frame's scene colour isn't
-    // available yet (the resolve that produces it consumes this pass's output).
+    // Colour comes from last frame's scene, reprojected: this frame's scene colour isn't available
+    // yet (the resolve that produces it consumes this pass's output).
     vec2 historyUv = hit.xy - texture(u_GMotion, hit.xy).rg;
-#if FX_UPSCALE != 0
-    // Upscalers store reconstructed, unjittered scene history. Motion excludes jitter, while
-    // hit.xy still contains this frame's NDC jitter; the NDC-to-UV conversion contributes 1/2.
-    historyUv -= 0.5 * u_JitterOffset;
-#endif
     if (historyUv.x < 0.0 || historyUv.x > 1.0 || historyUv.y < 0.0 || historyUv.y > 1.0) {
         if (mirrorHit) {
             fragColor = vec4(mirrorColour, mirrorConfidence);
@@ -360,15 +371,10 @@ void main() {
         fragColor = vec4(0.0);
         return;
     }
-    // sceneHistory is display-referred (exposed, tonemapped, graded); everything downstream here is
-    // linear scene-referred, so it must be untonemapped or reflections get tonemapped twice.
-    // plagueUntonemapApprox is the same inverse the forward-fog composite uses — a bare
-    // `pow(x, 2.2)` was tried first and is wrong by an exposure-dependent factor (~2.75x too bright
-    // at u_Exposure 1.65); tools/verify_ssr.py pins the round-trip error and rejects that regression.
-    // Still approximate: the operator's luminance-coupled extras have no closed-form inverse, so
-    // reflections of very bright sources come back slightly dimmer than the thing they reflect.
-    vec3 displayColor = texture(u_SceneHistory_history, historyUv).rgb;
-    vec3 color = plagueUntonemapApprox(displayColor);
+    // The scene before glass and other translucent blocks are drawn. The finished image has glass
+    // over whatever is behind it, and a reflected ray that never crossed that glass must not take
+    // its colour. The world trace adds glass only where the reflected ray crosses it.
+    vec3 color = texture(u_SceneHdrComposited_history, historyUv).rgb;
 
     // Confidence: the edge ramp is steep and late so reflections stay full strength across most of
     // the frame; the length term fades out the least reliable, longest rays.

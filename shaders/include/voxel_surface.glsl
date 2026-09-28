@@ -31,6 +31,7 @@ struct PlagueVoxelSurface {
     vec2 light;
     float ao;
     float emission;
+    float coverage; // texel alpha: below 1 on glass, which the main view blends over what is behind
     PlagueMaterial material;
 };
 
@@ -40,6 +41,7 @@ bool plagueVoxelSurfaceAt(vec3 point, vec3 faceNormal, uint colour, int entry, v
     surface.normal = faceNormal;
     surface.geometricNormal = faceNormal;
     surface.ao = 1.0;
+    surface.coverage = 1.0;
     vec4 material = vec4(0,0,0,1); // what the engine sends with no material map; alpha 255 means nobody wrote it
     uint flags = texelFetch(u_VoxelPalette,entry*16).r;
     // Low four bits count boxes, bit31 marks crossed planes. Test only those: the cutout and
@@ -50,6 +52,7 @@ bool plagueVoxelSurfaceAt(vec3 point, vec3 faceNormal, uint colour, int entry, v
     vec2 uv; vec3 tintColour,tangent,bitangent;
     if (plagueVoxelFaceMapping(entry,local,faceNormal,uv,tintColour,tangent,bitangent)) {
         vec4 texel = textureLod(u_Input9,uv,0.0);
+        surface.coverage = texel.a;
         // Same tint multiply as terrain.fsh, in linear space. On encoded RGB it shifts leaf hue.
         surface.albedo = plagueSrgbToLinear(texel.rgb) * plagueSrgbToLinear(tintColour);
         material = textureLod(u_MaterialAtlas,uv,0.0);
@@ -160,27 +163,62 @@ vec3 plagueVoxelSurfaceReflection(PlagueVoxelSurface surface, vec3 viewDir, vec3
         float phi = 2.0*PLAGUE_PI*v;
         vec3 halfway = tangent*(sine*cos(phi)) + bitangent*(sine*sin(phi)) + surface.normal*cosine;
         vec3 direction = reflect(-viewDir,halfway);
-        float w = max(dot(surface.normal,direction),0.0);
+        // Weighted against the flat face, not the bump tilt: a corrugation ridge can slope up to
+        // several tens of degrees, and gating on that normal instead of the geometric one zeroes
+        // every one of the 4 samples at once on a steep facet, returning flat black for the whole
+        // secondary bounce (metals have no diffuse term to fall back on).
+        float w = max(dot(surface.geometricNormal,direction),0.0);
         if (w<=0.0) continue;
         vec3 point,normal,local; uint colour; int entry;
         float state = plagueVoxelTraceMaterial(surface.position+surface.geometricNormal*PLAGUE_COVERAGE_EPSILON,
                 direction,point,normal,colour,entry,local);
         vec3 incoming = vec3(0);
+        bool answered = false;
         if (state==1.0) {
             PlagueVoxelSurface secondary;
             if (plagueVoxelSurfaceAt(point,normal,colour,entry,local,secondary)) {
                 vec3 unused;
                 incoming = plagueVoxelSurfaceDirect(secondary,-direction,sunDir,lighting,colours,unused);
+                // A metal secondary hit outside the sun's highlight has no diffuse term, so the call
+                // above returns zero for it. A floor, not an add: a lit hit keeps its own value and
+                // contrast, and only a hit darker than ambient light is lifted to it.
+                incoming = max(incoming, colours.ambientColour);
                 incoming = plagueVoxelReflectionFog(incoming,surface.position,point,secondary.light.y,
                         lighting,atmColorMult,sunDirTrue,renderDistance);
+                answered = true;
             }
         } else if (state==5.0) {
             // Clear as far as the grid goes, no further. Waiting or bad data cannot open sky.
-            incoming = plagueAtmoSkyView(direction,sunDirTrue,plagueAtmoCameraRadius()).rgb;
-            incoming *= atmColorMult*colours.skyReflectionLift;
+            // A direction below the horizon exits toward the ground the grid does not reach, not
+            // toward open air: the sky LUT models atmosphere, not terrain, and reads near-black
+            // for a query that far below it. plagueVoxelSurfaceDirect's own wideEnclosure term
+            // uses this same ground estimate, tinted by the receiver's own ambient light instead
+            // of an untinted flat colour.
+            if (direction.y >= 0.0) {
+                incoming = plagueAtmoSkyView(direction,sunDirTrue,plagueAtmoCameraRadius()).rgb
+                        *atmColorMult*colours.skyReflectionLift;
+            } else {
+                incoming = PLAGUE_ENV_GROUND*colours.ambientColour;
+            }
+            answered = true;
         }
+        // A pending section, bad data, or a hit plagueVoxelSurfaceAt could not decode (states 3,
+        // 4, 6, or a state-1 decode failure) is unanswered, not a measured zero. Folding it into
+        // the average at full weight silently drags a real answer toward black; skip it instead,
+        // the same as a sample the geometric gate above already rejected.
+        if (!answered) continue;
         sum += incoming*w; weight += w;
     }
-    return weight>0.0 ? sum/weight : vec3(0);
+    if (weight>0.0) return sum/weight;
+    // Every one of the 4 samples fell below the flat face at once (a true grazing facet, rare
+    // with the weight gated on the flat face rather than the bump tilt): the same miss estimate the
+    // loop above uses for state 5 (sky above the horizon, the tinted ground estimate below it),
+    // instead of a black hole with no reflection at all.
+    vec3 geometricMirror = reflect(-viewDir,surface.geometricNormal);
+    if (geometricMirror.y >= 0.0) {
+        return plagueAtmoSkyView(geometricMirror,sunDirTrue,plagueAtmoCameraRadius()).rgb
+                *atmColorMult*colours.skyReflectionLift;
+    }
+    return PLAGUE_ENV_GROUND*colours.ambientColour;
 }
 #endif

@@ -74,9 +74,11 @@ vec4 expandRange(vec4 c) {
 
 vec4 plagueOpaqueRaw(vec2 uv) {
     vec4 screen = texture(u_Input0, uv);
-#if PLAGUE_VOXEL_REFLECTIONS != 0
+#if PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_QUALITY == 2
     // Preserve every screen hit byte-for-byte. Only the trace's zero-confidence miss may use
     // world geometry, before roughness filtering so recovery never paints a sharp rough metal.
+    // High merges the world answer after ssr_upsample instead: blending the full-resolution
+    // world trace in here would resample it at this pass's half resolution.
     if (screen.a <= 0.0) return texture(u_Input6, uv);
 #endif
     return screen;

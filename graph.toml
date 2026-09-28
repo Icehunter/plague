@@ -652,33 +652,15 @@ scale = 0.5
 filter = "linear"
 enabled_if = "SSR_QUALITY == 1"
 
-# Same resolution as the corresponding SSR rays. The blur binds these even with World
-# Reflections off, but that compile arm never samples their unwritten contents.
+# Full resolution on both tiers: one voxel-traced ray per pixel. At half resolution the trace
+# samples a fine bump pattern (corrugated metal) at half density, which aliases into vertical bars
+# and softens the surface; no upsample can rebuild what was never sampled. High keeps its screen
+# trace at half resolution and merges this after ssr_upsample instead. The blur binds it even
+# with World Reflections off, but that compile arm never samples its unwritten contents.
 [targets.voxelOpaqueReflection]
 format = "rgba16f"
 scale = 1.0
-enabled_if = "SSR_QUALITY == 2"
-
-[targets.voxelOpaqueReflectionHalf]
-format = "rgba16f"
-scale = 0.5
-filter = "linear"
-enabled_if = "SSR_QUALITY == 1"
-
-# Full-resolution recovery measured 29 to 66 ms in native one-light fixtures at 3456x2234.
-# Eighth-linear sampling spends 1/64 as many world rays; a separate conservative reconstruction
-# preserves receiver boundaries before the existing roughness filter. This is scene-dependent cost.
-[targets.voxelOpaqueRaw]
-format = "rgba16f"
-scale = 0.125
-filter = "linear"
-enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_QUALITY == 2"
-
-[targets.voxelOpaqueRawFast]
-format = "rgba16f"
-scale = 0.0625
-filter = "linear"
-enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_QUALITY == 1"
+enabled_if = "SSR_QUALITY != 0"
 
 # Fast's temporal accumulation buffer. The history lives at HALF res, not full: accumulating at full
 # res would mean running the blur at full res, which is the 1.84 ms this tier exists to avoid.
@@ -776,7 +758,7 @@ shader = "shaders/post/ssr_trace.fsh"
 enabled_if = "SSR_QUALITY == 2"
 # mirrorHdr/builtin.mirrorDepth appended, then mirrorXHdr/builtin.mirrorXDepth/mirrorZHdr/
 # builtin.mirrorZDepth appended again: positional inputs, append never insert.
-inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHistory.history", "hiz",
+inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHdrComposited.history", "hiz",
           "mirrorHdr", "builtin.mirrorDepth",
           "mirrorXHdr", "builtin.mirrorXDepth", "mirrorZHdr", "builtin.mirrorZDepth"]
 outputs = ["ssrRaw"]
@@ -789,7 +771,7 @@ type = "fullscreen"
 shader = "shaders/post/ssr_trace.fsh"
 enabled_if = "SSR_QUALITY == 1"
 # Same appended tail as ssr_trace_fancy above: positional inputs, append never insert.
-inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHistory.history", "hiz",
+inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHdrComposited.history", "hiz",
           "mirrorHdr", "builtin.mirrorDepth",
           "mirrorXHdr", "builtin.mirrorXDepth", "mirrorZHdr", "builtin.mirrorZDepth"]
 outputs = ["ssrRawHalf"]
@@ -807,7 +789,7 @@ inputs = ["builtin.gNormal", "builtin.depth", "builtin.depth",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
           "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance",
           "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw", "builtin.gMaterial"]
-outputs = ["voxelOpaqueRaw"]
+outputs = ["voxelOpaqueReflection"]
 
 [[pass]]
 name = "resolve_hdr_opaque_reflection_fast"
@@ -820,23 +802,7 @@ inputs = ["builtin.gNormal", "builtin.depth", "builtin.depth",
           "voxelLightmap", "builtin.normalAtlas", "builtin.materialAtlas",
           "atmoTransmittance", "atmoMultiScatter", "atmoSkyView", "voxelLocalRadiance",
           "sunShadowMapRaw", "rtTerrainShadowDepth", "sunEntityShadowMapRaw", "builtin.gMaterial"]
-outputs = ["voxelOpaqueRawFast"]
-
-[[pass]]
-name = "opaque_reflection_upsample"
-type = "fullscreen"
-shader = "shaders/post/voxel_opaque_upsample.fsh"
-enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_QUALITY == 2"
-inputs = ["voxelOpaqueRaw", "builtin.depth", "builtin.gNormal", "builtin.gMaterial", "ssrRaw"]
 outputs = ["voxelOpaqueReflection"]
-
-[[pass]]
-name = "opaque_reflection_upsample_fast"
-type = "fullscreen"
-shader = "shaders/post/voxel_opaque_upsample.fsh"
-enabled_if = "PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_QUALITY == 1"
-inputs = ["voxelOpaqueRawFast", "builtin.depth", "builtin.gNormal", "builtin.gMaterial", "ssrRawHalf"]
-outputs = ["voxelOpaqueReflectionHalf"]
 
 # Not renamed to `ssr_blur_fancy`: unlike the traces (engine-dictated names), this name is free, but
 # renaming would invalidate profiler comparisons made against it.
@@ -855,7 +821,7 @@ name = "ssr_blur_fast"
 type = "fullscreen"
 shader = "shaders/post/ssr_blur.fsh"
 enabled_if = "SSR_QUALITY == 1"
-inputs = ["ssrRawHalf", "ssrHalf.history", "builtin.gMotion", "builtin.depth", "builtin.gMaterial", "builtin.gNormal", "voxelOpaqueReflectionHalf"]
+inputs = ["ssrRawHalf", "ssrHalf.history", "builtin.gMotion", "builtin.depth", "builtin.gMaterial", "builtin.gNormal", "voxelOpaqueReflection"]
 outputs = ["ssrHalf"]
 
 [[pass]]
@@ -863,7 +829,7 @@ name = "ssr_upsample"
 type = "fullscreen"
 shader = "shaders/post/ssr_upsample.fsh"
 enabled_if = "SSR_QUALITY == 1"
-inputs = ["ssrHalf", "builtin.depth", "builtin.gMaterial"]
+inputs = ["ssrHalf", "builtin.depth", "builtin.gMaterial", "voxelOpaqueReflection"]
 outputs = ["ssr"]
 
 # Must be LAST in the reflection chain: seeds from `ssr`, which both tiers finish writing above.
@@ -1529,6 +1495,8 @@ enabled_if = "SSR_WATER_MODE > 0"
 [targets.sceneHdrComposited]
 format = "rgba16f"
 scale = 1.0
+# The opaque screen trace reads last frame's copy: linear HDR, before glass is drawn over it.
+history = true
 
 # --- Clouds -----------------------------------------------------------------------------------
 # HDR, before the tonemap, not display-space after it: a sunlit cloud top exceeds 1.0, and clipping
