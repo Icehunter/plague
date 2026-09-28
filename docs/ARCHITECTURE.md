@@ -675,6 +675,19 @@ normal in `gNormal.a`, encoded for the target's actual SNORM16 format; exact axi
 cube faces. Normal maps affect the BRDF, not which side the shadow ray starts on. Geometry stages
 without this payload use their shading normal as a fallback.
 
+The sun's highlight, and a local light's own highlight (torches, lamps and other block light, in
+`shaders/include/voxel_local_light.glsl`), can also compare that geometric normal to the bumped
+normal, through `shaders/include/microfacet_normal_map.glsl`. A steep bump is treated as one side of
+a small V-shaped groove whose average slope matches the true surface. The code checks both the side
+the bump map gives and the unseen far side of the groove, so a bump facing away from a light stops
+sending back a highlight it could not really have, and one facing toward the light picks up extra
+shading from that far side. Method from Schussler, Heitz, Hanika, Dachsbacher, "Microfacet-based
+Normal Mapping for Robust Monte Carlo Path Tracing", ACM Transactions on Graphics 36(6), 2017. If no
+geometric normal is stored, the groove flattens to one side and the result matches the plain,
+single-sided highlight. Reflections (`voxel_surface.glsl` and the `voxel_water_reflection*`/
+`voxel_opaque_reflection.fsh` passes) do not use this option yet and always show that plain,
+single-sided highlight.
+
 Grass and foliage use actual visible points rather than a cube-face receiver cache. Known thin
 cutouts with labPBR subsurface response split diffuse energy between reflection and transmission,
 up to half in each hemisphere. This is an authored thin-sheet approximation, not volume scattering;

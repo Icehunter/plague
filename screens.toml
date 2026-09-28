@@ -677,6 +677,7 @@ elements = [
 title = "Materials"
 elements = [
     "u_BumpStrength",
+    "MICROFACET_NORMAL_MAP",
     "u_AOStrength",
     "u_AuthoredEmission",
     "PLAGUE_GLASS_REFRACTION",
@@ -2457,6 +2458,14 @@ How strongly light picks out the bumps in textures: brick edges, wood grain, sto
 
 At 0 every surface is lit as if it were perfectly flat. Needs a resource pack with normal maps to \
 do anything."""
+
+MICROFACET_NORMAL_MAP = """
+Makes bumps in textures block their own shine the way a real bumpy surface would, for sunlight and \
+for torches, lamps and other block light.
+
+Off treats every bump as a small flat mirror, which can throw back a shine even from a side facing \
+away from the light. On, a steep bump facing away loses that shine, and one facing toward the light \
+gets a little extra shading from the bump next to it."""
 
 u_SsaoStrength = """
 How dark the corner shading gets.

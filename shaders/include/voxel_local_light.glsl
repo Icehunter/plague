@@ -17,6 +17,7 @@ const int PLAGUE_LOCAL_RAY_CEILING = 48;
 #moj_import <fornax_runtime:voxel_local_layout.glsl>
 #moj_import <fornax_runtime:voxel_visibility.glsl>
 #moj_import <fornax_runtime:light_rect_flux.glsl>
+#moj_import <fornax_runtime:microfacet_normal_map.glsl>
 #ifdef PLAGUE_VOXEL_ENTITY_OCCLUDERS
 #moj_import <fornax_runtime:entity_occluders.glsl>
 #endif
@@ -250,6 +251,13 @@ bool plagueLocalLight(vec3 point,vec3 geometricNormal,vec3 normal,vec3 viewDir,
                 offer=albedo*((1.0-transmission)*front/PLAGUE_PI);
 #else
                 PlagueBrdf brdf=plagueEvaluateBrdf(material,albedo,normal,viewDir,dirRep);
+                // Same fix as the sun uses (microfacet_normal_map.glsl). A bump leaning toward or
+                // away from THIS light changes its shine the same way it does for the sun.
+                // geometricNormal here is already the true surface normal the fix needs.
+#if MICROFACET_NORMAL_MAP != 0
+                brdf.specular=plagueEvaluateBrdfMicrofacetNormal(
+                        material,albedo,geometricNormal,normal,viewDir,dirRep);
+#endif
                 float nDotL=max(dot(normal,dirRep),1e-3);
                 offer=(brdf.diffuse*albedo*(1.0-transmission)+brdf.specular)*(front/nDotL);
 #endif
