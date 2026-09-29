@@ -1,0 +1,11 @@
+#version 450
+#moj_import <fornax_runtime:glass_photons.glsl>
+// Same dispatch granularity as the existing photon index; one invocation owns one head.
+layout(local_size_x=256,local_size_y=1,local_size_z=1) in;
+// Retains graphics-stream ordering with the photon producer and GI consumer.
+layout(set=0,binding=0) uniform sampler2D u_Depth;
+layout(std430,set=0,binding=1) writeonly buffer GlassGiHeads { uint headWords[]; };
+void main() {
+    uint index=gl_GlobalInvocationID.x;
+    if(index<PLAGUE_GLASS_HASH_SIZE) headWords[index]=0u;
+}

@@ -1,3 +1,4 @@
+#moj_import <fornax_runtime:voxel_palette_layout.glsl>
 #ifndef PLAGUE_GLASS_SCENE
 #define PLAGUE_GLASS_SCENE
 #moj_import <fornax_runtime:glass_optics.glsl>
@@ -12,6 +13,7 @@ uint plagueGlassFaceWord(int word);
 vec4 plagueGlassAlbedo(vec2 uv);
 vec4 plagueGlassMaterial(vec2 uv);
 bool plagueGlassBuffersValid();
+int plagueGlassPaletteCapacity();
 
 struct PlagueGlassMedium { bool glass; float ior; vec3 absorption; float roughness; };
 struct PlagueGlassHit {
@@ -71,7 +73,7 @@ int plagueGlassCell(ivec3 cell) {
     int index = (local.y << 8) | (local.z << 4) | local.x;
     if ((plagueGlassOccupancyWord(slot*128+(index>>5)) & (1u << uint(index&31))) == 0u) return -1;
     int entry = int((plagueGlassPayloadWord(slot*1024+(index>>2)) >> uint((index&3)*8)) & 255u);
-    return entry < 96 ? slot*96 + entry : -2;
+    return entry < plagueGlassPaletteCapacity() ? slot*plagueGlassPaletteCapacity() + entry : -2;
 }
 void plagueGlassBox(int entry, int box, out vec3 lo, out vec3 hi) {
     int count = int(plagueGlassPaletteWord(entry*16) & 15u);

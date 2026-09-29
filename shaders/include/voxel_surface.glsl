@@ -35,6 +35,35 @@ struct PlagueVoxelSurface {
     PlagueMaterial material;
 };
 
+bool plagueVoxelSurfaceMapping(int entry, uint flags, vec3 local, vec3 normal,
+        out vec2 uv, out vec3 tint, out vec3 tangent, out vec3 bitangent) {
+    uv=vec2(0); tint=vec3(1); tangent=vec3(0); bitangent=vec3(0);
+    vec3 lo=vec3(0), hi=vec3(1);
+    int boxes=int(flags & 15u);
+    bool crossed=(flags & 0x80000000u)!=0u;
+    bool cutout=(flags & 0x40000000u)!=0u;
+    // Palette words 7..14 hold eight boxes; cutouts reserve the last two for their sprite.
+    if ((crossed && boxes!=1) || (cutout && boxes>6) || boxes>8) return false;
+    bool found=boxes==0;
+    for (int i=0; i<boxes; ++i) {
+        uint packed=texelFetch(u_VoxelPalette,entry*16+7+i).r;
+        vec3 a=vec3(packed&31u,(packed>>5)&31u,(packed>>10)&31u)/16.0;
+        vec3 b=vec3((packed>>15)&31u,(packed>>20)&31u,(packed>>25)&31u)/16.0;
+        if (any(lessThanEqual(b,a))) continue;
+        vec3 boundary=mix(a,b,greaterThan(normal,vec3(0)));
+        bool onFace=crossed || abs(dot(local-boundary,abs(normal)))<=PLAGUE_COVERAGE_EPSILON;
+        if (onFace && all(greaterThanEqual(local,a-PLAGUE_COVERAGE_EPSILON))
+                && all(lessThanEqual(local,b+PLAGUE_COVERAGE_EPSILON))) {
+            lo=a; hi=b; found=true; break;
+        }
+    }
+    if (!found) return false;
+    if (crossed)
+        return plagueVoxelCrossMapping(entry,local,normal,lo,hi,uv,tint,tangent,bitangent);
+    // 0x21 admits the engine's legacy and explicit-boundary mappings only for material shading.
+    return plagueVoxelBoundaryMapping(entry,local,normal,lo,hi,0x21u,uv,tint,tangent,bitangent);
+}
+
 bool plagueVoxelSurfaceAt(vec3 point, vec3 faceNormal, uint colour, int entry, vec3 local,
         out PlagueVoxelSurface surface) {
     surface.position = point;
@@ -50,7 +79,7 @@ bool plagueVoxelSurfaceAt(vec3 point, vec3 faceNormal, uint colour, int entry, v
             : point - faceNormal * PLAGUE_COVERAGE_EPSILON;
     if (!plagueVoxelLightAt(lightPoint,surface.light)) return false;
     vec2 uv; vec3 tintColour,tangent,bitangent;
-    if (plagueVoxelFaceMapping(entry,local,faceNormal,uv,tintColour,tangent,bitangent)) {
+    if (plagueVoxelSurfaceMapping(entry,flags,local,faceNormal,uv,tintColour,tangent,bitangent)) {
         vec4 texel = textureLod(u_Input9,uv,0.0);
         surface.coverage = texel.a;
         // Same tint multiply as terrain.fsh, in linear space. On encoded RGB it shifts leaf hue.
@@ -144,6 +173,76 @@ vec3 plagueVoxelSurfaceDirect(PlagueVoxelSurface surface, vec3 viewDir, vec3 sun
             + lit.highlight*moon*moon + localRadiance;
 }
 
+// Direct radiance along the final bounce. Alpha is coverage here, just as on the primary
+// world ray; stopping at a fractional texel paints its pigment as a solid reflected object.
+bool plagueVoxelSurfaceSecondary(vec3 origin, vec3 receiverNormal, vec3 direction, vec3 sunDir, vec3 sunDirTrue,
+        PlagueLighting lighting, PlagueSurfaceLighting colours, vec3 atmColorMult,
+        float renderDistance, out vec3 incoming) {
+    incoming = vec3(0.0);
+    float throughput = 1.0;
+    vec3 traceOrigin = origin+receiverNormal*PLAGUE_COVERAGE_EPSILON;
+    int previousEntry = -1;
+    vec3 previousCell = vec3(0.0);
+    bool previousFull = false;
+    bool transmitted = false;
+    int layers = 0;
+    // A ray crosses at most the sum of the window's three 16*d axis extents. Interior joined
+    // cells spend this geometric bound, not the primary path's four-surface shading budget.
+    for (int stepIndex = 0; stepIndex < u_VoxelWindow.w * 48; ++stepIndex) {
+        vec3 point,normal,local; uint colour; int entry;
+        float state = plagueVoxelTraceMaterial(traceOrigin,direction,point,normal,colour,entry,local);
+        if (state == 5.0) {
+            incoming += throughput * (direction.y >= 0.0
+                    ? plagueAtmoSkyView(direction,sunDirTrue,plagueAtmoCameraRadius()).rgb
+                            * atmColorMult * colours.skyReflectionLift
+                    : PLAGUE_ENV_GROUND * colours.ambientColour);
+            return true;
+        }
+        // An unresolved continuation contributes only its known prefix, never invented sky.
+        if (state != 1.0) return transmitted;
+        uint flags = texelFetch(u_VoxelPalette,entry*16).r;
+        bool full = (flags & 0xc000000fu) == 0u;
+        vec3 cell = point-local;
+        vec3 cellStep = abs(cell-previousCell);
+        // Palette identity alone also matches separated panes. Require touching, face-adjacent
+        // full cubes; the two nudges are the tracer's entry and this continuation's exit.
+        bool joined = previousFull && full && entry == previousEntry
+                && abs(dot(cellStep,vec3(1.0))-1.0) <= 2.0*PLAGUE_COVERAGE_EPSILON
+                && length(point-traceOrigin) <= 2.0*PLAGUE_COVERAGE_EPSILON;
+        if (!joined) {
+            PlagueVoxelSurface secondary;
+            if (!plagueVoxelSurfaceAt(point,normal,colour,entry,local,secondary)) return transmitted;
+            // The trace already resolved cutout/cross alpha as binary coverage.
+            float a = (flags & 0xc0000000u) != 0u ? 1.0 : clamp(secondary.coverage,0.0,1.0);
+            if (a > 0.0) {
+                if (layers >= 4) return transmitted;
+                vec3 unused;
+                vec3 shaded = plagueVoxelSurfaceDirect(secondary,-direction,sunDir,lighting,colours,unused);
+                // Preserve the existing terminal-bounce environment floor for opaque metals.
+                shaded = max(shaded,colours.ambientColour);
+                shaded = plagueVoxelReflectionFog(shaded,origin,point,secondary.light.y,
+                        lighting,atmColorMult,sunDirTrue,renderDistance);
+                incoming += throughput*a*shaded;
+                ++layers;
+            }
+            throughput *= 1.0-a;
+            if (throughput <= 0.0) return true;
+            transmitted = true;
+        }
+        previousEntry = entry;
+        previousCell = cell;
+        previousFull = full;
+        float exitDistance = 1e30; // unbounded until the first unit-cell boundary
+        for (int axis = 0; axis < 3; ++axis) {
+            if (direction[axis] == 0.0) continue;
+            exitDistance = min(exitDistance,
+                    ((direction[axis] > 0.0 ? 1.0 : 0.0)-local[axis])/direction[axis]);
+        }
+        traceOrigin = point+direction*(max(exitDistance,0.0)+PLAGUE_COVERAGE_EPSILON);
+    }
+    return transmitted;
+}
+
 // One extra bounce, so metals are not painted as diffuse. Four GGX samples is the work budget:
 // roughness moves where they point, never how much light comes back. A rough sum, not path tracing.
 vec3 plagueVoxelSurfaceReflection(PlagueVoxelSurface surface, vec3 viewDir, vec3 sunDir,
@@ -169,39 +268,10 @@ vec3 plagueVoxelSurfaceReflection(PlagueVoxelSurface surface, vec3 viewDir, vec3
         // secondary bounce (metals have no diffuse term to fall back on).
         float w = max(dot(surface.geometricNormal,direction),0.0);
         if (w<=0.0) continue;
-        vec3 point,normal,local; uint colour; int entry;
-        float state = plagueVoxelTraceMaterial(surface.position+surface.geometricNormal*PLAGUE_COVERAGE_EPSILON,
-                direction,point,normal,colour,entry,local);
-        vec3 incoming = vec3(0);
-        bool answered = false;
-        if (state==1.0) {
-            PlagueVoxelSurface secondary;
-            if (plagueVoxelSurfaceAt(point,normal,colour,entry,local,secondary)) {
-                vec3 unused;
-                incoming = plagueVoxelSurfaceDirect(secondary,-direction,sunDir,lighting,colours,unused);
-                // A metal secondary hit outside the sun's highlight has no diffuse term, so the call
-                // above returns zero for it. A floor, not an add: a lit hit keeps its own value and
-                // contrast, and only a hit darker than ambient light is lifted to it.
-                incoming = max(incoming, colours.ambientColour);
-                incoming = plagueVoxelReflectionFog(incoming,surface.position,point,secondary.light.y,
-                        lighting,atmColorMult,sunDirTrue,renderDistance);
-                answered = true;
-            }
-        } else if (state==5.0) {
-            // Clear as far as the grid goes, no further. Waiting or bad data cannot open sky.
-            // A direction below the horizon exits toward the ground the grid does not reach, not
-            // toward open air: the sky LUT models atmosphere, not terrain, and reads near-black
-            // for a query that far below it. plagueVoxelSurfaceDirect's own wideEnclosure term
-            // uses this same ground estimate, tinted by the receiver's own ambient light instead
-            // of an untinted flat colour.
-            if (direction.y >= 0.0) {
-                incoming = plagueAtmoSkyView(direction,sunDirTrue,plagueAtmoCameraRadius()).rgb
-                        *atmColorMult*colours.skyReflectionLift;
-            } else {
-                incoming = PLAGUE_ENV_GROUND*colours.ambientColour;
-            }
-            answered = true;
-        }
+        vec3 incoming;
+        bool answered = plagueVoxelSurfaceSecondary(
+                surface.position,surface.geometricNormal,direction,sunDir,sunDirTrue,
+                lighting,colours,atmColorMult,renderDistance,incoming);
         // A pending section, bad data, or a hit plagueVoxelSurfaceAt could not decode (states 3,
         // 4, 6, or a state-1 decode failure) is unanswered, not a measured zero. Folding it into
         // the average at full weight silently drags a real answer toward black; skip it instead,

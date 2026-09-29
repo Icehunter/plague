@@ -166,9 +166,15 @@ void main() {
     vec3 traceOrigin = origin+receiverNormal*PLAGUE_COVERAGE_EPSILON;
     vec3 throughput = vec3(1.0);
     vec3 radiance = vec3(0.0);
-    int glassEntry = -1;
-    // Up to three see-through blocks, then a solid hit or the sky.
-    for (int layer = 0; layer < 4; ++layer) {
+    int previousEntry = -1;
+    vec3 previousCell = vec3(0.0);
+    bool previousFull = false;
+    bool transmitted = false;
+    bool answered = false;
+    int layers = 0;
+    // A straight ray crosses at most the sum of the three 16*d window extents. Joined
+    // interior cells spend this geometric bound, never the four-surface shading budget.
+    for (int stepIndex = 0; stepIndex < u_VoxelWindow.w * 48; ++stepIndex) {
         vec3 point,faceNormal,local; uint colour; int entry;
         float state = plagueVoxelTraceMaterial(traceOrigin,rayDirection,point,faceNormal,colour,entry,local);
 #if PLAGUE_VOXEL_PROFILE_STAGE == 1
@@ -179,67 +185,80 @@ void main() {
         return;
 #endif
         if (state!=1.0) {
-            if (layer==0) return;
-            // Past glass the grid ran out clear: the same sky or ground the secondary bounce uses.
-            if (state==5.0) {
-                radiance += throughput*(rayDirection.y >= 0.0
-                        ? plagueAtmoSkyView(rayDirection,sunDirTrue,plagueAtmoCameraRadius()).rgb
-                                *atmColorMult*colours.skyReflectionLift
-                        : PLAGUE_ENV_GROUND*colours.ambientColour);
-            }
+            if (!transmitted) return;
+            // A completed cell exit may place the next origin outside the grid (state 3).
+            // Pending, malformed, or exhausted traces cannot certify the unfinished radiance.
+            if (state!=5.0 && state!=3.0) return;
+            radiance += throughput*(rayDirection.y >= 0.0
+                    ? plagueAtmoSkyView(rayDirection,sunDirTrue,plagueAtmoCameraRadius()).rgb
+                            *atmColorMult*colours.skyReflectionLift
+                    : PLAGUE_ENV_GROUND*colours.ambientColour);
+            answered = true;
             break;
         }
-        PlagueVoxelSurface surface;
-        if (!plagueVoxelSurfaceAt(point,faceNormal,colour,entry,local,surface)) {
-            if (layer==0) return;
-            break;
-        }
+        uint flags = texelFetch(u_VoxelPalette,entry*16).r;
+        bool full = (flags & 0xc000000fu) == 0u;
+        vec3 cell = point-local;
+        vec3 cellStep = abs(cell-previousCell);
+        // Identity also matches panes across air. Only touching, face-adjacent full cubes
+        // hide an internal face; the entry and exit nudges account for the two epsilons.
+        bool joined = previousFull && full && entry == previousEntry
+                && abs(dot(cellStep,vec3(1.0))-1.0) <= 2.0*PLAGUE_COVERAGE_EPSILON
+                && length(point-traceOrigin) <= 2.0*PLAGUE_COVERAGE_EPSILON;
+        if (!joined) {
+            PlagueVoxelSurface surface;
+            if (!plagueVoxelSurfaceAt(point,faceNormal,colour,entry,local,surface)) return;
 #if PLAGUE_VOXEL_PROFILE_STAGE == 2
-        // This is an observable sink, not a colour approximation. It keeps decoded fields live.
-        fragColor = vec4(surface.position + surface.normal + surface.geometricNormal + surface.albedo
-                + vec3(surface.light,surface.ao), surface.emission + surface.material.alpha
-                + surface.material.f0 + surface.material.porosity + surface.material.subsurface
-                + float(surface.material.conductor) + surface.material.metalness
-                + float(surface.material.namedMetal) + float(surface.material.metalIndex));
-        return;
+            // This is an observable sink, not a colour approximation. It keeps decoded fields live.
+            fragColor = vec4(surface.position + surface.normal + surface.geometricNormal + surface.albedo
+                    + vec3(surface.light,surface.ao), surface.emission + surface.material.alpha
+                    + surface.material.f0 + surface.material.porosity + surface.material.subsurface
+                    + float(surface.material.conductor) + surface.material.metalness
+                    + float(surface.material.namedMetal) + float(surface.material.metalIndex));
+            return;
 #endif
-        vec3 specularAlbedo;
-        vec3 viewDir = normalize(origin-point);
-        vec3 shaded = plagueVoxelSurfaceDirect(surface,viewDir,sunDir,lighting,colours,specularAlbedo);
+            float a = clamp(surface.coverage,0.0,1.0);
+            // Preserve the primary path's solid threshold; cutout/cross hits already passed alpha.
+            if (a >= 0.99 || (flags & 0xc0000000u) != 0u) a = 1.0;
+            if (a > 0.0) {
+                // Retain the existing four shaded surfaces, independently of unshaded joined cells.
+                if (layers >= 4) return;
+                vec3 specularAlbedo;
+                vec3 viewDir = normalize(origin-point);
+                vec3 shaded = plagueVoxelSurfaceDirect(surface,viewDir,sunDir,lighting,colours,specularAlbedo);
 #if PLAGUE_VOXEL_PROFILE_STAGE == 3
-        fragColor = vec4(shaded + specularAlbedo,1.0);
-        return;
+                fragColor = vec4(shaded + specularAlbedo,1.0);
+                return;
 #endif
-        if (any(greaterThan(specularAlbedo,vec3(0)))) {
-            vec3 reflected = plagueVoxelSurfaceReflection(surface,viewDir,sunDir,sunDirTrue,
-                    skyColours,lighting,colours,atmColorMult,renderDistance);
-            float specularAO = plagueSpecularOcclusion(surface.ao,clamp(dot(surface.normal,viewDir),0.0,1.0),
-                    sqrt(clamp(surface.material.alpha,0.0,1.0)));
-            shaded += reflected*specularAlbedo*specularAO;
-        }
-        shaded = plagueVoxelReflectionFog(shaded,origin,point,surface.light.y,
-                lighting,atmColorMult,sunDirTrue,renderDistance);
-        float a = clamp(surface.coverage,0.0,1.0);
-        // 0.99: an 8-bit atlas alpha of 255 is solid; anything lower is a see-through texel.
-        // Cutout and cross entries already passed their own alpha test in the trace.
-        bool cutoutEntry = (texelFetch(u_VoxelPalette,entry*16).r & 0xc0000000u) != 0u;
-        if (a >= 0.99 || cutoutEntry) { radiance += throughput*shaded; break; }
-        // The main view blends glass over what is behind it; the reflection does the same.
-        // The same entry again is a joined pane with no face drawn between, so no second blend.
-        if (entry != glassEntry) {
-            radiance += throughput*a*shaded;
+                if (any(greaterThan(specularAlbedo,vec3(0)))) {
+                    vec3 reflected = plagueVoxelSurfaceReflection(surface,viewDir,sunDir,sunDirTrue,
+                            skyColours,lighting,colours,atmColorMult,renderDistance);
+                    float specularAO = plagueSpecularOcclusion(surface.ao,clamp(dot(surface.normal,viewDir),0.0,1.0),
+                            sqrt(clamp(surface.material.alpha,0.0,1.0)));
+                    shaded += reflected*specularAlbedo*specularAO;
+                }
+                shaded = plagueVoxelReflectionFog(shaded,origin,point,surface.light.y,
+                        lighting,atmColorMult,sunDirTrue,renderDistance);
+                radiance += throughput*a*shaded;
+                ++layers;
+            }
             throughput *= 1.0-a;
+            transmitted = true;
+            if (all(lessThanEqual(throughput,vec3(0.0)))) { answered = true; break; }
         }
-        glassEntry = entry;
+        previousEntry = entry;
+        previousCell = cell;
+        previousFull = full;
         // Leave this cell along the ray; local is the hit point inside the unit cell.
         float exitDistance = 1e30;
         for (int k = 0; k < 3; ++k) {
-            if (abs(rayDirection[k]) < 1e-6) continue;
+            if (rayDirection[k] == 0.0) continue;
             exitDistance = min(exitDistance,
                     ((rayDirection[k] > 0.0 ? 1.0 : 0.0) - local[k])/rayDirection[k]);
         }
         traceOrigin = point + rayDirection*(max(exitDistance,0.0) + PLAGUE_COVERAGE_EPSILON);
     }
+    if (!answered) return; // A geometric-budget exit is unresolved, not an opaque black answer.
     fragColor = vec4(radiance,1.0);
 #endif
 }

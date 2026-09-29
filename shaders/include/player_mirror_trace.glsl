@@ -10,10 +10,11 @@
 // open water under a dock or a bridge deck, does not get a second render: reflecting about h_c is
 // the same as reflecting about the render plane h_r then translating along the render axis by
 // 2*(h_c - h_r), verified in tools/verify_player_mirror.py's march_mirror_shifted. Every lookup
-// below shifts by that amount instead. Each wall mirror pass has no second consumer plane yet, so
-// its march always shifts by zero (h_c == h_r), but it shares the same generalized machinery
-// (tools/verify_player_mirror_walls.py) instead of a duplicated copy, so the floor's consumer-shift
-// feature and a wall's facing-aware reject cannot drift apart from being written twice.
+// below shifts by that amount instead. Wall receivers use their own axis coordinate as h_c and
+// the engine's captured plane as h_r: a nearer non-reflective block must not replace the plane of
+// every visible wall. Shifted wall rays may enter the stored frustum after an invalid prefix,
+// checked by tools/verify_player_mirror_occlusion_native.py. This reuses captured geometry; it
+// cannot recover a body surface already clipped or hidden in that source view.
 //
 // The consumer declares `uniform sampler2D u_MirrorDepth;` (builtin.mirrorDepth) before importing,
 // for the floor-only functions below (`projectMirrorGuarded`, `mirrorRecordedPos`,
@@ -182,6 +183,10 @@ bool plagueMirrorMarchGeneral(vec3 origin, vec3 rPrime, float hC, float hR, floa
         vec3 p = origin + t * rPrime;
         vec3 proj = axis == 0 ? projectMirrorGuarded(p - shift) : projectMirrorGuardedWall(p - shift);
         if (proj.x < 0.0 || proj.x >= 1.0 || proj.y < 0.0 || proj.y >= 1.0 || proj.z <= 0.0) {
+            // A different wall plane translates the ray, including its start, into capture space.
+            // It may enter the stored frustum later: the saved 3.35 -> 7.35 block scene starts
+            // behind its capture camera. Keep the floor and unshifted wall behavior unchanged.
+            if (axis != 0 && hC != hR) { prevT = t; continue; }
             return false;
         }
         float buf = texture(depthSampler, proj.xy).r;
@@ -193,7 +198,12 @@ bool plagueMirrorMarchGeneral(vec3 origin, vec3 rPrime, float hC, float hR, floa
                 float mid = 0.5 * (lo + hi);
                 vec3 projm = axis == 0 ? projectMirrorGuarded(origin + mid * rPrime - shift)
                                        : projectMirrorGuardedWall(origin + mid * rPrime - shift);
-                float bufm = texture(depthSampler, projm.xy).r;
+                // The first valid step can bracket an invalid prefix; no clamped border texel
+                // may turn that prefix into a crossing. This guard is specific to shifted walls.
+                bool validMid = projm.x >= 0.0 && projm.x < 1.0 && projm.y >= 0.0
+                        && projm.y < 1.0 && projm.z > 0.0;
+                float bufm = (axis == 0 || hC == hR || validMid)
+                        ? texture(depthSampler, projm.xy).r : 0.0;
                 if (bufm > 0.0 && projm.z < bufm) { hi = mid; } else { lo = mid; }
             }
             vec3 candidate = origin + hi * rPrime;

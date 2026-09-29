@@ -1,3 +1,4 @@
+#moj_import <fornax_runtime:voxel_palette_layout.glsl>
 #ifndef PLAGUE_VOXEL_VISIBILITY
 #define PLAGUE_VOXEL_VISIBILITY
 
@@ -122,8 +123,8 @@ bool plagueVoxelSegmentVisible(vec3 originRel,vec3 dir,float maxDistance,int max
             || any(isnan(originRel)) || any(isinf(originRel)) || any(isnan(dir)) || any(isinf(dir))) return false;
     int slots=d*d*d;
     if(textureSize(u_VoxelOccupancy)!=slots*128 || textureSize(u_VoxelPayload)!=slots*1024
-            || textureSize(u_VoxelPalette)!=slots*1536 || textureSize(u_VoxelBrickSummary)!=slots
-            || textureSize(u_Input10)!=slots*96*42) return false;
+            || plagueVoxelPaletteCapacity(textureSize(u_VoxelPalette),d)==0 || textureSize(u_VoxelBrickSummary)!=slots
+            || !plagueVoxelMaterialBuffersValid(textureSize(u_VoxelPalette),textureSize(u_Input10),d)) return false;
     ivec3 first=u_VoxelWindow.xyz-ivec3((d-1)/2);
     vec3 origin=(u_CameraAbs-vec3(first*16))+originRel;
     vec3 end=origin+dir*maxDistance;
@@ -173,8 +174,8 @@ bool plagueVoxelSegmentVisible(vec3 originRel,vec3 dir,float maxDistance,int max
         if((occupancyWord&(1u<<uint(index&31)))!=0u) {
             uint payload=texelFetch(u_VoxelPayload,slot*1024+(index>>2)).r;
             int entry=int((payload>>uint((index&3)*8))&255u);
-            if(entry>=96) return false;
-            int base=slot*1536+entry*16;
+            if(entry>=plagueVoxelPaletteCapacity(textureSize(u_VoxelPalette),d)) return false;
+            int base=slot*plagueVoxelPaletteCapacity(textureSize(u_VoxelPalette),d)*16+entry*16;
             uint flags=texelFetch(u_VoxelPalette,base).r;
 #if PLAGUE_GLASS_TRANSPORT != 0 && defined(PLAGUE_GLASS_SCENE)
             if(plagueGlassMedium(base/16).glass) {

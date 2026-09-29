@@ -40,6 +40,19 @@ uniform sampler2D u_MirrorXDepth; // builtin.mirrorXDepth: reversed-Z, 0.0 = no 
 uniform sampler2D u_MirrorZHdr; // mirrorZHdr: the player's own Z-wall reflection, already lit
 uniform sampler2D u_MirrorZDepth; // builtin.mirrorZDepth: reversed-Z, 0.0 = no reflection here
 
+#define PLAGUE_VOXEL_REFLECTIONS 1 //[0 1] compile "World Reflections" {0="Off" 1="On"}
+#if PLAGUE_VOXEL_REFLECTIONS != 0
+// Appended after all mirror inputs. Only a confirmed wall-player hit spends this bounded query;
+// world recovery is merged later and carries confidence, not the distance needed to hide a body.
+#define PLAGUE_VOXEL_ALPHA_CUTOUTS
+#define PLAGUE_VOXEL_TEXTURED_FACES
+#define u_Input9 u_BlockAtlas
+#define u_Input10 u_VoxelFaceTexture
+#moj_import <fornax_runtime:voxel_coverage.glsl>
+#undef u_Input9
+#undef u_Input10
+#endif
+
 layout(std140) uniform u_PassParams {
     vec2  u_PassTexelSize;
     float u_Param2; // Hi-Z level count; supplied ONLY for a pass named ssr_trace_fancy/ssr_trace_fast
@@ -61,11 +74,54 @@ vec3 worldPosAt(vec2 uv, float depth) {
     return world.xyz / world.w;
 }
 
+// Raster depth belongs to its nearest texel centre, including at fractional trace hits.
+vec3 reflectionSurfaceAt(vec2 uv, float depth) {
+    vec2 size = vec2(textureSize(u_Depth, 0));
+    vec2 center = (clamp(floor(uv * size), vec2(0.0), size - 1.0) + 0.5) / size;
+    return worldPosAt(center, depth);
+}
+
 /** Camera-relative world position back to screen UV + reversed-Z NDC depth. */
 vec3 projectToScreen(vec3 pos) {
     vec4 clip = u_ProjectionMatrix * u_ModelViewMatrix * vec4(pos, 1.0);
     return vec3((clip.xy / clip.w) * 0.5 + 0.5, clip.z / clip.w);
 }
+
+#if PLAGUE_VOXEL_REFLECTIONS != 0
+bool plagueMirrorWorldBlocked(vec3 origin, vec3 normal, vec3 direction, float distanceToBody) {
+    vec3 start = origin + normal * PLAGUE_COVERAGE_EPSILON;
+    // A segment crosses at most |dx|+|dy|+|dz| cell boundaries, plus its initial cell and
+    // endpoint rounding. This bounds transparent continuation by geometry, not a layer preset.
+    int cells = int(ceil(distanceToBody * dot(abs(direction), vec3(1.0)))) + 3;
+    for (int layer = 0; layer < cells; ++layer) {
+        float remaining = distanceToBody - dot(start - origin, direction);
+        if (remaining <= 0.0) return false;
+        vec3 point, faceNormal, local;
+        uint colour;
+        int entry;
+        float state = plagueVoxelTraceMaterialBounded(start, direction, remaining, cells,
+                point, faceNormal, colour, entry, local);
+        // Missing/pending/outside data cannot prove an occluder. Keep the existing screen answer.
+        if (state != 1.0) return false;
+        uint flags = texelFetch(u_VoxelPalette, entry * 16).r;
+        // Cutout/CROSS hits already passed their texel alpha test. The independent opaque-face
+        // flag preserves full grass backing even when its overlay prevents a single UV mapping.
+        if ((flags & 0xc0000000u) != 0u || plagueVoxelOpaqueFace(entry, faceNormal)) return true;
+        vec4 texel;
+        if (!plagueVoxelFaceSample(entry, local, faceNormal, texel)) return false;
+        // Match world reflection's 8-bit alpha criterion; translucent glass must not erase a body.
+        if (texel.a >= 0.99) return true;
+        float exitDistance = 1e30; // unbounded along a parallel axis, as in voxel_coverage.glsl
+        for (int axis = 0; axis < 3; ++axis) {
+            if (direction[axis] == 0.0) continue;
+            exitDistance = min(exitDistance,
+                    ((direction[axis] > 0.0 ? 1.0 : 0.0) - local[axis]) / direction[axis]);
+        }
+        start = point + direction * (max(exitDistance, 0.0) + PLAGUE_COVERAGE_EPSILON);
+    }
+    return false; // exhausted/unknown is not confirmed opaque coverage
+}
+#endif
 
 void main() {
     float depth = texture(u_Depth, texCoord).r;
@@ -143,6 +199,7 @@ void main() {
     // exactly 0.0 for a normal this close to axis-aligned, so the routing test below already
     // excludes it without a separate check, but the guard is named explicitly anyway.
     bool mirrorHit = false;
+    bool wallMirrorHit = false;
     vec3 mirrorColour = vec3(0.0);
     float mirrorConfidence = 0.0;
     float mirrorDistance = 1e30;
@@ -185,57 +242,52 @@ void main() {
                 mirrorConfidence = clamp(mirrorSample.a, 0.0, 1.0) * mirrorEdge;
             }
         }
-    // X wall: the receiver's own X sits within 0.05 block of the wall's own plane. This plane is
-    // already camera-relative, WallPlaneProbe's own publish contract, with no u_CameraAbs term,
-    // unlike the floor's absolute standing plane above. The receiver's geometric normal must both
-    // read as horizontal on the X axis and point the same way the wall's own recorded face does.
-    // No shift: a wall mirror has one consumer only, itself, so hC == hR always.
+    // Wall receivers choose their own plane. The engine probe chooses the capture plane only:
+    // a nearer grass block must not replace every visible iron-wall receiver with its own plane.
+    // A shifted receiver can start behind the capture camera, so the march owns coverage; testing
+    // the receiver's initial projected texel would reject valid hits before the ray enters it.
     } else if (u_PlayerMirrorWalls.x != 0.0 && abs(geometricNormal.x) > 0.95
-            && sign(geometricNormal.x) == u_PlayerMirrorWalls.x
-            && abs(origin.x - u_PlayerMirrorWalls.y) < 0.05) {
-        vec3 coverageProj = projectMirrorGuardedWall(origin);
-        if (coverageProj.x >= 0.0 && coverageProj.x < 1.0
-                && coverageProj.y >= 0.0 && coverageProj.y < 1.0 && coverageProj.z > 0.0
-                && texture(u_MirrorXDepth, coverageProj.xy).r > 0.0) {
-            vec3 rPrime = mirror;
-            rPrime.x = -rPrime.x;
-            vec3 hitWorld;
-            vec2 hitUv;
-            if (plagueMirrorMarchGeneral(origin, rPrime, u_PlayerMirrorWalls.y, u_PlayerMirrorWalls.y,
-                    u_PlayerMirrorWalls.x, 1, u_MirrorXDepth, hitWorld, hitUv)) {
-                vec4 mirrorSample = texture(u_MirrorXHdr, hitUv);
-                vec2 mdist = abs(hitUv - 0.5) * 2.0;
-                float mirrorEdge = clamp(1.0 - pow(max(mdist.x, mdist.y), 8.0), 0.0, 1.0);
-                mirrorHit = true;
-                mirrorDistance = length(hitWorld - origin);
-                mirrorColour = mirrorSample.rgb / max(mirrorSample.a, 1e-4);
-                mirrorConfidence = clamp(mirrorSample.a, 0.0, 1.0) * mirrorEdge;
-            }
+            && sign(geometricNormal.x) == u_PlayerMirrorWalls.x) {
+        vec3 rPrime = mirror;
+        rPrime.x = -rPrime.x;
+        vec3 hitWorld;
+        vec2 hitUv;
+        if (plagueMirrorMarchGeneral(origin, rPrime, origin.x, u_PlayerMirrorWalls.y,
+                u_PlayerMirrorWalls.x, 1, u_MirrorXDepth, hitWorld, hitUv)) {
+            vec4 mirrorSample = texture(u_MirrorXHdr, hitUv);
+            vec2 mdist = abs(hitUv - 0.5) * 2.0;
+            float mirrorEdge = clamp(1.0 - pow(max(mdist.x, mdist.y), 8.0), 0.0, 1.0);
+            mirrorHit = true;
+            wallMirrorHit = true;
+            mirrorDistance = length(hitWorld - origin);
+            mirrorColour = mirrorSample.rgb / max(mirrorSample.a, 1e-4);
+            mirrorConfidence = clamp(mirrorSample.a, 0.0, 1.0) * mirrorEdge;
         }
-    // Z wall: same shape as the X wall, its own plane/facing lanes and axis.
     } else if (u_PlayerMirrorWalls.z != 0.0 && abs(geometricNormal.z) > 0.95
-            && sign(geometricNormal.z) == u_PlayerMirrorWalls.z
-            && abs(origin.z - u_PlayerMirrorWalls.w) < 0.05) {
-        vec3 coverageProj = projectMirrorGuardedWall(origin);
-        if (coverageProj.x >= 0.0 && coverageProj.x < 1.0
-                && coverageProj.y >= 0.0 && coverageProj.y < 1.0 && coverageProj.z > 0.0
-                && texture(u_MirrorZDepth, coverageProj.xy).r > 0.0) {
-            vec3 rPrime = mirror;
-            rPrime.z = -rPrime.z;
-            vec3 hitWorld;
-            vec2 hitUv;
-            if (plagueMirrorMarchGeneral(origin, rPrime, u_PlayerMirrorWalls.w, u_PlayerMirrorWalls.w,
-                    u_PlayerMirrorWalls.z, 2, u_MirrorZDepth, hitWorld, hitUv)) {
-                vec4 mirrorSample = texture(u_MirrorZHdr, hitUv);
-                vec2 mdist = abs(hitUv - 0.5) * 2.0;
-                float mirrorEdge = clamp(1.0 - pow(max(mdist.x, mdist.y), 8.0), 0.0, 1.0);
-                mirrorHit = true;
-                mirrorDistance = length(hitWorld - origin);
-                mirrorColour = mirrorSample.rgb / max(mirrorSample.a, 1e-4);
-                mirrorConfidence = clamp(mirrorSample.a, 0.0, 1.0) * mirrorEdge;
-            }
+            && sign(geometricNormal.z) == u_PlayerMirrorWalls.z) {
+        vec3 rPrime = mirror;
+        rPrime.z = -rPrime.z;
+        vec3 hitWorld;
+        vec2 hitUv;
+        if (plagueMirrorMarchGeneral(origin, rPrime, origin.z, u_PlayerMirrorWalls.w,
+                u_PlayerMirrorWalls.z, 2, u_MirrorZDepth, hitWorld, hitUv)) {
+            vec4 mirrorSample = texture(u_MirrorZHdr, hitUv);
+            vec2 mdist = abs(hitUv - 0.5) * 2.0;
+            float mirrorEdge = clamp(1.0 - pow(max(mdist.x, mdist.y), 8.0), 0.0, 1.0);
+            mirrorHit = true;
+            wallMirrorHit = true;
+            mirrorDistance = length(hitWorld - origin);
+            mirrorColour = mirrorSample.rgb / max(mirrorSample.a, 1e-4);
+            mirrorConfidence = clamp(mirrorSample.a, 0.0, 1.0) * mirrorEdge;
         }
     }
+#if PLAGUE_VOXEL_REFLECTIONS != 0
+    // Run before every mirror fallback, including camera-facing rays whose screen march skips.
+    // Suppressing only this candidate lets the later world-recovery pass supply the nearer block.
+    if (wallMirrorHit && plagueMirrorWorldBlocked(origin, geometricNormal, rayDir, mirrorDistance)) {
+        mirrorHit = false;
+    }
+#endif
 
     // A ray pointing back at the camera has nothing resolvable in screen space. The player mirror
     // is a separate lookup, not a screen-space one, so it can still answer here.
@@ -356,7 +408,45 @@ void main() {
     // The scene before glass and other translucent blocks are drawn. The finished image has glass
     // over whatever is behind it, and a reflected ray that never crossed that glass must not take
     // its colour. The world trace adds glass only where the reflected ray crosses it.
-    vec3 color = texture(u_SceneHdrComposited_history, historyUv).rgb;
+    //
+    // Gather on the raster hit plane. The accepted ray endpoint can lie up to one block behind
+    // it; using that endpoint rejects the real hit and can instead admit a different surface.
+    // Existing hit-gather tolerance: 0.1 blocks. Face compatibility matches ssr_blur's 0.9 gate.
+    const float SSR_HIT_PLANE_TOLERANCE = 0.1;
+    const float SSR_HIT_NORMAL_REJECT = 0.9;
+    float hitDepth = texture(u_Depth, hit.xy).r;
+    vec3 hitWorld = reflectionSurfaceAt(hit.xy, hitDepth);
+    vec4 hitPackedNormal = texture(u_GNormal, hit.xy);
+    vec3 hitFace = vec3(0.0);
+    if (dot(hitPackedNormal.xyz, hitPackedNormal.xyz) >= 1e-6) {
+        hitFace = plagueDecodeGeometricNormal(hitPackedNormal.a, normalize(hitPackedNormal.xyz));
+    }
+    vec3 colorSum = vec3(0.0);
+    float colorWeight = 0.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 tapHit = hit.xy + vec2(float(x), float(y)) / vec2(fullSize);
+            if (tapHit.x < 0.0 || tapHit.x > 1.0 || tapHit.y < 0.0 || tapHit.y > 1.0) continue;
+            float tapDepth = texture(u_Depth, tapHit).r;
+            if (tapDepth <= 0.0) continue;
+            vec4 tapPackedNormal = texture(u_GNormal, tapHit);
+            if (dot(tapPackedNormal.xyz, tapPackedNormal.xyz) < 1e-6) continue;
+            vec3 tapFace = plagueDecodeGeometricNormal(tapPackedNormal.a, normalize(tapPackedNormal.xyz));
+            if (dot(tapFace, hitFace) < SSR_HIT_NORMAL_REJECT) continue;
+            vec3 separation = reflectionSurfaceAt(tapHit, tapDepth) - hitWorld;
+            if (max(abs(dot(separation, hitFace)), abs(dot(separation, tapFace)))
+                    > SSR_HIT_PLANE_TOLERANCE) continue;
+            vec2 tapHistoryUv = tapHit - texture(u_GMotion, tapHit).rg;
+            if (tapHistoryUv.x < 0.0 || tapHistoryUv.x > 1.0
+                    || tapHistoryUv.y < 0.0 || tapHistoryUv.y > 1.0) continue;
+            colorSum += texture(u_SceneHdrComposited_history, tapHistoryUv).rgb;
+            colorWeight += 1.0;
+        }
+    }
+    // Missing surface normals may leave no compatible taps; retain the accepted hit's point
+    // sample in that case. Ray penetration depth does not select this fallback.
+    vec3 color = colorWeight > 0.0 ? colorSum / colorWeight
+            : texture(u_SceneHdrComposited_history, historyUv).rgb;
 
     // Confidence: the edge ramp is steep and late so reflections stay full strength across most of
     // the frame; the length term fades out the least reliable, longest rays.

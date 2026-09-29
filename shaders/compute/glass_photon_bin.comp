@@ -14,16 +14,26 @@ layout(std430,set=0,binding=5) buffer GlassHeads { uint headWords[]; };
 layout(std430,set=0,binding=6) writeonly buffer GlassLinks { uvec4 linkWords[]; };
 void main() {
     uint index=gl_GlobalInvocationID.x;
+    // Reset clears every hash head; only this active prefix is relinked. Retained records outside
+    // a reduced budget stay unreachable without clearing the maximum-sized photon/link buffers.
     if(index>=PLAGUE_GLASS_PHOTONS) return;
     uint firstNode=index*PLAGUE_GLASS_BEAM_LINKS_PER_PHOTON;
     for(uint lane=0u;lane<PLAGUE_GLASS_BEAM_LINKS_PER_PHOTON;++lane) linkWords[firstNode+lane]=uvec4(0u);
     uint photonBase=index*PLAGUE_GLASS_PHOTON_WORDS;
     vec4 photon=photonWords[photonBase];
     if(photon.w==0.0) return;
-    vec3 centre=photon.xyz;
-    vec3 extent0=vec3(PLAGUE_GLASS_GATHER_RADIUS,0.0,0.0);
-    vec3 extent1=vec3(0.0,PLAGUE_GLASS_GATHER_RADIUS,0.0);
-    vec3 extent2=vec3(0.0,0.0,PLAGUE_GLASS_GATHER_RADIUS);
+    // The index volume glass_photon_trace.comp records for this photon: a box spanning
+    // PLAGUE_GLASS_GATHER_RADIUS around the receiver, the same reach the gather's own proximity
+    // test uses, so every pixel the gather could accept for this photon bins into a covered
+    // cell.
+    uint beamBase=index*PLAGUE_GLASS_BEAM_WORDS;
+    vec3 volumeLo=beamWords[beamBase+9u].xyz;
+    vec3 volumeHi=beamWords[beamBase+10u].xyz;
+    vec3 centre=(volumeLo+volumeHi)*0.5;
+    vec3 halfExtent=(volumeHi-volumeLo)*0.5;
+    vec3 extent0=vec3(halfExtent.x,0.0,0.0);
+    vec3 extent1=vec3(0.0,halfExtent.y,0.0);
+    vec3 extent2=vec3(0.0,0.0,halfExtent.z);
     vec3 cacheOrigin=vec3(ivec3(cacheWords[4],cacheWords[5],cacheWords[6]));
     mat4 relative=mat4(1.0); relative[3]=vec4(cacheOrigin-u_CameraAbs,1.0);
     mat4 clipFromCache=u_ProjectionMatrix*u_ModelViewMatrix*relative;

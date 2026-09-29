@@ -1,3 +1,4 @@
+#moj_import <fornax_runtime:voxel_palette_layout.glsl>
 #ifndef PLAGUE_LOCAL_LIGHT_RECEIVER
 #define PLAGUE_LOCAL_LIGHT_RECEIVER
 #moj_import <fornax_runtime:voxel_local_layout.glsl>
@@ -5,6 +6,7 @@
 // Raster and compute must classify the same rendered sheet. Missing geometry never certifies it.
 bool plagueLocalReceiverBuffersValid();
 bool plagueLocalReceiverFacesValid();
+int plagueLocalReceiverCapacity();
 uint plagueLocalReceiverOccupancy(int word);
 uint plagueLocalReceiverPayload(int word);
 uint plagueLocalReceiverPalette(int word);
@@ -44,8 +46,8 @@ bool plagueLocalThinReceiver(vec3 point,vec3 geometricNormal) {
     int idx=(local.y<<8)|(local.z<<4)|local.x;
     if((plagueLocalReceiverOccupancy(slot*128+(idx>>5))&(1u<<uint(idx&31)))==0u) return false;
     int entry=int((plagueLocalReceiverPayload(slot*1024+(idx>>2))>>uint((idx&3)*8))&255u);
-    if(entry>=96) return false;
-    entry+=slot*96;
+    if(entry>=plagueLocalReceiverCapacity()) return false;
+    entry+=slot*plagueLocalReceiverCapacity();
     uint flags=plagueLocalReceiverPalette(entry*16);
     if((flags&0x80000000u)!=0u) return true;
     if((flags&0x40000000u)==0u

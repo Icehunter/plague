@@ -1,5 +1,5 @@
-#ifndef PLAGUE_GI_GRID
-#define PLAGUE_GI_GRID
+#ifndef PLAGUE_GI_GRID_INCLUDE
+#define PLAGUE_GI_GRID_INCLUDE
 
 // The grid is laid over the unjittered image. TAA jitter shifts the rendered picture by
 // u_JitterOffset every frame, so a cell that reads at its fixed place plus that shift sees the

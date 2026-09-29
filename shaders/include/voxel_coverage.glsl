@@ -1,7 +1,8 @@
+#moj_import <fornax_runtime:voxel_palette_layout.glsl>
 #ifndef PLAGUE_VOXEL_COVERAGE_TRACE
 #define PLAGUE_VOXEL_COVERAGE_TRACE
 
-// BrickGridUpload ABI: 128 occupancy, 1024 payload, 96*16 palette words per 16^3-cell section.
+// BrickGridUpload ABI: 128 occupancy, 1024 payload, capacity*16 palette words per 16^3-cell section.
 #ifndef PLAGUE_VOXEL_EXTERNAL_BUFFERS
 uniform usamplerBuffer u_VoxelOccupancy;
 uniform usamplerBuffer u_VoxelPayload;
@@ -111,13 +112,16 @@ bool plagueVoxelCutoutHit(vec3 o, vec3 dir, ivec3 cell, int base, uint flags,
     normal = vec3(0.0);
     vec3 localOrigin = o - vec3(cell);
     if ((flags & 0x80000000u) != 0u) {
-        if (!plagueVoxelSpriteValid(base)) { unavailable = true; return false; }
+        if ((flags & 15u) != 1u) { unavailable = true; return false; }
         // CROSS stores one box around two crossed planes, not a solid block.
         uint packed = texelFetch(u_VoxelPalette, base + 7).r;
         vec3 lo = vec3(packed & 31u, (packed >> 5) & 31u, (packed >> 10) & 31u) / 16.0;
         vec3 hi = vec3((packed >> 15) & 31u, (packed >> 20) & 31u, (packed >> 25) & 31u) / 16.0;
         vec3 size = hi - lo;
-        if (any(lessThanEqual(size, vec3(0.0)))) return false;
+        // Packed coordinates have five bits, but valid block bounds occupy only 0..16.
+        if (any(lessThanEqual(size, vec3(0.0))) || any(greaterThan(hi,vec3(1.0)))) {
+            unavailable = true; return false;
+        }
         vec3 q = (localOrigin - lo) / size;
         vec3 v = dir / size;
         for (int plane = 0; plane < 2; plane++) {
@@ -129,9 +133,24 @@ bool plagueVoxelCutoutHit(vec3 o, vec3 dir, ivec3 cell, int base, uint flags,
             vec3 hit = q + candidate * v;
             if (candidate < current || candidate >= nearest
                     || any(lessThan(hit, vec3(0.0))) || any(greaterThan(hit, vec3(1.0)))) continue;
-            if (plagueVoxelAlphaSolid(base, vec2(hit.x, 1.0 - hit.y))) {
+            vec3 candidateNormal = normalize(gradient / size) * -sign(denominator);
+            bool solid;
+#ifdef PLAGUE_VOXEL_TEXTURED_FACES
+            vec2 atlasUV; vec3 tint, tangent, bitangent;
+            if (plagueVoxelCrossMapping(base/16,localOrigin+dir*candidate,candidateNormal,lo,hi,
+                    atlasUV,tint,tangent,bitangent))
+                solid = textureLod(u_Input9,atlasUV,0.0).a >= 0.5;
+            else
+#endif
+            {
+                // CROSS without the cutout flag has no stand-in sprite rectangle. Its face
+                // mapping remains sufficient; only the legacy fallback needs words 13/14.
+                if (!plagueVoxelSpriteValid(base)) { unavailable = true; return false; }
+                solid = plagueVoxelAlphaSolid(base,vec2(hit.x,1.0-hit.y));
+            }
+            if (solid) {
                 nearest = candidate;
-                normal = normalize(gradient / size) * -sign(denominator);
+                normal = candidateNormal;
             }
         }
     } else {
@@ -230,7 +249,7 @@ float plagueVoxelTraceMaterialBounded(vec3 originRel, vec3 dir, float maxDistanc
     if (d <= 0 || d > 33) return 6.0;
     int slots = d * d * d;
     if (textureSize(u_VoxelOccupancy) != slots * 128 || textureSize(u_VoxelPayload) != slots * 1024
-            || textureSize(u_VoxelPalette) != slots * 1536 || textureSize(u_VoxelBrickSummary) != slots) return 6.0;
+            || plagueVoxelPaletteCapacity(textureSize(u_VoxelPalette),d) == 0 || textureSize(u_VoxelBrickSummary) != slots) return 6.0;
     ivec3 first = u_VoxelWindow.xyz - ivec3((d - 1) / 2);
     // Working near the window origin keeps the small entry nudge alive far from world zero.
     vec3 o = (u_CameraAbs - vec3(first * 16)) + originRel;
@@ -282,8 +301,8 @@ float plagueVoxelTraceMaterialBounded(vec3 originRel, vec3 dir, float maxDistanc
             if ((occupancyWord & (1u << uint(idx & 31))) != 0u) {
                 uint payload = texelFetch(u_VoxelPayload, slot * 1024 + (idx >> 2)).r;
                 int entry = int((payload >> uint((idx & 3) * 8)) & 255u);
-                if (entry >= 96) return 6.0;
-                int base = slot * 1536 + entry * 16;
+                if (entry >= plagueVoxelPaletteCapacity(textureSize(u_VoxelPalette),d)) return 6.0;
+                int base = slot * plagueVoxelPaletteCapacity(textureSize(u_VoxelPalette),d) * 16 + entry * 16;
                 uint flags = texelFetch(u_VoxelPalette, base).r;
                 if ((flags & 0xc0000000u) != 0u) {
 #ifdef PLAGUE_VOXEL_ALPHA_CUTOUTS
@@ -292,7 +311,7 @@ float plagueVoxelTraceMaterialBounded(vec3 originRel, vec3 dir, float maxDistanc
                     vec3 alphaNormal;
                     if (plagueVoxelCutoutHit(o, dir, cell, base, flags, t, alphaHit, alphaNormal, unavailable)
                             && alphaHit < leave) {
-                        hitEntry = slot * 96 + entry;
+                        hitEntry = slot * plagueVoxelPaletteCapacity(textureSize(u_VoxelPalette),d) + entry;
                         hitLocal = o + dir * alphaHit - vec3(cell);
                         hitPosition = originRel + dir * alphaHit;
                         hitNormal = alphaNormal;
@@ -317,8 +336,9 @@ float plagueVoxelTraceMaterialBounded(vec3 originRel, vec3 dir, float maxDistanc
                                 hitColour = 0xff000000u | (average.r << 16) | (average.g << 8) | average.b;
                             }
                         }
-                        // A CROSS with no face colour has nothing to give; keep going.
-                        if ((flags & 0x80000000u) == 0u || (hitColour >> 24) != 0u) return 1.0;
+                        // CROSS has no cardinal palette colours by ABI. An alpha-tested geometric
+                        // hit remains a hit; material shading reads its independent texture record.
+                        return 1.0;
                     }
                     if (unavailable) return 6.0; // Missing sprite data cannot prove the cell is see-through.
 #elif PLAGUE_VOXEL_COVERAGE == 1
@@ -345,7 +365,7 @@ float plagueVoxelTraceMaterialBounded(vec3 originRel, vec3 dir, float maxDistanc
                         }
                     }
                     if (nearest < leave) {
-                        hitEntry = slot * 96 + entry;
+                        hitEntry = slot * plagueVoxelPaletteCapacity(textureSize(u_VoxelPalette),d) + entry;
                         hitLocal = o + dir * nearest - vec3(cell);
                         hitPosition = originRel + dir * nearest;
                         hitNormal = nearestNormal;

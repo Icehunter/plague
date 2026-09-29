@@ -10,6 +10,7 @@
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:rt_sampling.glsl>
 #moj_import <fornax:ray_answer.glsl>
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
@@ -40,7 +41,7 @@ const float PLAGUE_GI_SUN_REACH_BLOCKS = 96.0;
 void main() {
     uint index = gl_GlobalInvocationID.x;
     uvec2 gridSize = uvec2(imageSize(u_GiGrid));
-    if (index >= gridSize.x * gridSize.y) return;
+    if (index >= gridSize.x * gridSize.y * uint(PLAGUE_GI_SAMPLES)) return;
     uint base = index * PLAGUE_GI_HIT_WORDS;
 
     // A ray with no length asks for no trace, which is what an unanswered or missed bounce wants:

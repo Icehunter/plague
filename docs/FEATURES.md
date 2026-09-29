@@ -49,6 +49,16 @@ covers what the pack does, not the engine under it.
 
 ## Lighting
 
+- Ray Tracing has separate quality presets for GI, traced block light, sun shadows, reflections
+  and glass lighting. GI and block light independently control grid size and samples per cell;
+  higher counts average more evidence in the same frame without multiplying brightness. Advanced
+  changes display Custom. Existing settings and feature switches are preserved.
+- Glass photon budgets offer 16384, 32768 and 65536 paths with constant total source energy.
+  Lower budgets reduce tracing work while retaining maximum buffer storage and gathering resolution.
+- Fornax's Material Capacity setting offers 96/128/192/240 contextual entries per section and
+  applies after restart. Larger capacities retain more surface facts at higher memory cost.
+  Capacity and ray-sampling quality are independent. Preset frame rates require hardware measurements.
+
 - *Experiment, on by default:* Debug → Local Coloured Light replaces vanilla placed block light
   on every surface with voxel direct lighting. There is no vanilla fallback for missing data or
   unsupported lamps. Sun/sky, held light and self-emission remain. Sources opt in through
@@ -63,8 +73,8 @@ covers what the pack does, not the engine under it.
   Visible emission and received light share the calibrated scale in either local-light mode;
   switching both modes off keeps legacy lighting.
   The owner has checked the direct-light appearance in game; its GPU cost remains high.
-- *Experiment, off by default:* Ray Tracing → Traced Block Light sends one hardware ray per active
-  cell of a 512x512 grid toward a glowing block. Source selection follows its RGB material
+- *Experiment, off by default:* Ray Tracing → Traced Block Light sends 1/2/4 hardware rays per active
+  cell of its own selectable grid (default 512x512, one sample) toward a glowing block. Source selection follows its RGB material
   contribution, with a fresh point sampled on its face each frame.
   With Local Coloured Light enabled, RT handles nearby receivers and voxel probes handle distant
   ones. Traced Block Light Distance defaults to two chunks, with a one-chunk transition; covered
@@ -75,7 +85,7 @@ covers what the pack does, not the engine under it.
   direct light is unavailable. Switching traced shadows does not change visible lamp emission.
   The distance handoff's appearance and frame cost still need a client check.
 - *Experiment, off by default, not yet checked in game:* Ray Tracing → Bounce Light works with any
-  lighting setup and adds one bounce on top: one ray per grid cell, and at the hit a sun ray and a
+  lighting setup and adds one bounce on top: 1/2/4 samples per grid cell, each with a sun ray and a
   lamp ray, so a lit wall lights the floor in front of it and a lamp's light reaches a second
   surface. Averaged over up to 24 frames per cell against last frame's once-spread light, with
   the luminance's first two moments kept beside it, then spread by four variance-guided steps
@@ -87,7 +97,10 @@ covers what the pack does, not the engine under it.
   Commanded time jumps discard stale bounce light and exposure history immediately.
   Longer AA cycles or more than four recurring surfaces can still exhaust that cache. Bounce
   Light Strength scales the lamp share of the bounce only. There is no emission
-  term at the hit and no second bounce.
+  term at the hit and no second diffuse bounce. With Glass Light Transport on, the first bounce
+  ray can reflect/refract through 2/4/8/16 glass boundaries with absorption; GI quality presets
+  include this budget. Each boundary adds a ray-query stage. Unfinished paths retain compatible
+  history. Native fixtures cover this continuation; its room appearance and cost remain unverified.
 - *Experiment, default Quarter block:* Debug → Local Light Source Size sets how much of each lit
   face casts light: Quarter block, Half block or Full face. Smaller gives sharper shadows from
   thin blocks such as a fence post or a hopper; Full face is the softest. The light's total energy
@@ -150,9 +163,9 @@ covers what the pack does, not the engine under it.
   step budget.
 - World Reflections fills missing opaque and water reflections from nearby world geometry, on by
   default while the view is above water. Needs SSR on; water also needs Reflective mode. Positive
-  opaque screen hits keep their existing image and confidence. Opaque recovery uses one sample per
-  8x8 SSR pixels and rejects incompatible neighbouring surfaces; mirror detail can look coarse and
-  thin or sharply bumped reflections can remain unresolved. Its cost
+  opaque screen hits keep their existing image and confidence. Opaque recovery traces each full
+  resolution receiver and filters by surface and roughness. Its final bounce preserves translucent
+  coverage; thin or sharply bumped reflections can remain unresolved. Its cost
   rises with visible reflective area and nearby lights. Voxel Reach sets its window: 1 to 16 chunks in
   one-chunk steps, default 4. Both controls sit under Reflections; the coverage overlay is on
   Debug.
@@ -221,11 +234,11 @@ covers what the pack does, not the engine under it.
   Source-anchored photon samples retain RGB energy and incoming directions across camera motion.
   The current material and view are shaded afresh, without a caustic colour-history settling window.
   Geometry and source changes rebuild the local photon set before shading. Finite sampling can
-  leave spatial error. Camera paths sum the first interface's Fresnel reflection and transmission,
-  with later boundaries still sampled stochastically. Unsupported models or unresolved paths retain
-  their vanilla-lit material tint and screen-space effect, which does not transport light through
-  their volume. The sampling and material changes have offline checks; their GPU appearance and
-  performance require a client check.
+  leave spatial error. Camera glass retains its authored texture, normal map and material response
+  through forward rendering and screen-space refraction. Camera rays do not use the homogeneous
+  photon volume to replace these surfaces; their refraction does not include thickness-dependent
+  volume absorption. The sampling and material changes have offline checks; their GPU appearance
+  and performance require a client check.
 
 ## Snow: *opt-in, default off*
 

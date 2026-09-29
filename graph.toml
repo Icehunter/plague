@@ -224,46 +224,68 @@ history = true
 filter = "linear"
 
 # --- Bounce light and traced lamp shadows ----------------------------------------------------
-# A 512x512 grid of one ray per cell. The grid is fixed, not a fraction of the screen: the ray
-# count is declared once on each trace pass below and a scaled target would not match it.
+# Independent grids and within-frame samples. Compile-option expressions size every image,
+# request batch and dispatch together; changing a budget rebuilds and clears its histories.
 
 
-# Eight floats a ray, 262144 rays: the layout the engine's ray_query pass reads and writes.
+# Eight floats per request; one independent bounce/sun/lamp chain per selected sample.
 [targets.giRayRequests]
 kind = "buffer"
 stride_bytes = 32
-count = 262144
+count = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
 enabled_if = "PLAGUE_GI != 0"
 
 [targets.giRayHits]
 kind = "buffer"
 stride_bytes = 36
-count = 262144
+count = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
 enabled_if = "PLAGUE_GI != 0"
+
+# Bounded optical continuation reuses a native request/hit scratch pair. Terminal records
+# preserve the exact mesh answer while later interfaces trace other samples in the same batch.
+# Extra storage is 100 bytes per sample (25 MiB at 512-square/one sample), independent of
+# the interface budget. The engine validates these ordered storage-buffer read/write passes.
+[targets.giGlassPathState]
+kind = "buffer"
+stride_bytes = 32
+count = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
+
+[targets.giGlassTerminalRequests]
+kind = "buffer"
+stride_bytes = 32
+count = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
+
+[targets.giGlassTerminalHits]
+kind = "buffer"
+stride_bytes = 36
+count = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
 
 [targets.giShadowRequests]
 kind = "buffer"
 stride_bytes = 32
-count = 262144
+count = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
 enabled_if = "PLAGUE_GI != 0"
 
 [targets.giShadowHits]
 kind = "buffer"
 stride_bytes = 36
-count = 262144
+count = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
 enabled_if = "PLAGUE_GI != 0"
 
 # A lamp ray from each bounce hit, so the glowing blocks' light bounces once.
 [targets.giLampRequests]
 kind = "buffer"
 stride_bytes = 32
-count = 262144
+count = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
 enabled_if = "PLAGUE_GI != 0"
 
 [targets.giLampHits]
 kind = "buffer"
 stride_bytes = 36
-count = 262144
+count = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
 enabled_if = "PLAGUE_GI != 0"
 
 # One vec4 a cell: what every glowing block in reach sends the bounce hit, summed by gi_lamp_seed
@@ -271,14 +293,14 @@ enabled_if = "PLAGUE_GI != 0"
 [targets.giLampShade]
 kind = "buffer"
 stride_bytes = 16
-count = 262144
+count = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
 enabled_if = "PLAGUE_GI != 0"
 
 [targets.giBounceRaw]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 512
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID"
 storage = true
 # history = true IS the ping-pong: the resolve reads its own previous frame to average the noise
 # one ray per cell leaves behind. Alpha counts the frames a cell has gathered.
@@ -290,10 +312,20 @@ filter = "linear"
 # this frame's depth at last frame's spot instead fails whenever the view turns, because that spot
 # then shows a different wall.
 [targets.giSurfaceRaw]
-enabled_if = "PLAGUE_GI != 0 || PLAGUE_LOCAL_SHADOWS != 0"
+enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 512
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID"
+storage = true
+history = true
+filter = "nearest"
+
+# A separately sized receiver history for traced block light; GI may use another grid.
+[targets.giLocalSurfaceRaw]
+enabled_if = "PLAGUE_LOCAL_SHADOWS != 0"
+format = "rgba16f"
+width = "PLAGUE_LOCAL_GRID"
+height = "PLAGUE_LOCAL_GRID"
 storage = true
 history = true
 filter = "nearest"
@@ -305,8 +337,8 @@ filter = "nearest"
 [targets.giMomentsRaw]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 512
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID"
 storage = true
 history = true
 filter = "linear"
@@ -316,8 +348,8 @@ filter = "linear"
 [targets.giLightVisRaw]
 enabled_if = "PLAGUE_LOCAL_LIGHTING != 0 || PLAGUE_LOCAL_SHADOWS != 0"
 format = "rgba32f"
-width = 512
-height = 512
+width = "PLAGUE_LOCAL_GRID"
+height = "PLAGUE_LOCAL_GRID"
 storage = true
 history = true
 filter = "linear"
@@ -335,19 +367,19 @@ kind = "buffer"
 [targets.giLightRequests]
 kind = "buffer"
 stride_bytes = 32
-count = 262144
+count = "PLAGUE_LOCAL_GRID * PLAGUE_LOCAL_GRID * PLAGUE_LOCAL_SAMPLES"
 enabled_if = "PLAGUE_LOCAL_SHADOWS != 0"
 
 [targets.giLightHits]
 kind = "buffer"
 stride_bytes = 36
-count = 262144
+count = "PLAGUE_LOCAL_GRID * PLAGUE_LOCAL_GRID * PLAGUE_LOCAL_SAMPLES"
 enabled_if = "PLAGUE_LOCAL_SHADOWS != 0"
 
 [targets.giBounce]
 format = "rgba16f"
-width = 512
-height = 512
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID"
 storage = true
 filter = "linear"
 
@@ -358,16 +390,16 @@ filter = "linear"
 [targets.giBounceDirRaw]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 512
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID"
 storage = true
 history = true
 filter = "linear"
 
 [targets.giBounceDir]
 format = "rgba16f"
-width = 512
-height = 512
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID"
 storage = true
 filter = "linear"
 
@@ -377,8 +409,8 @@ filter = "linear"
 [targets.giBounceMid]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 512
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID"
 storage = true
 history = true
 filter = "linear"
@@ -386,8 +418,8 @@ filter = "linear"
 [targets.giBounceDirMid]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 512
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID"
 storage = true
 filter = "linear"
 
@@ -398,8 +430,8 @@ filter = "linear"
 [targets.giCacheLight]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 2048
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID * 4"
 storage = true
 history = true
 filter = "nearest"
@@ -407,8 +439,8 @@ filter = "nearest"
 [targets.giCacheDir]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 2048
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID * 4"
 storage = true
 history = true
 filter = "nearest"
@@ -416,8 +448,8 @@ filter = "nearest"
 [targets.giCacheMoments]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 2048
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID * 4"
 storage = true
 history = true
 filter = "nearest"
@@ -425,8 +457,8 @@ filter = "nearest"
 [targets.giCacheSurface]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 2048
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID * 4"
 storage = true
 history = true
 filter = "nearest"
@@ -445,32 +477,32 @@ filter = "nearest"
 [targets.giBounceStep2]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 512
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID"
 storage = true
 filter = "linear"
 
 [targets.giBounceDirStep2]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 512
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID"
 storage = true
 filter = "linear"
 
 [targets.giBounceStep4]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 512
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID"
 storage = true
 filter = "linear"
 
 [targets.giBounceDirStep4]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
-width = 512
-height = 512
+width = "PLAGUE_GI_GRID"
+height = "PLAGUE_GI_GRID"
 storage = true
 filter = "linear"
 
@@ -662,6 +694,8 @@ enabled_if = "SSR_QUALITY == 1"
 format = "rgba16f"
 scale = 1.0
 enabled_if = "SSR_QUALITY != 0"
+# ssr_blur owns temporal accumulation after merging current screen/world radiance. A second
+# raw-world history would enter its current bounds and bypass disocclusion/reset rejection.
 
 # Fast's temporal accumulation buffer. The history lives at HALF res, not full: accumulating at full
 # res would mean running the blur at full res, which is the 1.84 ms this tier exists to avoid.
@@ -679,6 +713,8 @@ enabled_if = "SSR_QUALITY == 1"
 [targets.ssr]
 format = "rgba16f"
 scale = 1.0
+# Reprojection lands between texels during TAA jitter; nearest history creates a biased donor.
+filter = "linear"
 history = true
 
 # Prefiltered mip chain over `ssr` (ssr_blur alone caps at a 7x7 kernel, nowhere near a hemisphere
@@ -761,7 +797,9 @@ enabled_if = "SSR_QUALITY == 2"
 # builtin.mirrorZDepth appended again: positional inputs, append never insert.
 inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHdrComposited.history", "hiz",
           "mirrorHdr", "builtin.mirrorDepth",
-          "mirrorXHdr", "builtin.mirrorXDepth", "mirrorZHdr", "builtin.mirrorZDepth"]
+          "mirrorXHdr", "builtin.mirrorXDepth", "mirrorZHdr", "builtin.mirrorZDepth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
+          "builtin.blockAtlas", "voxelFaceTexture"]
 outputs = ["ssrRaw"]
 
 # Reads FULL-res depth/Hi-Z despite writing to a half-res target: ssr_trace.fsh derives step size
@@ -774,7 +812,9 @@ enabled_if = "SSR_QUALITY == 1"
 # Same appended tail as ssr_trace_fancy above: positional inputs, append never insert.
 inputs = ["builtin.gNormal", "builtin.depth", "builtin.gMaterial", "builtin.gMotion", "sceneHdrComposited.history", "hiz",
           "mirrorHdr", "builtin.mirrorDepth",
-          "mirrorXHdr", "builtin.mirrorXDepth", "mirrorZHdr", "builtin.mirrorZDepth"]
+          "mirrorXHdr", "builtin.mirrorXDepth", "mirrorZHdr", "builtin.mirrorZDepth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary",
+          "builtin.blockAtlas", "voxelFaceTexture"]
 outputs = ["ssrRawHalf"]
 
 # The resolve_hdr prefix is the existing engine ABI for current sun, moon and fog parameters.
@@ -1034,24 +1074,35 @@ inputs = ["globals", "packOptions", "voxelLocalRadiance"]
 outputs = ["analyticLightList"]
 
 [[pass]]
-# Each grid cell's surface this frame, for next frame's history test in both grids.
+# Each grid has its own surface history so different extents cannot alias reprojection.
 name = "gi_surface"
 type = "compute"
 shader = "shaders/compute/gi_surface.comp"
-enabled_if = "PLAGUE_GI != 0 || PLAGUE_LOCAL_SHADOWS != 0"
+enabled_if = "PLAGUE_GI != 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal"]
 outputs = ["giSurfaceRaw"]
 
 [[pass]]
-# Traced lamp shadows. One ray a cell from the surface to a glowing block; the light itself stays
+# Each grid has its own surface history so different extents cannot alias reprojection.
+name = "gi_local_surface"
+type = "compute"
+shader = "shaders/compute/gi_surface.comp"
+enabled_if = "PLAGUE_LOCAL_SHADOWS != 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal"]
+outputs = ["giLocalSurfaceRaw"]
+
+[[pass]]
+# Traced lamp shadows. Independent source samples per cell; the light itself stays
 # exact and per pixel in voxel_local_direct, and only how much of it got through is measured here.
 name = "gi_light_seed"
 type = "compute"
 shader = "shaders/compute/gi_light_seed.comp"
 enabled_if = "PLAGUE_LOCAL_SHADOWS != 0"
-dispatch = [1024, 1, 1]
+dispatch = ["PLAGUE_LOCAL_GRID * PLAGUE_LOCAL_GRID * PLAGUE_LOCAL_SAMPLES / 256", 1, 1]
 # giLightVisRaw.history supplies only the grid extent. The source inventory and material inputs
 # are appended so every earlier binding retains its position.
 inputs = ["globals", "packOptions", "analyticLightList", "builtin.depth", "builtin.gNormal",
@@ -1074,7 +1125,7 @@ outputs = ["giLightHits"]
 # frame, which is sparkle on every canopy. Unanswered rays leave current ownership to voxel light.
 min_tier = "hardware_mesh"
 kind = "visibility"
-rays = 262144
+rays = "PLAGUE_LOCAL_GRID * PLAGUE_LOCAL_GRID * PLAGUE_LOCAL_SAMPLES"
 
 [[pass]]
 # Averages matched RGB source estimates; signed age distinguishes current answers from held data.
@@ -1085,7 +1136,7 @@ enabled_if = "PLAGUE_LOCAL_SHADOWS != 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 inputs = ["globals", "packOptions", "giLightRequests", "giLightHits", "builtin.depth",
-          "builtin.gNormal", "builtin.gMotion", "giLightVisRaw.history", "giSurfaceRaw.history", "giLightWeight"]
+          "builtin.gNormal", "builtin.gMotion", "giLightVisRaw.history", "giLocalSurfaceRaw.history", "giLightWeight"]
 outputs = ["giLightVisRaw"]
 
 [[pass]]
@@ -1221,11 +1272,20 @@ shader = "shaders/compute/gi_seed_rays.comp"
 enabled_if = "PLAGUE_GI != 0"
 # No local_size: a buffer-only output has no extent to derive a dispatch from, so the count is
 # literal and the group size comes from the shader's own layout.
-dispatch = [1024, 1, 1]
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
 # giBounceRaw.history is read only for imageSize: its extent is the grid this pass lays its rays
 # out over, appended last so the requests output is the only binding it moves.
 inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal", "giBounceRaw.history"]
 outputs = ["giRayRequests"]
+
+[[pass]]
+name = "gi_glass_begin"
+type = "compute"
+shader = "shaders/compute/gi_glass_begin.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests"]
+outputs = ["giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
 
 [[pass]]
 # No shader and no hardware named: the engine routes the batch to the best traversal the machine
@@ -1244,14 +1304,397 @@ min_tier = "hardware_mesh"
 kind = "closest_hit"
 # Shade the exact texel accepted by the ray's alpha test; half UVs lose several texels on large atlases.
 atlas_uv_encoding = "texel_u16"
-rays = 262144
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+# Each bend follows a native closest-hit answer. A native blocker before the glass keeps its
+# actual UV/tint/normal record; no approximate voxel hit is promoted into a mesh answer.
+# Shared scratch keeps memory independent of the number of stages. Inactive requests have
+# tMax=0 but still incur batch/interop overhead; the interface option bounds this work explicitly.
+[[pass]]
+name = "gi_glass_step_1"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 0"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_1"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 0"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_2"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 1"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_2"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 1"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_3"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 2"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_3"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 2"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_4"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 3"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_4"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 3"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_5"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 4"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_5"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 4"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_6"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 5"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_6"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 5"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_7"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 6"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_7"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 6"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_8"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 7"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_8"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 7"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_9"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 8"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_9"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 8"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_10"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 9"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_10"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 9"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_11"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 10"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_11"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 10"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_12"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 11"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_12"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 11"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_13"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 12"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_13"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 12"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_14"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 13"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_14"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 13"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_15"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 14"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_15"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 14"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_step_16"
+type = "compute"
+shader = "shaders/compute/gi_glass_step.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 15"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits"]
+
+[[pass]]
+name = "gi_glass_trace_16"
+type = "ray_query"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI_GLASS_INTERFACES > 15"
+inputs = ["giRayRequests"]
+outputs = ["giRayHits"]
+[pass.ray_query]
+min_tier = "hardware_mesh"
+kind = "closest_hit"
+atlas_uv_encoding = "texel_u16"
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
+
+[[pass]]
+name = "gi_glass_finalize"
+type = "compute"
+shader = "shaders/compute/gi_glass_finalize.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
+inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giGlassPathState",
+          "giGlassTerminalRequests", "giGlassTerminalHits", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["giRayRequests", "giGlassPathState", "giGlassTerminalRequests", "giGlassTerminalHits", "giRayHits"]
 
 [[pass]]
 name = "gi_shadow_seed"
 type = "compute"
 shader = "shaders/compute/gi_shadow_seed.comp"
 enabled_if = "PLAGUE_GI != 0"
-dispatch = [1024, 1, 1]
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
 # giBounceRaw.history is read only for imageSize: its extent is the grid this pass lays its rays
 # out over, appended last so the shadow requests output is the only binding it moves.
 inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "giBounceRaw.history"]
@@ -1272,7 +1715,7 @@ outputs = ["giShadowHits"]
 # frame, which is sparkle on every canopy. Unanswered rays hold last frame's result instead.
 min_tier = "hardware_mesh"
 kind = "visibility"
-rays = 262144
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
 
 [[pass]]
 # A lamp ray from every point the bounce landed on, so lamp light bounces once. Reads the bounce
@@ -1281,7 +1724,7 @@ name = "gi_lamp_seed"
 type = "compute"
 shader = "shaders/compute/gi_lamp_seed.comp"
 enabled_if = "PLAGUE_GI != 0"
-dispatch = [1024, 1, 1]
+dispatch = ["PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES / 256", 1, 1]
 # giBounceRaw.history is read only for imageSize: its extent is the grid this pass lays its rays
 # out over, appended last so the two outputs are the only bindings it moves.
 inputs = ["globals", "packOptions", "giRayRequests", "giRayHits", "analyticLightList",
@@ -1302,13 +1745,73 @@ outputs = ["giLampHits"]
 # frame, which is sparkle on every canopy. Unanswered rays hold last frame's result instead.
 min_tier = "hardware_mesh"
 kind = "visibility"
-rays = 262144
+rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
 
+[[pass]]
+name = "glass_photon_cache"
+type = "compute"
+shader = "shaders/compute/glass_photon_cache.comp"
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+dispatch = [1, 1, 1]
+inputs = ["globals", "voxelSectionState", "voxelLocalRadiance", "builtin.depth",
+          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelFaceTexture"]
+outputs = ["glassPhotonCache"]
+
+[[pass]]
+name = "glass_photon_trace"
+type = "compute"
+shader = "shaders/compute/glass_photon_trace.comp"
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+dispatch = [1024, 1, 1]
+inputs = ["globals", "packOptions", "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas", "analyticLightList", "sunShadowMap", "voxelLocalRadiance", "glassPhotonCache"]
+outputs = ["glassPhotons", "glassBeams"]
+
+[[pass]]
+name = "glass_gi_photon_reset"
+type = "compute"
+shader = "shaders/compute/glass_gi_photon_reset.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
+dispatch = [256, 1, 1]
+inputs = ["builtin.depth"]
+outputs = ["glassGiPhotonHeads"]
+
+[[pass]]
+name = "glass_gi_photon_bin"
+type = "compute"
+shader = "shaders/compute/glass_gi_photon_bin.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
+dispatch = [256, 1, 1]
+inputs = ["glassPhotons", "builtin.depth"]
+outputs = ["glassGiPhotonHeads", "glassGiPhotonLinks"]
+
+# Separate declarations keep disabled glass buffers out of the transport-off descriptor set.
+# Both use the same evaluator; only appended inputs and output bindings differ.
 [[pass]]
 name = "gi_resolve"
 type = "compute"
 shader = "shaders/compute/gi_resolve.comp"
-enabled_if = "PLAGUE_GI != 0"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
+local_size = [16, 16]
+dispatch = [1, 1, 1]
+# Positions 10 and 11 are the lamp hits and the lamp light at each hit. Position 5 is last
+# frame's light after its first spreading step, which is what the resolve averages against.
+inputs = ["globals", "packOptions", "giRayHits", "giShadowHits", "builtin.blockAtlas",
+          "giBounceMid.history", "builtin.gMotion", "builtin.depth", "atmoSkyView", "giRayRequests",
+          "giLampHits", "giLampShade", "builtin.gNormal", "atmoTransmittance",
+          "giBounceDirRaw.history", "giMomentsRaw.history", "giSurfaceRaw.history",
+          "giCacheLight.history", "giCacheDir.history", "giCacheMoments.history",
+          "giCacheSurface.history", "giCacheTransform.history", "voxelOccupancy", "voxelPayload",
+          "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas",
+          "builtin.materialAtlas", "giShadowRequests", "giLampRequests",
+          "glassPhotons", "glassGiPhotonHeads", "glassGiPhotonLinks", "glassPhotonCache", "glassBeams", "giGlassPathState"]
+outputs = ["giBounceRaw", "giBounceDirRaw", "giMomentsRaw"]
+
+
+[[pass]]
+name = "gi_resolve_no_glass"
+type = "compute"
+shader = "shaders/compute/gi_resolve.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT == 0"
 local_size = [16, 16]
 dispatch = [1, 1, 1]
 # Positions 10 and 11 are the lamp hits and the lamp light at each hit. Position 5 is last
@@ -1341,9 +1844,9 @@ name = "gi_cache_update"
 type = "compute"
 shader = "shaders/compute/gi_cache_update.comp"
 enabled_if = "PLAGUE_GI != 0"
-# One 16x16 invocation group per part of the 512x512 GI grid, each invocation writes four slots.
-# Do not derive dispatch from the 2048-high output; update this if the GI grid extent changes.
-dispatch = [32, 32, 1]
+# Each invocation writes all four cache slots. Dispatch follows the receiver grid, not the
+# vertically stacked output; a fixed dispatch would leave the larger tiers partly stale.
+dispatch = ["PLAGUE_GI_GRID / 16", "PLAGUE_GI_GRID / 16", 1]
 inputs = ["globals", "packOptions", "giBounceMid", "giBounceDirRaw", "giMomentsRaw", "giSurfaceRaw",
           "giCacheLight.history", "giCacheDir.history", "giCacheMoments.history",
           "giCacheSurface.history", "giCacheTransform.history", "builtin.depth"]
@@ -1389,11 +1892,11 @@ inputs = ["globals", "packOptions", "giBounceStep4", "builtin.depth", "giBounceD
 outputs = ["giBounce", "giBounceDir"]
 
 
-# RGB selected-light compensation accompanies the exact ray request; no history belongs here.
+# RGB compensation accompanies each request in a separate vertical sample layer; no history.
 [targets.giLightWeight]
 format = "rgba32f"
-width = 512
-height = 512
+width = "PLAGUE_LOCAL_GRID"
+height = "PLAGUE_LOCAL_GRID * PLAGUE_LOCAL_SAMPLES"
 storage = true
 enabled_if = "PLAGUE_LOCAL_SHADOWS != 0"
 
@@ -1409,6 +1912,20 @@ kind = "buffer"
 stride_bytes = 4
 count = 65536
 enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+
+# Camera-independent secondary-hit index. One uint head and link per existing maximum
+# photon budget: 512 KiB total. The primary screen-footprint index remains separate.
+[targets.glassGiPhotonHeads]
+kind = "buffer"
+stride_bytes = 4
+count = 65536
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
+
+[targets.glassGiPhotonLinks]
+kind = "buffer"
+stride_bytes = 4
+count = 65536
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
 
 # Companion last-segment visibility records; stride matches glass_beam.glsl.
 [targets.glassBeams]
@@ -1442,25 +1959,6 @@ kind = "buffer"
 stride_bytes = 4
 count = 394008
 enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
-
-[[pass]]
-name = "glass_photon_cache"
-type = "compute"
-shader = "shaders/compute/glass_photon_cache.comp"
-enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
-dispatch = [1, 1, 1]
-inputs = ["globals", "voxelSectionState", "voxelLocalRadiance", "builtin.depth",
-          "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelFaceTexture"]
-outputs = ["glassPhotonCache"]
-
-[[pass]]
-name = "glass_photon_trace"
-type = "compute"
-shader = "shaders/compute/glass_photon_trace.comp"
-enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
-dispatch = [1024, 1, 1]
-inputs = ["globals", "packOptions", "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas", "analyticLightList", "sunShadowMap", "voxelLocalRadiance", "glassPhotonCache"]
-outputs = ["glassPhotons", "glassBeams"]
 
 [[pass]]
 name = "glass_photon_reset"
@@ -1601,8 +2099,7 @@ scale = 1.0
 # The opaque screen trace reads last frame's copy: linear HDR, before glass is drawn over it.
 history = true
 
-# Alpha is a certified camera-to-first-glass distance, or -1 for a raster fallback. Filtering
-# would interpolate that certificate onto an unsupported pixel and incorrectly erase its geometry.
+# Pre-glass background for forward refraction. Alpha stays -1: camera glass is always raster-owned.
 [targets.glassView]
 format = "rgba16f"
 scale = 1.0
@@ -2920,29 +3417,19 @@ format = "rgba16f"
 scale = 1.0
 history = true
 
+# Preserve the pre-glass background for forward terrain's existing input 4. Volume light
+# transport cannot replace camera surfaces without their authored normals and painted detail.
 [[pass]]
 name = "glass_view"
 type = "fullscreen"
 shader = "shaders/post/glass_view.fsh"
-enabled_if = "PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GLASS_REFRACTION != 0"
-# Shared voxel helpers require blockAtlas at slot 9 and face geometry at slot 10.
-inputs = ["sceneHdrComposited", "builtin.depth", "builtin.gNormal", "voxelOccupancy",
-          "voxelPayload", "voxelPalette", "voxelBrickSummary", "builtin.materialAtlas",
-          "voxelLocalRadiance", "builtin.blockAtlas", "voxelFaceTexture"]
-outputs = ["glassView"]
-
-[[pass]]
-name = "glass_view_off"
-type = "fullscreen"
-shader = "shaders/post/glass_view_off.fsh"
-enabled_if = "PLAGUE_GLASS_TRANSPORT == 0 || PLAGUE_GLASS_REFRACTION == 0"
 inputs = ["sceneHdrComposited"]
 outputs = ["glassView"]
 
 [[pass]]
 name = "temporal_accumulate"
 type = "temporal"
-inputs = ["glassView"]
+inputs = ["sceneHdrComposited"]
 outputs = ["sceneHdrTemporal"]
 
 # Reads the accumulated scene; dry camera gets a passthrough copy. UNGATED like sceneHdrComposited:

@@ -1,9 +1,10 @@
 #ifndef PLAGUE_GLASS_PHOTON_LAYOUT
 #define PLAGUE_GLASS_PHOTON_LAYOUT
+#moj_import <fornax_runtime:glass_options.glsl>
 #moj_import <fornax_runtime:glass_optics.glsl>
-// Existing work budget: half the paths sample admitted source faces; half sample sky light.
-const uint PLAGUE_GLASS_PHOTONS = 65536u;
-const uint PLAGUE_GLASS_HASH_SIZE = 65536u; // One bucket per path bounds mean hash collisions.
+// Active prefix of the fixed graph allocation; source faces and sky each receive half the paths.
+const uint PLAGUE_GLASS_PHOTONS = uint(PLAGUE_GLASS_SAMPLES);
+const uint PLAGUE_GLASS_HASH_SIZE = 65536u; // One bucket per maximum-budget path bounds mean collisions.
 // Reconstruction radius is one quarter block: neighbouring block centres never share a kernel.
 // Jensen (1996), surface photon density estimation. Kernel footprint is a quality limit, not glass roughness.
 const float PLAGUE_GLASS_GATHER_RADIUS = 0.25;

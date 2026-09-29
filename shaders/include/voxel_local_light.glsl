@@ -1,3 +1,4 @@
+#moj_import <fornax_runtime:voxel_palette_layout.glsl>
 #ifndef PLAGUE_VOXEL_LOCAL_LIGHT
 #define PLAGUE_VOXEL_LOCAL_LIGHT
 // How many shadow rays one pixel may spend on local lights.
@@ -30,9 +31,10 @@ float plagueLocalDraw(inout uint state) {
 bool plagueLocalReceiverBuffersValid() {
     int d=u_VoxelWindow.w;
     return textureSize(u_VoxelOccupancy)==d*d*d*128 && textureSize(u_VoxelPayload)==d*d*d*1024
-            && textureSize(u_VoxelPalette)==d*d*d*1536 && textureSize(u_VoxelBrickSummary)==d*d*d;
+            && plagueVoxelPaletteCapacity(textureSize(u_VoxelPalette),d)>0 && textureSize(u_VoxelBrickSummary)==d*d*d;
 }
-bool plagueLocalReceiverFacesValid() { int d=u_VoxelWindow.w; return textureSize(u_Input10)==d*d*d*96*42; }
+int plagueLocalReceiverCapacity() { return plagueVoxelPaletteCapacity(textureSize(u_VoxelPalette),u_VoxelWindow.w); }
+bool plagueLocalReceiverFacesValid() { int d=u_VoxelWindow.w; return plagueVoxelMaterialBuffersValid(textureSize(u_VoxelPalette),textureSize(u_Input10),d); }
 uint plagueLocalReceiverOccupancy(int word) { return texelFetch(u_VoxelOccupancy,word).r; }
 uint plagueLocalReceiverPayload(int word) { return texelFetch(u_VoxelPayload,word).r; }
 uint plagueLocalReceiverPalette(int word) { return texelFetch(u_VoxelPalette,word).r; }

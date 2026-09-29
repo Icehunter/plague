@@ -1,0 +1,42 @@
+#version 450
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:rt_sampling.glsl>
+#define PLAGUE_GLASS_BINDING_START 7
+#moj_import <fornax_runtime:glass_compute_scene.glsl>
+#define PLAGUE_GI_GLASS_PATH_TRANSPORT
+#moj_import <fornax_runtime:gi_glass_path.glsl>
+layout(local_size_x=256) in;
+layout(std430,set=0,binding=2) readonly buffer GiPathRequests { vec4 requests[]; };
+layout(std430,set=0,binding=3) readonly buffer GiPathHits { uint hits[]; };
+layout(std430,set=0,binding=4) readonly buffer GiPathState { uvec4 state[]; };
+layout(std430,set=0,binding=5) readonly buffer GiPathTerminalRequests { vec4 terminalRequests[]; };
+layout(std430,set=0,binding=6) readonly buffer GiPathTerminalHits { uint terminalHits[]; };
+layout(std430,set=0,binding=14) writeonly buffer GiPathFinalRequests { vec4 finalRequests[]; };
+layout(std430,set=0,binding=15) writeonly buffer GiPathFinalState { uvec4 finalState[]; };
+layout(std430,set=0,binding=16) writeonly buffer GiPathFinalTerminalRequests { vec4 finalTerminalRequests[]; };
+layout(std430,set=0,binding=17) writeonly buffer GiPathFinalTerminalHits { uint finalTerminalHits[]; };
+layout(std430,set=0,binding=18) writeonly buffer GiPathFinalHits { uint finalHits[]; };
+void main() {
+    uint index=gl_GlobalInvocationID.x;
+    if(index>=uint(requests.length())/2u) return;
+    PlagueGiGlassPath path=plagueGiGlassPathDecode(state[index*2u],state[index*2u+1u]);
+    vec4 origin=requests[index*2u],ray=requests[index*2u+1u];
+    uint nativeHit[9];
+    for(uint word=0u;word<9u;++word) nativeHit[word]=hits[index*9u+word];
+    bool wasActive=path.status==PLAGUE_GI_PATH_ACTIVE;
+    plagueGiGlassAdvance(origin,ray,path,nativeHit,false);
+    if(path.status==PLAGUE_GI_PATH_TERMINAL && !wasActive) {
+        origin=terminalRequests[index*2u]; ray=terminalRequests[index*2u+1u];
+        for(uint word=0u;word<9u;++word) nativeHit[word]=terminalHits[index*9u+word];
+    }
+    if(path.status!=PLAGUE_GI_PATH_TERMINAL) {
+        origin=vec4(0.0); ray=vec4(0.0,1.0,0.0,0.0);
+        for(uint word=0u;word<9u;++word) nativeHit[word]=0u;
+    }
+    finalRequests[index*2u]=origin; finalRequests[index*2u+1u]=ray;
+    for(uint word=0u;word<9u;++word) finalHits[index*9u+word]=nativeHit[word];
+    finalState[index*2u]=plagueGiGlassPathWeight(path);
+    finalState[index*2u+1u]=plagueGiGlassPathInitial(path);
+}

@@ -1,0 +1,18 @@
+#version 450
+#moj_import <fornax_runtime:glass_photons.glsl>
+// One invocation owns one next-link; the head exchange serializes bucket insertion.
+layout(local_size_x=256,local_size_y=1,local_size_z=1) in;
+layout(std430,set=0,binding=0) readonly buffer GlassPhotons { vec4 photonWords[]; };
+layout(set=0,binding=1) uniform sampler2D u_Depth;
+layout(std430,set=0,binding=2) buffer GlassGiHeads { uint headWords[]; };
+layout(std430,set=0,binding=3) writeonly buffer GlassGiLinks { uint linkWords[]; };
+void main() {
+    uint index=gl_GlobalInvocationID.x;
+    if(index>=PLAGUE_GLASS_PHOTONS) return;
+    uint base=index*PLAGUE_GLASS_PHOTON_WORDS;
+    vec4 photon=photonWords[base];
+    // Only local flux has the same radiometric convention as the GI lamp term.
+    if(photon.w==0.0 || photonWords[base+1u].a!=0.0) return;
+    ivec3 cell=ivec3(floor(photon.xyz/PLAGUE_GLASS_HASH_CELL));
+    linkWords[index]=atomicExchange(headWords[plagueGlassBucket(cell)],index+1u);
+}

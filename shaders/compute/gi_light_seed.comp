@@ -1,4 +1,5 @@
 #version 450
+#moj_import <fornax_runtime:voxel_palette_layout.glsl>
 
 // Select from the same full-BRDF source offers as voxel_local_direct. The selected RGB
 // importance weight accompanies its hardware ray; no diffuse-only or capped light list is used.
@@ -6,6 +7,7 @@
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:rt_sampling.glsl>
 #moj_import <fornax_runtime:geometric_normal.glsl>
 #moj_import <fornax_runtime:local_light_handoff.glsl>
 #moj_import <fornax_runtime:color.glsl>
@@ -32,9 +34,10 @@ int plagueLocalSourceSize() { return sourceWords.length(); }
 bool plagueLocalReceiverBuffersValid() {
     int d=u_VoxelWindow.w;
     return glassOccupancy.length()==d*d*d*128 && glassPayload.length()==d*d*d*1024
-        && glassPalette.length()==d*d*d*1536 && glassSummary.length()==d*d*d;
+        && plagueVoxelPaletteCapacity(glassPalette.length(),d)>0 && glassSummary.length()==d*d*d;
 }
-bool plagueLocalReceiverFacesValid() { int d=u_VoxelWindow.w; return glassFaces.length()==d*d*d*96*42; }
+int plagueLocalReceiverCapacity() { return plagueVoxelPaletteCapacity(glassPalette.length(),u_VoxelWindow.w); }
+bool plagueLocalReceiverFacesValid() { int d=u_VoxelWindow.w; return plagueVoxelMaterialBuffersValid(glassPalette.length(),glassFaces.length(),d); }
 uint plagueLocalReceiverOccupancy(int word) { return glassOccupancy[word]; }
 uint plagueLocalReceiverPayload(int word) { return glassPayload[word]; }
 uint plagueLocalReceiverPalette(int word) { return glassPalette[word]; }
@@ -52,9 +55,13 @@ float plagueLocalRtDraw(inout uint state) {
 void main() {
     uint index=gl_GlobalInvocationID.x;
     ivec2 size=imageSize(u_GiGrid);
-    if(index>=uint(size.x*size.y)) return;
-    ivec2 cell=ivec2(int(index)%size.x,int(index)/size.x);
-    imageStore(u_GiLightWeight,cell,vec4(0.0));
+    if(index>=uint(size.x*size.y)*uint(PLAGUE_LOCAL_SAMPLES)) return;
+    uint cellIndex=plagueRayCell(index,uint(PLAGUE_LOCAL_SAMPLES));
+    uint sampleIndex=plagueRaySample(index,uint(PLAGUE_LOCAL_SAMPLES));
+    ivec2 cell=ivec2(int(cellIndex)%size.x,int(cellIndex)/size.x);
+    // Independent weight per request; shared storage would race samples in the same cell.
+    ivec2 weightCell=cell+ivec2(0,int(sampleIndex)*size.y);
+    imageStore(u_GiLightWeight,weightCell,vec4(0.0));
     // Canonical inactive interval: Vulkan requires tMin <= tMax even for an empty request.
     rays.words[index*2u]=vec4(0.0);
     rays.words[index*2u+1u]=vec4(0.0,1.0,0.0,0.0);
@@ -117,13 +124,13 @@ void main() {
     for(int channel=0;channel<3;channel++)
         if(offered[channel]>0.0)
             weight[channel]=selected.offer[channel]*worth/(selectedWorth*offered[channel]);
-    imageStore(u_GiLightWeight,cell,vec4(weight,1.0));
+    imageStore(u_GiLightWeight,weightCell,vec4(weight,1.0));
 #if PLAGUE_GLASS_TRANSPORT != 0
     if(plagueGlassSegmentIntersects(origin,direction,span)) {
         // Refracted transport owns this path; a negative tag is valid zero direct energy.
         rays.words[index*2u].w=0.0;
         rays.words[index*2u+1u].w=0.0;
-        imageStore(u_GiLightWeight,cell,vec4(vec3(0.0),-1.0));
+        imageStore(u_GiLightWeight,weightCell,vec4(vec3(0.0),-1.0));
     }
 #endif
 }

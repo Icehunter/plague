@@ -1,0 +1,41 @@
+#version 450
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:rt_sampling.glsl>
+#define PLAGUE_GLASS_BINDING_START 7
+#moj_import <fornax_runtime:glass_compute_scene.glsl>
+#define PLAGUE_GI_GLASS_PATH_TRANSPORT
+#moj_import <fornax_runtime:gi_glass_path.glsl>
+layout(local_size_x=256) in;
+layout(std430,set=0,binding=2) readonly buffer GiPathRequests { vec4 requests[]; };
+layout(std430,set=0,binding=3) readonly buffer GiPathHits { uint hits[]; };
+layout(std430,set=0,binding=4) readonly buffer GiPathState { uvec4 state[]; };
+layout(std430,set=0,binding=5) readonly buffer GiPathTerminalRequests { vec4 terminalRequests[]; };
+layout(std430,set=0,binding=6) readonly buffer GiPathTerminalHits { uint terminalHits[]; };
+layout(std430,set=0,binding=14) writeonly buffer GiPathNextRequests { vec4 nextRequests[]; };
+layout(std430,set=0,binding=15) writeonly buffer GiPathNextState { uvec4 nextState[]; };
+layout(std430,set=0,binding=16) writeonly buffer GiPathNextTerminalRequests { vec4 nextTerminalRequests[]; };
+layout(std430,set=0,binding=17) writeonly buffer GiPathNextTerminalHits { uint nextTerminalHits[]; };
+void main() {
+    uint index=gl_GlobalInvocationID.x;
+    if(index>=uint(requests.length())/2u) return;
+    PlagueGiGlassPath path=plagueGiGlassPathDecode(state[index*2u],state[index*2u+1u]);
+    vec4 origin=requests[index*2u],ray=requests[index*2u+1u];
+    vec4 savedOrigin=origin,savedRay=ray;
+    uint nativeHit[9];
+    for(uint word=0u;word<9u;++word) nativeHit[word]=hits[index*9u+word];
+    bool wasActive=path.status==PLAGUE_GI_PATH_ACTIVE;
+    plagueGiGlassAdvance(origin,ray,path,nativeHit,true);
+    if(wasActive && path.status==PLAGUE_GI_PATH_TERMINAL) {
+        nextTerminalRequests[index*2u]=savedOrigin;
+        nextTerminalRequests[index*2u+1u]=savedRay;
+        for(uint word=0u;word<9u;++word) nextTerminalHits[index*9u+word]=nativeHit[word];
+    }
+    // Other terminal records are already persistent. Only this index may read/write its slot;
+    // the graph declares both accesses so scratch reuse requires ordered resource versions.
+    nextRequests[index*2u]=path.status==PLAGUE_GI_PATH_ACTIVE?origin:vec4(0.0);
+    nextRequests[index*2u+1u]=path.status==PLAGUE_GI_PATH_ACTIVE?ray:vec4(0.0,1.0,0.0,0.0);
+    nextState[index*2u]=plagueGiGlassPathWeight(path);
+    nextState[index*2u+1u]=plagueGiGlassPathInitial(path);
+}

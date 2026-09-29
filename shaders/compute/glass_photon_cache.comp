@@ -1,4 +1,5 @@
 #version 450
+#moj_import <fornax_runtime:voxel_palette_layout.glsl>
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
@@ -22,8 +23,8 @@ void main() {
     int d=u_VoxelWindow.w;
     bool valid=d>0 && d<=33 && sectionWords.length()==d*d*d*8
         && occupancyWords.length()==d*d*d*128 && payloadWords.length()==d*d*d*1024
-        && paletteWords.length()==d*d*d*1536 && summaryWords.length()==d*d*d
-        && faceWords.length()==d*d*d*96*42
+        && plagueVoxelPaletteCapacity(paletteWords.length(),d)>0 && summaryWords.length()==d*d*d
+        && plagueVoxelMaterialBuffersValid(paletteWords.length(),faceWords.length(),d)
         && sourceWords.length()==PLAGUE_LOCAL_SOURCE_WORDS
         && sourceWords[0]==2u && sourceWords[1]==uint(PLAGUE_LOCAL_CAPACITY)
         && sourceWords[2]<=uint(PLAGUE_LOCAL_CAPACITY) && sourceWords[3]!=0u;

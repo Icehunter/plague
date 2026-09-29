@@ -16,6 +16,7 @@
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:rt_sampling.glsl>
 #moj_import <fornax:ray_answer.glsl>
 #define PLAGUE_GI_LIGHT_READER
 #moj_import <fornax_runtime:gi_lights.glsl>
@@ -64,7 +65,7 @@ void plagueGiNoRay(uint index) {
 void main() {
     uint index = gl_GlobalInvocationID.x;
     uvec2 gridSize = uvec2(imageSize(u_GiGrid));
-    if (index >= gridSize.x * gridSize.y) return;
+    if (index >= gridSize.x * gridSize.y * uint(PLAGUE_GI_SAMPLES)) return;
 
     uint base = index * PLAGUE_GI_HIT_WORDS;
 

@@ -46,8 +46,8 @@ const float PLAGUE_ATLAS_GHOST_DIST = 32.0;
 #define PLAGUE_WATER_INTERACTION 2 //[0 1 2] compile "Player Water Interaction" {0="Off" 1="High" 2="Epic"}
 #define PLAGUE_WATER_MESH_DISPLACEMENT 1 //[0 1] compile "Water Wave Motion" {0="Off" 1="Standard"}
 
-// Enables volume refraction where the optical scene certifies the ray. Uncertified geometry
-// retains the screen-space fallback below, whose magnitude is u_RefractStrength.
+// Screen-space refraction follows the surface's authored normal and material maps.
+// u_RefractStrength controls the background displacement.
 #define PLAGUE_GLASS_REFRACTION 1 //[0 1] compile "Glass Refraction" {0="Off" 1="On"}
 // KEPT COMPILE, deliberately: `#if PLAGUE_PUDDLE_RIPPLE_PCT > 0` elides the whole impact evaluation,
 // and a runtime version would keep that code resident in the hottest shader in the pack.
@@ -92,7 +92,7 @@ uniform sampler2D u_GeomInput2;
 // waterWaveB.history: previous actor-centred (pressure, velocity, dPdx, dPdy). Appended after the
 // three established slots so every existing lookup keeps its index.
 uniform sampler2D u_GeomInput3;
-// glassView: linear HDR plus a certified first-glass distance in alpha, or -1 when unsupported.
+// glassView: linear HDR background before translucent glass; forward terrain owns its surface.
 // TRANSLUCENT ONLY: SOLID and CUTOUT share this shader and bind group but run
 // before the passes that write it, so they read last frame's colour with no error anywhere.
 uniform sampler2D u_GeomInput4;
@@ -886,22 +886,6 @@ void main() {
     // is split between porosity and SSS. Inter-level filtering would invent a third material.
     vec4 forwardMaterialSample = plaguePagedMaterialLod(uv, ddx, ddy, spriteBounds, haveBounds);
 
-#if PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GLASS_REFRACTION != 0
-    // A positive marker certifies every translucent model on the original raster ray as a
-    // represented closed glass volume. Without that certificate, suppressing a later pane erases it.
-    ivec2 glassPixel=ivec2(gl_FragCoord.xy);
-    float firstGlassDistance=texelFetch(u_GeomInput4,glassPixel,0).a;
-    float glassOpaqueDepth=texelFetch(u_GeomInput5,glassPixel,0).r;
-    vec2 glassUv=(vec2(glassPixel)+0.5)/vec2(textureSize(u_GeomInput4,0));
-    vec4 glassOpaquePoint=u_InvProjModelView*vec4(glassUv*2.0-1.0,max(glassOpaqueDepth,1e-6),1.0);
-    // Four shared voxel tolerances cover raster reconstruction and the boundary's two nudges.
-    float glassTolerance=PLAGUE_GLASS_EPSILON*4.0;
-    float fragmentDistance=length(v_WorldPos);
-    float glassRayEnd=glassOpaqueDepth>0.0 ? length(glassOpaquePoint.xyz/glassOpaquePoint.w) : PLAGUE_GLASS_VIEW_REACH;
-    if(!isWater && forwardMaterialSample.g<(229.5/255.0) && firstGlassDistance>0.0
-            && fragmentDistance+glassTolerance>=firstGlassDistance
-            && fragmentDistance<=glassRayEnd+glassTolerance) discard;
-#endif
 
     bool forwardNormalSignal = any(greaterThan(
             abs(forwardNormalSample - FORWARD_NORMAL_FALLBACK),

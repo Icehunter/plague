@@ -91,6 +91,13 @@ half-size target (normal, colour, material), not the entities G-buffer. The engi
 for them (`PlayerMirrorCaster`) and owns those targets. They read no runtime option, like every other
 geometry pass, and run when `SSR_QUALITY != 0`.
 
+Opaque wall receivers use their own geometric plane, translating the stored player image from
+the engine's selected capture plane. The shifted ray may enter the capture frustum after starting
+outside it. With World Reflections enabled, a bounded voxel query checks each confirmed player hit
+before any screen-space early return: proven opaque or alpha-tested geometry hides that body
+pixel; pending or unavailable geometry cannot establish a blocker. The capture remains a single
+view per wall axis, so body geometry clipped out of that view cannot be reconstructed by translation.
+
 The terrain position decoder matches Fornax's fixed-point vertex codes: 2048 steps per block,
 offset by -8. It recovers the integer from UNORM before scaling, so adjacent section origins
 preserve shared edges. Encoder and decoder updates require rebuilding meshes and shaders together.
@@ -190,7 +197,7 @@ Lightmap-only revisions do not change optical geometry. Changing the eligible so
 change each source's finite sample quota. This is cached finite quadrature, not progressive
 convergence toward an unlimited path count.
 
-Sun and moon photons use two fixed samples per world-anchored launch cell and are retraced for the
+Sun and moon photons use a complete world-anchored launch grid and are retraced for the
 current celestial direction and shadow map. Their plane stays between one and two launch radii
 above the eye; three radii of trace reach cover receivers one radius below it.
 
@@ -214,10 +221,9 @@ The gather shades the retained arrival directions with the current pixel's mater
 normal and view direction on every frame. It sends that result directly to consolidation, with
 no caustic RGB history or material-neighbourhood filter. Newly visible receivers can query the
 same transport data immediately. The direct-sun ownership mask also comes from the current frame.
-Finite photon density can leave fixed spatial sampling error; rough camera paths through glass
-remain a separate source of noise.
+Finite photon density can leave fixed spatial sampling error.
 
-`glass_scene.glsl` shares geometric boundary traversal between camera and light paths. Fornax's
+`glass_scene.glsl` supplies geometric boundary traversal for light paths. Fornax's
 face sidecar certifies closed unions of axis-aligned model boxes and reports render layers and UV
 maps. Wrapped models obtain these facts from complete renderer-owned emissions, including faces
 culled from the visible mesh. A state's box shape may propose connected geometry, but its union's
@@ -236,27 +242,41 @@ incoming RGB by thickness-dependent transmission. Linear material colour means t
 one block; it is a pack convention because labPBR supplies no bulk absorption channel. Smoothness
 controls a GGX interface. Normal-map relief does not alter the optical boundary.
 
-`glass_view` follows camera paths after the water composite and before temporal accumulation. Its
-alpha certifies that the original raster ray contains only supported glass before the opaque depth;
-forward terrain uses that certificate to avoid drawing the represented glass twice. Unsupported
-models or incomplete paths retain the existing raster effect. An exit touching an opaque lamp can
-end at that lamp; a painted glass texel without opaque backing still keeps its raster surface.
-The first optical interface samples one GGX normal and evaluates both Fresnel branches, summing
-their contributions with weights F and 1-F. Later boundaries remain stochastic. Total internal
-reflection gives the reflected branch full weight; geometric hemisphere rejection is a valid zero.
-When either branch cannot resolve its receiver, the original Fresnel choice selects its unweighted
-path or raster fallback. This preserves the previous estimator's fallback behaviour without
-renormalizing successful branches. It removes first-choice variance, not roughness or later-bounce
-variance, and can require two camera paths.
+Camera glass is drawn by forward terrain, which samples its authored albedo, normal and material
+maps and applies screen-space refraction. `glass_view` keeps an unchanged pre-glass HDR background
+at terrain's existing input 4; its alpha is always the invalid certificate sentinel, -1. Temporal
+accumulation reads `sceneHdrComposited` directly. No random optical path can suppress a raster
+surface. The homogeneous optical volume used for photon transport cannot represent painted surface
+detail or normal-map relief, so it does not replace the camera image. Camera refraction remains a
+screen-space approximation without thickness-dependent volume absorption.
 
-The off pass copies the scene with an invalid certificate. Recovered screen radiance requires
-agreement with the traced receiver; offscreen recovery includes local emitters and emission only.
-Ordinary diffuse GI rejects straight connections through glass; refracted diffuse GI paths are not
-implemented.
+GI additionally gathers local glass photons at its opaque secondary hit. Photon cache and trace
+run before `gi_resolve`; `glass_gi_photon_reset`/`glass_gi_photon_bin` build a separate world-cell
+index (512 KiB) so off-screen secondary surfaces participate. The gather uses the same surface
+footprint and last-leg visibility as primary shading, then applies the hit's albedo/pi once.
+Missing cache/index data is an unanswered GI sample; a valid empty gather is zero. The primary
+screen index and material response remain separate. This supplies lamp -> glass -> opaque surface
+-> receiver paths, using the existing photon and GI sample budgets; candidate visibility still
+costs optical traversal. Local photons retain their existing direct-light/shadow enablement gate.
 
-Unresolved forward conductors use six appended terrain texel buffers to evaluate source RGB, material
+With glass transport enabled, primary GI paths continue through certified dielectric boundaries.
+`gi_glass_begin` saves the initial hemisphere bearing and initializes throughput. Each ordered
+`gi_glass_step`/`gi_glass_trace` pair checks the native opaque blocker before selecting reflection
+or refraction at the next optical boundary. Beer absorption, radiance eta-squared and rough-surface
+masking accumulate along the path; `gi_glass_finalize` restores the exact terminal native request
+and hit for sun/lamp seeding. The final resolve applies this weight once and retains the initial
+bearing. A budget-exhausted or unavailable path holds compatible history rather than adding black.
+These buffer updates require an engine supporting ordered, initialized compute storage-buffer reuse.
+They add 100 bytes per GI sample (25 MiB at 512-square/one sample), plus one native query per allowed
+boundary. This is one diffuse bounce with intervening dielectric events, not multiple diffuse bounces.
+The optical boundaries use geometric normals and roughness, not raster normal-map relief.
+Celestial glass photons do not yet contribute at secondary GI hits; their active sun/moon color
+convention differs from GI's current true-sun convention. Secondary sun/lamp straight connections
+still reject glass; local transmitted lighting at the secondary surface comes from glass photons.
+
+Forward conductors use six appended terrain texel buffers to evaluate source RGB, material
 response and voxel visibility at the fragment's own position. A valid query replaces the vanilla
-block-light contribution; missing geometry or source data retains the original lightmap. Unresolved
+block-light contribution; missing geometry or source data retains the original lightmap. Camera
 dielectrics retain the full vanilla-lit material tint, including opaque painted borders. An opaque
 surface-light query cannot replace transmission lighting merely because its result is valid and
 black. This fallback preserves raster appearance; it does not supply volume absorption or refracted
@@ -265,8 +285,8 @@ remain allocated while the producers are disabled because terrain has unconditio
 window the existing grid allocation uses at least 27.90 MiB with Standard light detail, or 67.77 MiB
 with High, excluding CPU geometry and allocator overhead.
 
-The same optical representation runs under voxel and hardware RT lighting. Its fixed photon count,
-finite light domain, gather radius and camera traversal limits make this an approximation; shader
+The same optical representation runs under voxel and hardware RT lighting. Its selected photon count,
+finite light domain, gather radius and optical traversal limits make this an approximation; shader
 compilation, CPU optical checks and GPU classifier fixtures do not establish its final client
 appearance, per-position capture coverage or frame cost.
 
@@ -513,19 +533,24 @@ are marginal draw differences, not exact timings inside the normal shader, and e
 is not a gameplay benchmark.
 
 Opaque recovery uses a separate entry into the same material, lighting and fog implementation.
-`resolve_hdr_opaque_reflection_fancy` and `_fast` run between their SSR trace and blur, at one eighth
-of the linear resolution of those rays. The `resolve_hdr` prefix is the existing engine ABI that
-supplies active sun, moon and terrain distance. A coarse receiver reuses its current SSR hit or
-traces world geometry on a miss. Its geometry and colour both use one snapped SSR texel centre;
-the reconstruction derives that same centre even at odd resolutions. `opaque_reflection_upsample`
-and `_fast` reconstruct at the SSR
-resolution, checking the containing coarse receiver against the geometric plane and shading lobe. With no compatible donor
-they leave a hole rather than borrow another surface. Every positive SSR hit keeps its existing
-colour and confidence. Coarse screen donors retain their fractional confidence, while world hits,
-including black blockers, carry confidence one. The recovered image is appended at blur input 6
-and enters the same roughness filtering and mip pyramid. A miss or unavailable voxel data stays
+`resolve_hdr_opaque_reflection_fancy` and `_fast` run between their SSR trace and blur, at full
+screen resolution. The `resolve_hdr` prefix is the existing engine ABI that supplies active sun,
+moon and terrain distance. Every eligible receiver traces world geometry; the downstream merge
+preserves every positive SSR hit's colour and confidence. World hits, including black blockers,
+carry confidence one. Epic merges recovery at blur input 6, before roughness filtering and the
+mip pyramid; High merges after its half-resolution SSR upsample. Only the merged reflection has
+temporal history: raw world history must not contaminate the current bounds used to reject stale
+colour. Both reflection history targets use linear sampling: TAA reprojection lands between texel
+centres even at full resolution, where nearest sampling biases the history donor. A miss or unavailable voxel data stays
 zero confidence, leaving the existing sky/enclosure fallback in charge. Recovery retains the
 above-water-view boundary of the shared world lighting; underwater SSR is unchanged.
+
+The final world bounce uses direct surface lighting with coverage-weighted transmission through
+translucent texels. Four visible surfaces bound shading, while touching full cells with the same
+palette entry skip internal faces. Separate panes blend separately. Exhausted or unavailable
+transmission retains only the known prefix; it cannot manufacture a clear background. This is a
+finite approximation, without secondary refraction or recursive reflection. Equivalent glass in
+different section palette entries can still spend separate layers.
 
 Opaque reflected surfaces use local sources with either local lighting mode enabled. Their direct
 light suppresses merged block light and evaluates the existing finite source visibility probes
@@ -555,13 +580,40 @@ Both buffers are optional and allocated only when the option is on:
   1024 words per section, same wrapped slot and Y/Z/X order as the geometry. Full cube faces read
   the light outside the block; partial shapes and crossed planes read their own cell. Shape bits,
   not material flags, pick the side.
-- `voxelFaceTexture` (input 10): six baked face mappings per entry, atlas UVs plus layer-zero tint,
-  single-quad full cube faces only. Each face is seven words: one holds RGB and flags, the other six
-  hold the UV values as float32. 168 bytes per palette entry, about 75.6 MiB at eight chunks.
+- `voxelFaceTexture` (input 10): six seven-word records per entry, atlas UVs plus face tint.
+  Cardinal full and partial faces use their direction's record. CROSS uses the first four records,
+  indexed by the signs of the diagonal normal's X/Z components; its palette colour lanes stay zero.
+  Its UVs fit the same rounded box as traversal, including rotated or mirrored texture coordinates.
+  Each record holds RGB and flags plus six affine UV float32 values: 168 bytes per palette entry,
+  about 75.6 MiB at eight chunks. A unique opaque boundary backing can retain its texture beneath
+  strictly exterior cutout layers; coplanar compositions remain unsupported.
+
+For contextual full-block models, the engine records the final emitted visible face's sprite,
+UVs, tint index and uniform vertex multiplier. This prevents the untransformed model's placeholder
+sprite from appearing in reflections. Tint still uses the section-center biome approximation.
+Appearance and optical boundary evidence share one palette variant, within the engine-selected
+96/128/192/240-entry limit; unsupported or overflowed contextual appearance stays unavailable. Appearance capture
+does not establish opacity or a closed optical boundary. Partial shapes and crossed plants retain
+their existing mapping paths.
+
+Material shading accepts legacy face mappings and explicit boundary mappings, including translucent
+boundaries. Visibility consumers retain their narrower legacy contract. UV validation and clamping
+use the selected partial or CROSS box; validation permits bounded float32 corner roundoff at atlas
+edges. Glass therefore supplies texture alpha, tint, normals and material channels to the existing
+finite transmission path. A successful CROSS alpha intersection is a geometry hit even though its
+cardinal colour lanes are zero. Unsupported plant mappings still use the existing sprite alpha
+approximation for traversal; they cannot invent textured reflected radiance.
 
 `surface_lighting.glsl` supplies the frame light colours; `main_lighting.glsl` and the shared BRDF
 shade the bounce. Palette word15 is a block's own glow; block light landing on it is not glow. Four
 GGX directions give one rough second bounce. Missing or unloaded coverage never claims sky.
+
+The primary world ray separates cell traversal from its four shaded-surface budget. Touching,
+face-adjacent full cells with the same palette entry skip their hidden interior interface; air gaps
+and corner contacts start another surface. The traversal bound comes from the window's three axis
+extents. Zero-alpha cells consume no shading budget. A finished opaque hit or an environment exit
+after transmission produces a confident answer; pending, malformed, undecodable or exhausted
+continuations produce no answer, rather than a confident black prefix.
 
 Fog on the reflected ray covers water to hit only. The border comes from the engine's terrain
 radius around the camera, whatever the ray's length; PassParams carries that radius and the sun.
@@ -688,9 +740,10 @@ with a complete set of compatible, current RT donors skip the voxel emitter scan
 transition, distant and uncovered pixels retain voxel estimates in `voxelLocalVisVoxel`.
 
 `PLAGUE_LOCAL_SHADOWS` runs `gi_light_seed`, `gi_light_trace` and `gi_light_resolve`. The seed sends
-one ray per active cell of a 512x512 grid. It selects a source by its RGB material contribution and
+1/2/4 independent rays per active cell of a selected 256/512/768/1024-square grid. Each selects a source by its RGB material contribution and
 samples a point uniformly across that source face. The trace pass asks whether the segment is
-blocked. The resolve averages RGB visibility estimates for up to 24 frames in `giLightVisRaw`,
+blocked. Each request owns a weight texel in a separate vertical sample layer. The resolve first
+averages the within-frame RGB estimates, then averages for up to 24 frames in `giLightVisRaw`,
 using motion vectors and surface planes to reject history from a different surface.
 
 `gi_light_upsample` merges the results whenever either direct mode is on. Its 2x2 RT lookup accepts
@@ -718,7 +771,7 @@ old spot must lie in the cell's own plane (2 percent of distance, 0.05 block flo
 same way. When bilinear bounce history is empty, `gi_surface_cache.glsl` first checks four separate
 surface estimates at that same cell. `gi_cache_update`, immediately after `gi_blur`, stores the
 once-filtered colour, raw direction, raw moments and normal/plane in four vertically stacked
-512x512 slots. These estimates survive the four TAA coverage phases without blending different
+one tuple per selected GI cell. These estimates survive the four TAA coverage phases without blending different
 leaf planes. The exact unjittered inverse camera and zero camera translation gate reuse; any view
 change clears the older slots and leaves ordinary motion reprojection intact. A fifth full-float
 metadata texel carries the lighting clock: discontinuous world time rejects every GI history path,
@@ -733,7 +786,7 @@ If no cached surface matches, bounce history can recover the nearest compatible 
 one cell. The borrowed estimate counts as at most one prior sample, so a different coplanar
 lighting region cannot donate its entire accumulated confidence. The current surface target stays
 truthful for filtering and traced direct visibility, which keeps its original bilinear-only test.
-The cache adds 64 MiB of ping-pong surface tuples plus its small camera metadata and one compute
+At the default 512-square grid, the cache adds 64 MiB of ping-pong surface tuples plus its small camera metadata and one compute
 pass, with no additional rays; native regression and owner checks are required to establish its
 appearance and frame cost.
 
@@ -744,7 +797,8 @@ can round across several texels on large atlases and shade a hole or neighboring
 of the accepted surface. This graph requires an engine that recognizes the encoding option.
 
 The resolve adds `kD * albedo * giBounce` to the local light. Ray-query passes use the engine's
-tracing backend. Local shadows and GI together run four such passes, plus the sun shadow work.
+tracing backend. Local shadows and GI together run four base query passes, plus sun shadow work
+and the configured GI dielectric continuation queries when glass transport is on.
 
 With `PLAGUE_GI_VIEW` enabled, `gi_debug_view` displays the filtered bounce before bump shaping.
 Its appended 2D sampler bindings expose raw/filtered light and direction, moments/history age,
@@ -833,3 +887,45 @@ per voxel section when not already allocated. The full-resolution RGBA16F direct
 writes before graphics reads, and previous graphics reads before subsequent compute writes.
 Native shader fixtures verify transport and ABI cases; they do not establish the installed resource
 pack's appearance or live Vulkan frame cost. Owner validation remains required.
+
+
+### Category quality budgets
+
+The Ray Tracing page exposes independent MetaSpec presets for GI, block light, sun shadows,
+reflections and glass lighting. They stage the underlying controls atomically; granular edits
+show Custom and existing saved settings remain unchanged. Artistic strengths, materials, normal
+maps and feature enable switches are not assigned by these presets.
+
+GI and traced block light each have independent `PLAGUE_*_GRID` (256/512/768/1024) and
+`PLAGUE_*_SAMPLES` (1/2/4) compile options. The default is the existing 512-square, one-sample
+budget. Low/Medium/High/Ultra select 256/1, 512/1, 768/2 and 1024/4: 0.25/1/4.5/16 times the
+default base sample count. GI presets also select 2/4/8/16 dielectric interfaces through
+`PLAGUE_GI_GLASS_INTERFACES`; an isolated slab normally needs two. Every GI sample owns a bounce,
+sun and lamp query plus one continuation query per allowed interface when glass transport is on.
+Inactive paths submit disabled requests in the remaining stages. Local lighting owns one source
+visibility query per sample. These are explicit work budgets, not measured FPS tiers.
+
+`graph.toml` uses compile-option integer expressions for all related image dimensions, request and
+answer buffers, ray counts, and dispatch dimensions. GI cache height remains four times the chosen
+side; its commit dispatch follows the receiver grid. `giLocalSurfaceRaw` and `gi_local_surface`
+provide a separate direct-light geometry history, preventing different grid sizes from sharing
+incompatible reprojected cells. Allocation changes rebuild and clear histories together.
+
+`rt_sampling.glsl` interleaves records as cell * samples + sample. GI stratifies the cosine
+hemisphere by equal disc area; local lighting independently selects sources and face points.
+Within-frame linear estimates are averaged before the existing temporal/spatial filters, and GI
+bearings are luminance-weighted. Any unavailable required query holds compatible history for the
+whole estimate. This includes requested GI sun/lamp child queries; an inactive child remains a
+valid zero contribution. One-sample sequences retain their previous layout and random draws.
+
+Glass lighting offers 16384/32768/65536 paths. Half go to local emitters, half to a complete sun
+grid (64-square with two samples, 128-square with one, or 128-square with two). Flux normalization
+uses actual source quotas, and the budget participates in the cache tag. Allocations, hash reset
+and full-resolution gathering remain at maximum; reducing paths reduces tracing/binning work,
+not all glass costs. Reflections use existing resolution/march controls. Primary sun shadows stay
+one deterministic centre ray per pixel; those presets change coverage and raster fallback cost.
+
+The engine material capacity is independent of these sampling budgets and takes effect on restart.
+`voxel_palette_layout.glsl` derives palette/face strides from bound buffer extents and rejects
+inconsistent capacities. More entries retain more contextual surface facts, but do not establish
+that a forward normal/refraction problem was caused by palette overflow.

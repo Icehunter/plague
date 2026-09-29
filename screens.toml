@@ -499,6 +499,7 @@ elements = [
 [screens.shadows]
 title = "Shadows"
 elements = [
+    "<meta:SUN_RT_QUALITY>",
     "SHADOWS",
     "SHADOW_RESOLUTION",
     "SHADOW_SAMPLES|requires:SHADOWS",
@@ -507,16 +508,33 @@ elements = [
 ]
 
 [screens.ray_tracing]
-title = "Ray Tracing (Experimental)"
+title = "Ray Tracing"
 elements = [
-    "PLAGUE_LOCAL_SHADOWS",
-    "u_LocalRtDistance|requires:PLAGUE_LOCAL_SHADOWS",
+    "<group:Category Quality>",
+    "<meta:GI_QUALITY>",
+    "<meta:LOCAL_RT_QUALITY>",
+    "<meta:SUN_RT_QUALITY>",
+    "<meta:REFLECTION_QUALITY>",
+    "<meta:GLASS_QUALITY>",
+    "<group:Bounce Light>",
     "PLAGUE_GI",
+    "PLAGUE_GI_GRID|requires:PLAGUE_GI",
+    "PLAGUE_GI_SAMPLES|requires:PLAGUE_GI",
+    "PLAGUE_GI_GLASS_INTERFACES|requires:PLAGUE_GI",
     "u_GiLightStrength|requires:PLAGUE_GI",
     "PLAGUE_GI_VIEW|requires:PLAGUE_GI",
+    "<group:Block Light>",
+    "PLAGUE_LOCAL_SHADOWS",
+    "PLAGUE_LOCAL_GRID|requires:PLAGUE_LOCAL_SHADOWS",
+    "PLAGUE_LOCAL_SAMPLES|requires:PLAGUE_LOCAL_SHADOWS",
+    "u_LocalRtDistance|requires:PLAGUE_LOCAL_SHADOWS",
+    "<group:Sun Shadows>",
     "RT_SHADOWS",
-    "PLAGUE_SUN_SHADOW_VIEW|requires:RT_SHADOWS",
     "u_RtShadowDistance|requires:RT_SHADOWS",
+    "PLAGUE_SUN_SHADOW_VIEW|requires:RT_SHADOWS",
+    "<group:Glass Light Transport>",
+    "PLAGUE_GLASS_TRANSPORT",
+    "PLAGUE_GLASS_SAMPLES|requires:PLAGUE_GLASS_TRANSPORT",
 ]
 
 [screens.occlusion]
@@ -531,6 +549,7 @@ elements = [
 [screens.reflections]
 title = "Reflections"
 elements = [
+    "<meta:REFLECTION_QUALITY>",
     "SSR_QUALITY",
     "u_SsrStrength",
     "u_SsrMaxDistance",
@@ -822,6 +841,13 @@ pages = ["atmosphere", "sky", "clouds", "fog", "lighting", "shadows", "ray_traci
 
 # Prose shown in each option's tooltip, above the mechanical Default/Range/Applies lines.
 [descriptions]
+PLAGUE_GI_GRID = "Cells per side of the bounce-light grid, independent of screen resolution. Doubling the side quadruples ray count and grid storage. Rebuilding clears lighting history."
+PLAGUE_GI_GLASS_INTERFACES = "Maximum glass boundaries along a bounce-light path. An isolated glass slab uses two. Higher values allow more transmission and internal reflection, with an additional ray query per boundary. Requires Glass Light Transport. Unfinished paths retain compatible history."
+PLAGUE_GI_SAMPLES = "Independent bounce samples per cell in the same frame. Each also has sun and lamp visibility queries. Samples are averaged before temporal filtering, preserving brightness. Two and four samples multiply query work and request storage by two and four."
+PLAGUE_LOCAL_GRID = "Cells per side of the traced block-light grid. Independent of the bounce-light grid. Doubling the side quadruples query count and grid storage."
+PLAGUE_LOCAL_SAMPLES = "Independent light-source visibility samples per cell in the same frame. Their importance-weighted estimates are averaged, preserving energy. More samples reduce random bright hits at higher tracing and source-selection cost."
+PLAGUE_GLASS_SAMPLES = "Number of traced glass light paths, split equally between sun and local sources. Lower counts reduce work and increase sampling noise. Buffer allocation and gathering resolution remain unchanged."
+
 PLAGUE_CLOUD_HISTORY_DEBUG = """
 A test view for checking how well the clouds kept from earlier frames match freshly drawn \
 clouds, in a small panel in the corner.
@@ -2069,10 +2095,10 @@ showing through, not one flat white slab. Grass and flowers are untouched, becau
 sit on them."""
 
 u_RefractStrength = """
-How far the fallback glass effect shifts the background.
+How far glass refraction shifts the background.
 
-Applies to models that cannot use Glass Light Transport. Closed glass uses its actual thickness \
-and material index of refraction; this slider does not change those physical angles."""
+Applies to glass and stained panes. Their normal maps and material reflectance shape the bend; \
+this slider controls its strength."""
 
 PLAGUE_GLASS_TRANSPORT = """
 Traces light through closed glass volumes, preserving tint and illuminating the surfaces it reaches. \
@@ -2083,9 +2109,9 @@ while temporal antialiasing settles; unsupported open or non-box models keep the
 PLAGUE_GLASS_REFRACTION = """
 Bends the view through glass and stained panes.
 
-With Glass Light Transport, rays follow the entry and exit faces of supported closed models. \
-Material reflectance sets the refractive index and tint absorbs light according to thickness. \
-Unsupported models keep the screen-space effect controlled by Glass Warp Strength."""
+Uses each surface's normal map and material reflectance to shift the visible background. \
+Glass Warp Strength controls the effect. Glass Light Transport separately controls light \
+passing through closed glass volumes onto other surfaces."""
 
 PLAGUE_WETNESS_PCT = """
 Makes rain wet the world: puddles in low spots, and a darker, slicker look on everything the \
@@ -3187,3 +3213,102 @@ long shadows, at a cost in memory and frame rate. This is the main speed control
 Traced shadows land on the same grid, so this sets their detail as well. At 1024 over a \
 64 block distance one step is an eighth of a block, which is exactly how thick a fence rail \
 is, so a rail cannot cast a smooth edge until this is raised."""
+
+# Explicit work budgets: fractions/multiples of the existing grid and photon counts.
+[metas.GI_QUALITY]
+label = "Global Illumination Quality"
+description = "Low: 256 x 256, 1 sample, 2 glass interfaces. Medium: 512 x 512, 1 sample, 4 interfaces. High: 768 x 768, 2 samples, 8 interfaces. Ultra: 1024 x 1024, 4 samples, 16 interfaces. High has 4.5 times and Ultra 16 times the Medium base samples, plus additional glass queries. Each isolated glass slab uses two interfaces. The enable switch stays independent. Advanced edits show Custom."
+values = ["Low", "Medium", "High", "Ultra"]
+[metas.GI_QUALITY.assign.Low]
+PLAGUE_GI_GRID = 256
+PLAGUE_GI_SAMPLES = 1
+PLAGUE_GI_GLASS_INTERFACES = 2
+
+[metas.GI_QUALITY.assign.Medium]
+PLAGUE_GI_GRID = 512
+PLAGUE_GI_SAMPLES = 1
+PLAGUE_GI_GLASS_INTERFACES = 4
+
+[metas.GI_QUALITY.assign.High]
+PLAGUE_GI_GRID = 768
+PLAGUE_GI_SAMPLES = 2
+PLAGUE_GI_GLASS_INTERFACES = 8
+
+[metas.GI_QUALITY.assign.Ultra]
+PLAGUE_GI_GRID = 1024
+PLAGUE_GI_SAMPLES = 4
+PLAGUE_GI_GLASS_INTERFACES = 16
+
+[metas.LOCAL_RT_QUALITY]
+label = "Block Light Quality"
+description = "Low: 256 x 256, 1 sample. Medium: 512 x 512, 1 sample (existing budget). High: 768 x 768, 2 samples. Ultra: 1024 x 1024, 4 samples. High traces 4.5 times and Ultra 16 times the Medium ray count. More samples reduce noise; larger grids retain finer lighting. The enable switch stays independent. Advanced edits show Custom."
+values = ["Low", "Medium", "High", "Ultra"]
+[metas.LOCAL_RT_QUALITY.assign.Low]
+PLAGUE_LOCAL_GRID = 256
+PLAGUE_LOCAL_SAMPLES = 1
+[metas.LOCAL_RT_QUALITY.assign.Medium]
+PLAGUE_LOCAL_GRID = 512
+PLAGUE_LOCAL_SAMPLES = 1
+[metas.LOCAL_RT_QUALITY.assign.High]
+PLAGUE_LOCAL_GRID = 768
+PLAGUE_LOCAL_SAMPLES = 2
+[metas.LOCAL_RT_QUALITY.assign.Ultra]
+PLAGUE_LOCAL_GRID = 1024
+PLAGUE_LOCAL_SAMPLES = 4
+
+[metas.SUN_RT_QUALITY]
+label = "Sun Shadow Quality"
+description = "Controls traced coverage and raster fallback quality. Primary RT shadows keep one precise centre ray per pixel at every tier. Does not enable or disable shadows. Advanced edits show Custom."
+values = ["Low", "Medium", "High", "Ultra"]
+[metas.SUN_RT_QUALITY.assign.Low]
+SHADOW_RESOLUTION = 1024
+SHADOW_SAMPLES = 2
+u_ShadowDistance = 32.0
+u_RtShadowDistance = 1
+[metas.SUN_RT_QUALITY.assign.Medium]
+SHADOW_RESOLUTION = 1024
+SHADOW_SAMPLES = 8
+u_ShadowDistance = 64.0
+u_RtShadowDistance = 2
+[metas.SUN_RT_QUALITY.assign.High]
+SHADOW_RESOLUTION = 2048
+SHADOW_SAMPLES = 8
+u_ShadowDistance = 128.0
+u_RtShadowDistance = 4
+[metas.SUN_RT_QUALITY.assign.Ultra]
+SHADOW_RESOLUTION = 4096
+SHADOW_SAMPLES = 16
+u_ShadowDistance = 256.0
+u_RtShadowDistance = 8
+
+[metas.REFLECTION_QUALITY]
+label = "Reflection Quality"
+description = "Controls screen-space resolution, march work and distance. World recovery keeps its own switch. Existing roughness, tint and reflection strength are preserved. These reflections combine screen-space and voxel tracing. Advanced edits show Custom."
+values = ["Low", "Medium", "High", "Ultra"]
+[metas.REFLECTION_QUALITY.assign.Low]
+SSR_QUALITY = 1
+u_SsrTraceQuality = 32.0
+u_SsrMaxDistance = 16.0
+[metas.REFLECTION_QUALITY.assign.Medium]
+SSR_QUALITY = 1
+u_SsrTraceQuality = 64.0
+u_SsrMaxDistance = 32.0
+[metas.REFLECTION_QUALITY.assign.High]
+SSR_QUALITY = 1
+u_SsrTraceQuality = 96.0
+u_SsrMaxDistance = 64.0
+[metas.REFLECTION_QUALITY.assign.Ultra]
+SSR_QUALITY = 2
+u_SsrTraceQuality = 96.0
+u_SsrMaxDistance = 64.0
+
+[metas.GLASS_QUALITY]
+label = "Glass Light Quality"
+description = "Low: 16384 paths. Medium: 32768. High: 65536 (existing budget). Total light energy is preserved. Lower budgets reduce tracing and binning work; allocated memory and full-resolution gathering stay unchanged. Does not change glass normals, refraction or enablement."
+values = ["Low", "Medium", "High"]
+[metas.GLASS_QUALITY.assign.Low]
+PLAGUE_GLASS_SAMPLES = 16384
+[metas.GLASS_QUALITY.assign.Medium]
+PLAGUE_GLASS_SAMPLES = 32768
+[metas.GLASS_QUALITY.assign.High]
+PLAGUE_GLASS_SAMPLES = 65536

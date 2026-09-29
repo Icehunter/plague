@@ -1,0 +1,36 @@
+#version 450
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:rt_sampling.glsl>
+#moj_import <fornax_runtime:glass_optics.glsl>
+#moj_import <fornax_runtime:gi_glass_path.glsl>
+layout(local_size_x=256) in;
+layout(std430,set=0,binding=2) readonly buffer GiPathRequests { vec4 requests[]; };
+layout(std430,set=0,binding=3) writeonly buffer GiPathState { uvec4 state[]; };
+layout(std430,set=0,binding=4) writeonly buffer GiPathTerminalRequests { vec4 terminalRequests[]; };
+layout(std430,set=0,binding=5) writeonly buffer GiPathTerminalHits { uint terminalHits[]; };
+void main() {
+    uint index=gl_GlobalInvocationID.x;
+    if(index>=uint(requests.length())/2u) return;
+    vec4 ray=requests[index*2u+1u];
+    float directionLengthSquared=dot(ray.xyz,ray.xyz);
+    bool validDirection=!any(isnan(ray.xyz)) && !any(isinf(ray.xyz))
+        && directionLengthSquared>0.0 && !isinf(directionLengthSquared);
+    bool finiteReach=!isnan(ray.w) && !isinf(ray.w);
+    // Seeded inactive slots have exactly zero reach. Malformed active requests must hold
+    // history as unavailable, rather than become an answered black disabled sample.
+    uint status=finiteReach && ray.w==0.0 ? PLAGUE_GI_PATH_DISABLED
+        : finiteReach && ray.w>0.0 && validDirection ? PLAGUE_GI_PATH_ACTIVE
+        : PLAGUE_GI_PATH_UNKNOWN;
+    // Existing GI seed multipliers decorrelate cells/frames; the optical hash supplies branch draws.
+    uint seed=plagueGlassHash(index*747796405u+uint(u_FrameState.x)*2891336453u);
+    PlagueGiGlassPath path=PlagueGiGlassPath(vec3(1.0),status,
+        status==PLAGUE_GI_PATH_ACTIVE?normalize(ray.xyz):vec3(0.0),seed);
+    state[index*2u]=plagueGiGlassPathWeight(path);
+    state[index*2u+1u]=plagueGiGlassPathInitial(path);
+    terminalRequests[index*2u]=vec4(0.0);
+    terminalRequests[index*2u+1u]=vec4(0.0,1.0,0.0,0.0);
+    // Tier zero is explicitly unavailable. Only a copied native terminal answer can set its tier.
+    for(uint word=0u;word<9u;++word) terminalHits[index*9u+word]=0u;
+}

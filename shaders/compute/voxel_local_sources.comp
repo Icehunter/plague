@@ -1,4 +1,5 @@
 #version 450
+#moj_import <fornax_runtime:voxel_palette_layout.glsl>
 #define FORNAX_COMPUTE_GLOBALS
 #define FORNAX_GLOBALS_BINDING 0
 #moj_import <fornax:globals.glsl>
@@ -37,18 +38,18 @@ bool plagueLocalSourceHeaderCurrent() {
         && localRadianceWords.length()==PLAGUE_LOCAL_SOURCE_WORDS
         && sourceWindowWords[0]==2u && sourceWindowWords[1]==uint(PLAGUE_LOCAL_CAPACITY)
         && sourceWindowWords[2]<=uint(PLAGUE_LOCAL_CAPACITY) && sourceWindowWords[3]!=0u
-        && sectionStateWords.length()==d*d*d*8 && faceTextureWords.length()==d*d*d*96*42;
+        && sectionStateWords.length()==d*d*d*8 && plagueVoxelMaterialBuffersValid(paletteWords.length(),faceTextureWords.length(),d);
 }
 bool plagueLocalSourceCellCurrent(int raw,out int entry,out uint facts) {
     entry=int(sourceWindowWords[raw+3]); facts=sourceWindowWords[raw+4];
     int d=u_VoxelWindow.w;
-    if(sourceWindowWords[raw+6]!=1u || entry<0 || entry>=d*d*d*96) return false;
+    if(sourceWindowWords[raw+6]!=1u || entry<0 || entry>=d*d*d*plagueVoxelPaletteCapacity(paletteWords.length(),d)) return false;
     ivec3 cell=ivec3(sourceWindowWords[raw],sourceWindowWords[raw+1],sourceWindowWords[raw+2]);
     ivec3 owner=cell>>4, first=u_VoxelWindow.xyz-ivec3((d-1)/2);
     if(any(lessThan(owner,first)) || any(greaterThanEqual(owner,first+ivec3(d)))) return false;
     int slot=(plagueLocalSourceMod(owner.y,d)*d+plagueLocalSourceMod(owner.z,d))*d
         +plagueLocalSourceMod(owner.x,d), state=slot*8;
-    return entry/96==slot && sectionStateWords[state+6]==1u
+    return entry/plagueVoxelPaletteCapacity(paletteWords.length(),d)==slot && sectionStateWords[state+6]==1u
         && all(equal(ivec3(sectionStateWords[state],sectionStateWords[state+1],sectionStateWords[state+2]),owner))
         && sectionStateWords[state+3]==sourceWindowWords[3]
         && sectionStateWords[state+4]==sourceWindowWords[raw+5];
@@ -100,7 +101,7 @@ void main() {
     // record is one light and a light has one size.
     int d=u_VoxelWindow.w;
     vec3 boxLo=vec3(0.0), boxHi=vec3(1.0);
-    if(paletteWords.length()==d*d*d*1536) {
+    if(plagueVoxelPaletteCapacity(paletteWords.length(),d)>0) {
         int entryBase=entry*16;
         int boxCount=int(paletteWords[entryBase]&15u);
         if(boxCount>0 && boxCount<=6) {

@@ -37,7 +37,12 @@ void plagueGlassStoreLastLeg(uint index) {
     beamWords[base+6u]=plagueGlassLastPlane;
     beamWords[base+7u]=vec4(plagueGlassLastLo,0.0);
     beamWords[base+8u]=vec4(plagueGlassLastHi,0.0);
-    beamWords[base+9u]=vec4(0.0,0.0,0.0,plagueGlassLastIsSource?65536.0:0.0);
+    // Word 9's xyz/word 10 are the bin pass's index volume: the receiver's own gather-radius
+    // box, already written once in main() before this call. glass_caustic_gather.comp rejects
+    // anything past PLAGUE_GLASS_GATHER_RADIUS regardless of what the index volume covers, so
+    // widening it to the aperture here only coarsens the bin level for no gain. Only the
+    // source flag belongs to this function.
+    beamWords[base+9u].w=plagueGlassLastIsSource?65536.0:0.0;
 }
 
 float plagueGlassSunLaunchVisibility(vec3 origin) {
@@ -79,11 +84,12 @@ void main() {
         if(light.y<=0.0 || u_WorldBounds.w!=0.0) return;
         vec3 tangent,bitangent; ivec2 first; float plane;
         plagueGlassSunGrid(light,tangent,bitangent,first,plane);
-        uint ordinal=index-PLAGUE_GLASS_PHOTONS/2u,cellIndex=ordinal/2u;
+        uint ordinal=index-PLAGUE_GLASS_PHOTONS/2u,cellIndex=ordinal/PLAGUE_GLASS_SUN_SAMPLES_PER_CELL;
         ivec2 cell=first+ivec2(int(cellIndex)%PLAGUE_GLASS_SUN_GRID_SIZE,int(cellIndex)/PLAGUE_GLASS_SUN_GRID_SIZE);
         uint key=plagueGlassSourceKey(ivec3(cell,0),0u,0u);
-        vec2 draw=plagueGlassEmissionSample(ordinal&1u,key).xy;
-        randomState=plagueGlassHash(key^(ordinal&1u));
+        uint sampleLane=ordinal%PLAGUE_GLASS_SUN_SAMPLES_PER_CELL;
+        vec2 draw=plagueGlassEmissionSample(sampleLane,key).xy;
+        randomState=plagueGlassHash(key^sampleLane);
         vec2 location=(vec2(cell)+draw)*PLAGUE_GLASS_SUN_CELL;
         origin=tangent*location.x+bitangent*location.y+light*plane-plagueGlassTraceAnchor;
         direction=-light;
@@ -140,5 +146,10 @@ void main() {
     photonWords[base+1u]=vec4(flux,sun?1.0:0.0);
     photonWords[base+2u]=vec4(-direction,0.0);
     photonWords[base+3u]=vec4(dot(receiver.normal,direction)<0.0 ? receiver.normal : -receiver.normal,0.0);
+    // Default index volume for a photon whose last leg never crossed glass: a gather-radius box
+    // around the receiver, the same reach plagueGlassKernel reconstructs with (glass_photons.glsl).
+    // plagueGlassStoreLastLeg below tightens this to the actual aperture when a crossing exists.
+    beamWords[index*PLAGUE_GLASS_BEAM_WORDS+9u]=vec4(receiver.position-vec3(PLAGUE_GLASS_GATHER_RADIUS),0.0);
+    beamWords[index*PLAGUE_GLASS_BEAM_WORDS+10u]=vec4(receiver.position+vec3(PLAGUE_GLASS_GATHER_RADIUS),0.0);
     plagueGlassStoreLastLeg(index);
 }

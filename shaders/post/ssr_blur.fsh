@@ -79,7 +79,11 @@ vec4 plagueOpaqueRaw(vec2 uv) {
     // world geometry, before roughness filtering so recovery never paints a sharp rough metal.
     // High merges the world answer after ssr_upsample instead: blending the full-resolution
     // world trace in here would resample it at this pass's half resolution.
-    if (screen.a <= 0.0) return texture(u_Input6, uv);
+    if (screen.a <= 0.0) {
+        // Current bounds must contain current radiance only. Preblending raw history here
+        // makes stale colour survive the reset and support clamp in the temporal filter below.
+        return texture(u_Input6, uv);
+    }
 #endif
     return screen;
 }
@@ -143,8 +147,16 @@ void main() {
         return;
     }
 
-    // Radius 0 (pass-through) at mirror smoothness, radius 3 at the trace's 0.1 floor.
-    int radius = int(round((1.0 - smoothness) * 3.0));
+    // Radius 1 at mirror smoothness, radius 3 at the trace's 0.1 floor. A radius-0 pass-through
+    // at mirror smoothness assumed a uniformly mirror-smooth neighbourhood, true for one large
+    // mirror but not for a mirror-smooth block sitting next to a different block: TAA's sub-pixel
+    // jitter periodically rasterizes the NEIGHBOUR block's texel into this exact screen pixel, so
+    // the "single deterministic sample" a radius-0 shortcut would trust is not actually
+    // deterministic at a material seam (live-caught as reflections flashing where iron meets
+    // glass or grass). One ring is enough to average that one-texel identity flip back down;
+    // reflectionSameSurface still keeps the ring on this pixel's own plane, and
+    // specularLobeWeight still down-weights a genuinely different bump.
+    int radius = max(1, int(round((1.0 - smoothness) * 3.0)));
 
     vec4 centerPacked = texture(u_GNormal, texCoord);
     if (dot(centerPacked.xyz, centerPacked.xyz) < 1e-6) {
@@ -161,13 +173,7 @@ void main() {
     vec4 currentHi = centerCurrent;
 
     vec4 blurred;
-    if (radius == 0) {
-        // Exact shortcut, not an approximation: at radius 0 the loop below degenerates to comparing
-        // the centre tap with itself, which always yields weight 1. Covers smoothness > 5/6.
-        // Its current bounds are that single deterministic mirror sample; TAA still accumulates
-        // the final image, while this reflection history cannot trail a vanished mirror hit.
-        blurred = centerCurrent;
-    } else {
+    {
         vec2 sourceSize = vec2(textureSize(u_Input0, 0));
         vec2 fullSize = vec2(textureSize(u_Depth, 0));
         vec2 texelSize = 1.0 / sourceSize;
@@ -178,11 +184,8 @@ void main() {
 
         vec4 sum = vec4(0.0);
         float weightSum = 0.0;
-        // Confidence gets its own uniform-weighted accumulator rather than riding the lobe-rejected
-        // colour weights: letting a roughness-varying wear map pick confidence per texel made the
-        // wear map itself decide which world (traced vs. resolve fallback) each texel showed.
-        float alphaSum = 0.0;
-        float alphaTaps = 0.0;
+        // Confidence describes these same reflected directions. Counting a lobe-rejected tap
+        // only in alpha lets a changing bump neighbour replace stable reflected colour with sky.
         for (int y = -radius; y <= radius; y++) {
             for (int x = -radius; x <= radius; x++) {
                 vec2 uv = texCoord + vec2(float(x), float(y)) * texelSize
@@ -195,8 +198,6 @@ void main() {
                     continue;
                 }
                 vec4 tapSample = plagueOpaqueRaw(uv);
-                alphaSum += clamp(tapSample.a, 0.0, 1.0);
-                alphaTaps += 1.0;
                 vec3 tapNormal = normalize(tapPacked.xyz);
                 float tapSmoothness = texture(u_GMaterial, uv).r;
                 float tapRoughness = (1.0 - tapSmoothness) * (1.0 - tapSmoothness);
@@ -214,9 +215,6 @@ void main() {
 
         // weightSum can legitimately be zero only if every tap was rejected.
         blurred = weightSum > 0.0 ? sum / weightSum : centerCurrent;
-        if (alphaTaps > 0.0) {
-            blurred.a = alphaSum / alphaTaps;
-        }
     }
     currentLo = min(currentLo, blurred);
     currentHi = max(currentHi, blurred);
