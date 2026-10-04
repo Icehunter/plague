@@ -14,6 +14,7 @@
 # owns them and they appear here, even though the shader that uses them could never declare them.
 
 sliders = [
+    "PLAGUE_GLASS_PATH_REACH",
     "u_GiLightStrength",
     "u_LightReach",
     "u_RefractStrength",
@@ -535,6 +536,9 @@ elements = [
     "<group:Glass Light Transport>",
     "PLAGUE_GLASS_TRANSPORT",
     "PLAGUE_GLASS_SAMPLES|requires:PLAGUE_GLASS_TRANSPORT",
+    "PLAGUE_GLASS_GLOSSY_SAMPLES|requires:PLAGUE_GLASS_TRANSPORT",
+    "PLAGUE_GLASS_VISIBILITY_SAMPLES|requires:PLAGUE_GLASS_TRANSPORT",
+    "PLAGUE_GLASS_PATH_REACH|requires:PLAGUE_GLASS_TRANSPORT",
 ]
 
 [screens.occlusion]
@@ -846,6 +850,8 @@ PLAGUE_GI_GLASS_INTERFACES = "Maximum glass boundaries along a bounce-light path
 PLAGUE_GI_SAMPLES = "Independent bounce samples per cell in the same frame. Each also has sun and lamp visibility queries. Samples are averaged before temporal filtering, preserving brightness. Two and four samples multiply query work and request storage by two and four."
 PLAGUE_LOCAL_GRID = "Cells per side of the traced block-light grid. Independent of the bounce-light grid. Doubling the side quadruples query count and grid storage."
 PLAGUE_LOCAL_SAMPLES = "Independent light-source visibility samples per cell in the same frame. Their importance-weighted estimates are averaged, preserving energy. More samples reduce random bright hits at higher tracing and source-selection cost."
+PLAGUE_GLASS_VISIBILITY_SAMPLES = "Visibility draws per camera bounce endpoint. Weighted sampling preserves expected transmitted and bounced light while reducing geometry traces. Four samples is the measured balance; Exact traces every candidate. GI ownership resolution remains exact. Performance and moving-scene convergence depend on the scene."
+PLAGUE_GLASS_GLOSSY_SAMPLES = "Camera rays per glossy glass-light update. Higher values reduce initial grain and cost more GPU work. Stationary, unjittered views accumulate independent samples; camera movement resets the estimate."
 PLAGUE_GLASS_SAMPLES = "Number of traced glass light paths, split equally between sun and local sources. Lower counts reduce work and increase sampling noise. Buffer allocation and gathering resolution remain unchanged."
 
 PLAGUE_CLOUD_HISTORY_DEBUG = """

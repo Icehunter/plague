@@ -1,4 +1,6 @@
 #version 330
+#define u_GiLightStrength 1.0 //[0.0..4.0 step 0.05] runtime "Bounce Light Strength"
+#moj_import <fornax_runtime:reflection_confidence.glsl>
 
 #moj_import <fornax:globals.glsl>
 #moj_import <fornax_runtime:gi_grid.glsl>
@@ -65,9 +67,9 @@ uniform sampler2D u_Celestials; // builtin.celestials, vanilla's sun + 8 moon-ph
 #define CELESTIALS_ATLAS u_Celestials
 uniform sampler2D u_Noise; // builtin.noise, engine's 512x512 tileable RGBA noise (R smooth, B fbm)
 #define NOISE_TEX u_Noise
-// Level 0 is a texel-exact copy of `ssr`; higher mips are the environment convolved to roughness,
+// Level 0 associates `ssr` colour with confidence; higher mips are the environment convolved to roughness,
 // see plagueReflectionLod.
-uniform sampler2D u_SsrPrefilter; // ssrPrefilter. rgb = reflected colour, a = hit confidence, mipped.
+uniform sampler2D u_SsrPrefilter; // ssrPrefilter. rgb = confidence-weighted reflected colour, a = hit confidence, mipped.
 #define SSR_PREFILTER u_SsrPrefilter
 // Appended, not inserted: u_InputN is positional, so inserting one shifts every later binding.
 uniform sampler2D u_WaterDepth; // builtin.waterDepth. Reversed-Z, 0.0 = no water surface here.
@@ -294,12 +296,15 @@ const float PLAGUE_GI_SHAPE_FLOOR = 0.35;
  * away from it lose exactly what the turn costs. Faded out by the agreement, since light arriving
  * from every side has no bearing worth re-aiming and the cell's own value is already right.
  */
-vec3 plagueGiShape(vec3 light, vec3 bearing, vec4 cellNormal, vec3 pixelNormal) {
-    float agreement = length(bearing);
+vec3 plagueGiShape(vec3 light, vec4 bearing, vec4 cellNormal, vec3 pixelNormal) {
+    // Normalize only after temporal and spatial accumulation. Alpha follows the same
+    // history as xyz, unlike the separately filtered colour history.
+    vec3 meanBearing = bearing.a > 0.0 ? bearing.xyz / bearing.a : vec3(0.0);
+    float agreement = length(meanBearing);
     if (agreement <= 1e-4 || dot(cellNormal.xyz, cellNormal.xyz) <= 1e-6) {
         return light;
     }
-    vec3 towards = bearing / agreement;
+    vec3 towards = meanBearing / agreement;
     // The FLAT face the cell sits on, from gNormal's alpha, not the bumpy normal in its rgb. The
     // whole point is to measure how far this pixel's bump turns away from the face it lies on, and
     // a reference that already carries a bump of its own measures one bump against another: the
@@ -377,7 +382,7 @@ vec3 plagueGiUpsample(sampler2D grid, vec2 uv, float depth, vec3 pixelNormal) {
             // Use the same continuous surface confidence for re-aiming and gathering.
             // A hard confidence cutoff flips bump lighting as camera distance changes.
             vec3 shaped = mix(light,
-                    plagueGiShape(light, texture(GI_BOUNCE_DIR, cellGrid).rgb,
+                    plagueGiShape(light, texture(GI_BOUNCE_DIR, cellGrid),
                                   cellPacked, pixelNormal), plane);
             total += shaped * corner * plane;
         }
@@ -386,14 +391,16 @@ vec3 plagueGiUpsample(sampler2D grid, vec2 uv, float depth, vec3 pixelNormal) {
 }
 #endif
 
-void plagueGlassLighting(vec3 point,vec3 geometric,out vec4 local,out vec3 celestial) {
-    local=vec4(0.0,0.0,0.0,1.0); celestial=vec3(0.0);
+void plagueGlassLighting(vec3 point,vec3 geometric,out vec4 local,out vec3 celestial,
+        out vec3 glossy) {
+    local=vec4(0.0,0.0,0.0,1.0); celestial=vec3(0.0); glossy=vec3(0.0);
 #if PLAGUE_GLASS_TRANSPORT != 0
     // Photon RGB already includes this pixel's material response. Interpolating neighbouring
     // values would mix textures, bumped normals and roughness on the same geometric face.
     ivec2 pixel=ivec2(gl_FragCoord.xy);
     local=texelFetch(u_GlassLighting,ivec3(pixel,0),0);
     celestial=texelFetch(u_GlassLighting,ivec3(pixel,1),0).rgb;
+    glossy=texelFetch(u_GlassLighting,ivec3(pixel,2),0).rgb;
 #endif
 }
 
@@ -1073,6 +1080,7 @@ int debugView = int(u_Param3 + 0.5);
     localBlockLight = 0.0;
     localRadiance = texture(CLOUD_SHADOW_MASK, texCoord).rgb;
 #endif
+    vec3 directLocalRadiance=localRadiance;
 #if PLAGUE_GI != 0
     // The grid holds light arriving at the surface after one bounce. A matte surface sends back
     // its own colour times that, so the albedo and the surface response belong here rather than
@@ -1178,8 +1186,13 @@ int debugView = int(u_Param3 + 0.5);
     }
 #endif
     sunColour *= uwSunColourShift;
-    vec4 glassLocal; vec3 glassSun;
-    plagueGlassLighting(worldPos,plagueDecodeGeometricNormal(texture(G_NORMAL,texCoord).a,normal),glassLocal,glassSun);
+    vec4 glassLocal; vec3 glassSun,glassGlossy;
+    vec4 glassIndirect=vec4(0.0);
+#if PLAGUE_GLASS_TRANSPORT != 0
+    glassIndirect=texelFetch(u_GlassLighting,ivec3(ivec2(gl_FragCoord.xy),3),0);
+#endif
+    plagueGlassLighting(worldPos,plagueDecodeGeometricNormal(texture(G_NORMAL,texCoord).a,normal),
+            glassLocal,glassSun,glassGlossy);
 #if CLOUD_SHADOWS && CLOUDS_VOLUMETRIC
     glassSun*=clamp(texture(CLOUD_SHADOW_MASK,texCoord).a,0.0,1.0);
 #endif
@@ -1278,9 +1291,11 @@ int debugView = int(u_Param3 + 0.5);
              // Moon phase enters the highlight twice, an authored falloff: a thin crescent should
              // keep faint diffuse moonlight but lose the glint first.
              * moonPhaseInf * moonPhaseInf + localRadiance;
-    // These photons already carry the receiver BRDF and their bent path's visibility.
-    // Reapplying the straight shadow here would remove the caustic traced around the glass.
-    lit+=glassLocal.rgb+glassSun*sunColour;
+    // Smooth traced transmission owns the broad local illumination. Photon density can raise
+    // it at a focus, but cannot add the same transmitted source a second time. Camera glossy
+    // follows a different BRDF lobe and is added independently.
+    lit+=max(glassLocal.rgb-directLocalRadiance,vec3(0.0))
+            +glassGlossy+glassSun*sunColour;
 
     // Vanilla sets ambient_light 0.25 in the End (the_end.json), so nothing there is fully dark.
     // This pack never reads vanilla's lightmap, so it loses that floor, and with no sun either a
@@ -1305,15 +1320,15 @@ int debugView = int(u_Param3 + 0.5);
     // already reserved that specular energy.
     //
     // Two samples of one buffer at two widths. `ssrSample` is the mirror image at LOD 0 (the seed
-    // level is a texel-exact copy of `ssr`). `ssrWideSample` is the same reflection prefiltered to
+    // level preserves supported colour from `ssr`). `ssrWideSample` is the same reflection prefiltered to
     // this material's roughness: ssr_blur's kernel caps at 7x7, so past that cap this mip is what
     // lets authored roughness reach the environment lobe. One buffer at two mips, not two content
     // sources, which is also why wideTraceTrust below needs no roughness term.
     vec4 ssrSample = vec4(0.0);
     vec4 ssrWideSample = vec4(0.0);
 #if SSR_QUALITY != 0
-    ssrSample = textureLod(SSR_PREFILTER, texCoord, 0.0);
-    ssrWideSample = textureLod(SSR_PREFILTER, texCoord, plagueReflectionLod(1.0 - reflSmoothness));
+    ssrSample = plagueReflectionUnassociate(textureLod(SSR_PREFILTER, texCoord, 0.0));
+    ssrWideSample = plagueReflectionUnassociate(textureLod(SSR_PREFILTER, texCoord, plagueReflectionLod(1.0 - reflSmoothness)));
 #endif
 
     // Energy is `specularAlbedo`, decided once above, and roughness is spent on lobe width below.
@@ -1473,7 +1488,7 @@ int debugView = int(u_Param3 + 0.5);
     // roughness-matched image of the surroundings wherever the trace or sky guess has an answer.
     // Rides `metalness` like kD: a dielectric's sheen sits on its diffuse card and can take
     // estimator error, a conductor has no other card. Falls back where the trace does.
-    float wideTraceTrust = clamp(reflTotalW * u_SsrStrength, 0.0, 1.0) * mat.metalness;
+    float wideTraceTrust = clamp(reflTotalWWide * u_SsrStrength, 0.0, 1.0) * mat.metalness;
     // reflColorWide, not reflColor: the wide lobe gets the reflection convolved to this material's
     // roughness instead of the mirror image.
     vec3 reflWide = mix(wideEstimate, reflColorWide, wideTraceTrust);
@@ -1576,6 +1591,10 @@ int debugView = int(u_Param3 + 0.5);
     // Unconditional: a term this central gets no user-visible kill switch. A stale off state in an
     // options file compiles the whole environment term out with no sign of it.
     lit += reflEnv * specularAlbedo * shadowFade;
+    // The camera estimator already includes the receiver's specular BRDF. Only the
+    // uncovered sharp/wide share takes this bounce; another F0 or kD would erase metals.
+    // Apply the runtime gain after accumulation: turning it off must not leave old light behind.
+    lit += glassIndirect.rgb * glassIndirect.a * (1.0-sharpAvail) * (1.0-wideTraceTrust) * u_GiLightStrength;
     if (debugView == DBG_CONDUCTOR_LIT) {
         fragColor = vec4(lit, dot(lit, vec3(0.2126, 0.7152, 0.0722)));
         return;

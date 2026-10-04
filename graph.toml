@@ -383,10 +383,9 @@ height = "PLAGUE_GI_GRID"
 storage = true
 filter = "linear"
 
-# Which way the light in giBounce arrives from, as one vector: its direction is the average bearing
-# of everything that reached the cell, its LENGTH is how much those agree. Light from one lamp comes
-# out near 1, light from everywhere at once near 0. The resolve needs both to re-apply a pixel's own
-# normal to a grid far coarser than the screen.
+# RGB stores the luminance-weighted direction moment; alpha stores the matching luminance.
+# Filter all four channels together and divide RGB by alpha only at composition. The resulting
+# vector length measures directional agreement without treating black samples as isotropic light.
 [targets.giBounceDirRaw]
 enabled_if = "PLAGUE_GI != 0"
 format = "rgba16f"
@@ -719,7 +718,7 @@ history = true
 
 # Prefiltered mip chain over `ssr` (ssr_blur alone caps at a 7x7 kernel, nowhere near a hemisphere
 # integral). Separate target rather than mips on `ssr` itself: TargetRegistry can't do history AND
-# mipLevels > 1 on one target. Level 0 is a faithful copy of the seed, so the resolve reads this
+# mipLevels > 1 on one target. Level 0 stores confidence-weighted seed colour, so the resolve decodes this
 # INSTEAD of `ssr`. `filter = "linear"` is load-bearing even at scale 1.0 for trilinear-between-mips.
 [targets.ssrPrefilter]
 format = "rgba16f"
@@ -1747,6 +1746,50 @@ min_tier = "hardware_mesh"
 kind = "visibility"
 rays = "PLAGUE_GI_GRID * PLAGUE_GI_GRID * PLAGUE_GI_SAMPLES"
 
+# Exact immutable optical classification, rebuilt from current palette/atlas inputs.
+# Oct 1 actual frame19 optimized replay: 0.36ms producer + 330ms gather vs 794ms gather.
+# No optical thresholds, ray counts or geometry are reduced. Supported maximum is the engine's
+# diameter33 times253 palette entries/section: 9,092,061entries. Two descriptors of
+# 4,546,031 *20bytes =90,920,620bytes each fit Vulkan's guaranteed128MiB range.
+[targets.glassMediumCacheLow]
+kind = "buffer"
+stride_bytes = 20
+count = 4546031
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+
+[targets.glassMediumCacheHigh]
+kind = "buffer"
+stride_bytes = 20
+count = 4546031
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+
+[[pass]]
+name = "glass_medium_cache"
+type = "compute"
+shader = "shaders/compute/glass_medium_cache.comp"
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+# ceil(9,092,061/256); inactive palette entries exit without touching the table.
+dispatch = [35516, 1, 1]
+inputs = ["globals", "packOptions", "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["glassMediumCacheLow", "glassMediumCacheHigh"]
+
+# Fixed near-cache capacity: nine sections/axis, 144^3 int32 entries =11,943,936bytes.
+# Scenes larger than this cache use the original exact lookup outside the centered region.
+[targets.glassCellCache]
+kind = "buffer"
+stride_bytes = 4
+count = 2985984
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+
+[[pass]]
+name = "glass_cell_cache"
+type = "compute"
+shader = "shaders/compute/glass_cell_cache.comp"
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+dispatch = [11664, 1, 1]
+inputs = ["globals", "packOptions", "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas"]
+outputs = ["glassCellCache"]
+
 [[pass]]
 name = "glass_photon_cache"
 type = "compute"
@@ -1766,6 +1809,16 @@ dispatch = [1024, 1, 1]
 inputs = ["globals", "packOptions", "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas", "analyticLightList", "sunShadowMap", "voxelLocalRadiance", "glassPhotonCache"]
 outputs = ["glassPhotons", "glassBeams"]
 
+# Independent rotating GI map: direct caustics keep their retained, stable photon records.
+[[pass]]
+name = "glass_gi_photon_trace"
+type = "compute"
+shader = "shaders/compute/glass_gi_photon_trace.comp"
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
+dispatch = [1024, 1, 1]
+inputs = ["globals", "packOptions", "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas", "analyticLightList", "sunShadowMap", "voxelLocalRadiance", "glassPhotonCache"]
+outputs = ["glassGiPhotons", "glassGiBeams"]
+
 [[pass]]
 name = "glass_gi_photon_reset"
 type = "compute"
@@ -1781,7 +1834,7 @@ type = "compute"
 shader = "shaders/compute/glass_gi_photon_bin.comp"
 enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
 dispatch = [256, 1, 1]
-inputs = ["glassPhotons", "builtin.depth"]
+inputs = ["glassGiPhotons", "builtin.depth"]
 outputs = ["glassGiPhotonHeads", "glassGiPhotonLinks"]
 
 # Separate declarations keep disabled glass buffers out of the transport-off descriptor set.
@@ -1803,7 +1856,7 @@ inputs = ["globals", "packOptions", "giRayHits", "giShadowHits", "builtin.blockA
           "giCacheSurface.history", "giCacheTransform.history", "voxelOccupancy", "voxelPayload",
           "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas",
           "builtin.materialAtlas", "giShadowRequests", "giLampRequests",
-          "glassPhotons", "glassGiPhotonHeads", "glassGiPhotonLinks", "glassPhotonCache", "glassBeams", "giGlassPathState"]
+          "glassGiPhotons", "glassGiPhotonHeads", "glassGiPhotonLinks", "glassPhotonCache", "glassGiBeams", "giGlassPathState", "glassMediumCacheLow", "glassMediumCacheHigh", "glassCellCache"]
 outputs = ["giBounceRaw", "giBounceDirRaw", "giMomentsRaw"]
 
 
@@ -1907,6 +1960,20 @@ stride_bytes = 64
 count = 65536
 enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
 
+# GI-only retained paths: 17 MiB at the maximum allocation (64 + 208 bytes per slot).
+# Isolated from the direct map because direct diffuse caustics have no temporal accumulation.
+[targets.glassGiPhotons]
+kind = "buffer"
+stride_bytes = 64
+count = 65536
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
+
+[targets.glassGiBeams]
+kind = "buffer"
+stride_bytes = 208
+count = 65536
+enabled_if = "PLAGUE_GI != 0 && PLAGUE_GLASS_TRANSPORT != 0"
+
 [targets.glassPhotonHeads]
 kind = "buffer"
 stride_bytes = 4
@@ -1953,11 +2020,55 @@ scale = 1.0
 storage = true
 filter = "linear"
 
-# Exact section/source snapshots certify persistent photons. No screen-space radiance is retained.
+# Camera glossy transport is an independent lobe; keep it separate from local photons so
+# the latter can replace their straight-light baseline without erasing reflections.
+[targets.glassGlossyCurrent]
+format = "rgba16f"
+scale = 1.0
+storage = true
+filter = "nearest"
+
+# Only local glossy glass light accumulates here. Exact receiver signatures reject stale
+# material detail; camera motion and changing jitter reset this experimental history.
+[targets.glassGlossyHistory]
+format = "rgba32f"
+scale = 1.0
+storage = true
+history = true
+filter = "nearest"
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+
+[targets.glassGlossySurface]
+format = "rgba32f"
+scale = 1.0
+storage = true
+history = true
+filter = "nearest"
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+
+[targets.glassGlossySignature]
+format = "rgba32f"
+scale = 1.0
+storage = true
+history = true
+filter = "nearest"
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+
+[targets.glassGlossyState]
+format = "rgba32f"
+width = 5
+height = 1
+storage = true
+history = true
+filter = "nearest"
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+
+# Exact section/source snapshots certify persistent photons independently of glossy history.
 [targets.glassPhotonCache]
 kind = "buffer"
 stride_bytes = 4
-count = 394008
+# Header, 4096 source indices, 4096 direct quota prefixes, section tokens and source rows.
+count = 398111
 enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
 
 [[pass]]
@@ -1983,17 +2094,29 @@ outputs = ["glassPhotonHeads", "glassPhotonLinks"]
 name = "glass_caustic_gather"
 type = "compute"
 shader = "shaders/compute/glass_caustic_gather.comp"
-enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI != 0"
 local_size = [8, 8]
 dispatch = [1, 1, 1]
 # Compute descriptors cannot resolve virtual consolidate arrays; bind the two G-buffer images directly.
-inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal", "builtin.gAlbedo", "glassPhotons", "glassPhotonHeads", "glassPhotonLinks", "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas", "builtin.gMaterial", "glassPhotonCache", "glassBeams"]
-outputs = ["glassCausticLocal", "glassCausticSun"]
+inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal", "builtin.gAlbedo", "glassPhotons", "glassPhotonHeads", "glassPhotonLinks", "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas", "builtin.gMaterial", "glassPhotonCache", "glassBeams", "glassGlossyHistory.history", "glassGlossySurface.history", "glassGlossySignature.history", "glassGlossyState.history", "glassGiPhotons", "glassGiPhotonHeads", "glassGiPhotonLinks", "glassGiBeams", "glassIndirectHistory.history", "glassMediumCacheLow", "glassMediumCacheHigh", "glassCellCache"]
+outputs = ["glassCausticLocal", "glassCausticSun", "glassGlossyHistory", "glassGlossySurface", "glassGlossySignature", "glassGlossyState", "glassGlossyCurrent", "glassIndirectSpecular", "glassIndirectHistory"]
+
+
+[[pass]]
+name = "glass_caustic_gather_no_gi"
+type = "compute"
+shader = "shaders/compute/glass_caustic_gather.comp"
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0 && PLAGUE_GI == 0"
+local_size = [8, 8]
+dispatch = [1, 1, 1]
+# Compute descriptors cannot resolve virtual consolidate arrays; bind the two G-buffer images directly.
+inputs = ["globals", "packOptions", "builtin.depth", "builtin.gNormal", "builtin.gAlbedo", "glassPhotons", "glassPhotonHeads", "glassPhotonLinks", "voxelOccupancy", "voxelPayload", "voxelPalette", "voxelBrickSummary", "voxelFaceTexture", "builtin.blockAtlas", "builtin.materialAtlas", "builtin.gMaterial", "glassPhotonCache", "glassBeams", "glassGlossyHistory.history", "glassGlossySurface.history", "glassGlossySignature.history", "glassGlossyState.history", "glassMediumCacheLow", "glassMediumCacheHigh", "glassCellCache"]
+outputs = ["glassCausticLocal", "glassCausticSun", "glassGlossyHistory", "glassGlossySurface", "glassGlossySignature", "glassGlossyState", "glassGlossyCurrent", "glassIndirectSpecular", "glassIndirectHistory"]
 
 [[pass]]
 name = "glass_lighting_consolidate"
 type = "consolidate"
-inputs = ["glassCausticLocal", "glassCausticSun"]
+inputs = ["glassCausticLocal", "glassCausticSun", "glassGlossyCurrent", "glassIndirectSpecular"]
 outputs = ["glassLighting"]
 
 [[pass]]
@@ -4103,3 +4226,19 @@ name = "depth_copyback"
 type = "copy"
 inputs = ["builtin.depth"]
 outputs = ["builtin.sceneDepth"]
+
+# Photon-certified opaque diffuse endpoint reflected toward the camera; kept separate
+# from optical emitters so resolve can defer to valid screen-space reflection support.
+[targets.glassIndirectSpecular]
+format = "rgba16f"
+scale = 1.0
+storage = true
+filter = "nearest"
+
+[targets.glassIndirectHistory]
+format = "rgba32f"
+scale = 1.0
+storage = true
+history = true
+filter = "nearest"
+enabled_if = "PLAGUE_GLASS_TRANSPORT != 0"

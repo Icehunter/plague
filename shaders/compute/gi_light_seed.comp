@@ -124,13 +124,12 @@ void main() {
     for(int channel=0;channel<3;channel++)
         if(offered[channel]>0.0)
             weight[channel]=selected.offer[channel]*worth/(selectedWorth*offered[channel]);
-    imageStore(u_GiLightWeight,weightCell,vec4(weight,1.0));
 #if PLAGUE_GLASS_TRANSPORT != 0
-    if(plagueGlassSegmentIntersects(origin,direction,span)) {
-        // Refracted transport owns this path; a negative tag is valid zero direct energy.
-        rays.words[index*2u].w=0.0;
-        rays.words[index*2u+1u].w=0.0;
-        imageStore(u_GiLightWeight,weightCell,vec4(vec3(0.0),-1.0));
-    }
+    vec3 glassTransmission;
+    // The native mesh ray still decides opaque visibility. Missing optional glass-volume
+    // data cannot erase that answer; use its clear-path weight until volume data is ready.
+    if(plagueGlassSegmentTransmission(origin,direction,span,glassTransmission))
+        weight*=glassTransmission;
 #endif
+    imageStore(u_GiLightWeight,weightCell,vec4(weight,1.0));
 }

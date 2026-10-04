@@ -1,0 +1,20 @@
+#version 450
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:glass_options.glsl>
+#define PLAGUE_GLASS_BINDING_START 2
+#moj_import <fornax_runtime:glass_compute_scene.glsl>
+layout(local_size_x=256,local_size_y=1,local_size_z=1) in;
+layout(std430,set=0,binding=9) writeonly buffer GlassCellOutput { int cellOutputWords[]; };
+void main() {
+    // Scene readiness precedes every palette/occupancy read. Invalid scenes retain the
+    // consumers' existing unavailable status; this pass cannot certify absent geometry.
+    if(!plagueGlassBuffersValid() || cellOutputWords.length()<2985984) return;
+    uint index=gl_GlobalInvocationID.x;
+    if(index>=2985984u) return; // 144^3 cells: a measured nine-section near-cache capacity.
+    int diameter=u_VoxelWindow.w*16;
+    ivec3 local=ivec3(int(index%144u),int(index/(144u*144u)),int((index/144u)%144u));
+    ivec3 cell=local+ivec3(max((diameter-144)/2,0));
+    cellOutputWords[index]=plagueGlassCellUncached(cell);
+}

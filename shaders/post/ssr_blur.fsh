@@ -1,4 +1,6 @@
 #version 330
+#moj_import <fornax_runtime:reflection_confidence.glsl>
+
 
 // Reconstructs the glossy lobe from ssr_trace's single mirror ray (see ssr_trace.fsh for why a
 // per-pixel GGX cone speckles instead); blur radius scales with roughness.
@@ -73,7 +75,7 @@ vec4 expandRange(vec4 c) {
 }
 
 vec4 plagueOpaqueRaw(vec2 uv) {
-    vec4 screen = texture(u_Input0, uv);
+    vec4 screen = plagueReflectionSample(u_Input0, uv);
 #if PLAGUE_VOXEL_REFLECTIONS != 0 && SSR_QUALITY == 2
     // Preserve every screen hit byte-for-byte. Only the trace's zero-confidence miss may use
     // world geometry, before roughness filtering so recovery never paints a sharp rough metal.
@@ -82,7 +84,7 @@ vec4 plagueOpaqueRaw(vec2 uv) {
     if (screen.a <= 0.0) {
         // Current bounds must contain current radiance only. Preblending raw history here
         // makes stale colour survive the reset and support clamp in the temporal filter below.
-        return texture(u_Input6, uv);
+        return plagueReflectionSample(u_Input6, uv);
     }
 #endif
     return screen;
@@ -206,7 +208,7 @@ void main() {
                     continue;
                 }
                 vec4 current = compressRange(tapSample);
-                sum += current * w;
+                sum += plagueReflectionAssociate(current) * w;
                 weightSum += w;
                 currentLo = min(currentLo, current);
                 currentHi = max(currentHi, current);
@@ -214,7 +216,7 @@ void main() {
         }
 
         // weightSum can legitimately be zero only if every tap was rejected.
-        blurred = weightSum > 0.0 ? sum / weightSum : centerCurrent;
+        blurred = weightSum > 0.0 ? plagueReflectionUnassociate(sum / weightSum) : centerCurrent;
     }
     currentLo = min(currentLo, blurred);
     currentHi = max(currentHi, blurred);
@@ -235,8 +237,9 @@ void main() {
 
     vec4 accumulated = blurred;
     if (validHistory) {
-        vec4 history = clamp(compressRange(texture(u_Input1, previousUv)), currentLo, currentHi);
-        accumulated = mix(blurred, history, SSR_TEMPORAL_BLEND);
+        vec4 history = clamp(compressRange(plagueReflectionSample(u_Input1, previousUv)), currentLo, currentHi);
+        accumulated = plagueReflectionUnassociate(mix(plagueReflectionAssociate(blurred),
+                plagueReflectionAssociate(history), SSR_TEMPORAL_BLEND));
     }
 
     fragColor = expandRange(accumulated);

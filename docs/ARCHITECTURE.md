@@ -16,7 +16,7 @@ feature that is off costs nothing because its passes are not in the graph at all
 
 ## The frame, in order
 
-`graph.toml` declares **178 passes** and **227 explicit targets**. Consolidation passes also create
+`graph.toml` declares **214 passes** and **232 explicit targets**. Consolidation passes also create
 array targets. They run in file order. Grouped by job:
 
 ### 0. Atmosphere: 4 compute passes
@@ -119,6 +119,10 @@ remain on the polygon; POM changes material lookup and its reprojection, not phy
 `ssr_trace_fancy` **or** `ssr_trace_fast`, each followed by optional world recovery and its own blur,
 with `ssr_upsample` for the half-resolution tier and `ssr_prefilter` building a roughness pyramid.
 The source-radiance producer runs before these consumers so reflected lighting uses current sources.
+Opaque SSR blur, history interpolation and upsampling filter colour weighted by hit confidence;
+valid black hits retain coverage. `ssrPrefilter` stores that weighted RGB through every mip so
+hardware bilinear/trilinear sampling cannot darken missing samples twice. The resolve divides by
+confidence after sampling and uses the wide sample's own confidence for the wide lobe.
 
 The AO blur evaluates a five-by-five box using nine weighted bilinear samples. Its `ssaoRaw`
 input is R8 with linear clamp sampling; changing that sampler changes the kernel. The R8 output
@@ -195,7 +199,17 @@ frame. Camera rotation and movement within the coverage section need no local re
 geometry, source records, publication generations or coverage rebuild the set before gathering.
 Lightmap-only revisions do not change optical geometry. Changing the eligible source count can
 change each source's finite sample quota. This is cached finite quadrature, not progressive
-convergence toward an unlimited path count.
+convergence toward an unlimited path count for the direct caustic map.
+
+`glass_gi_photon_trace` uses the same transport in separate GI-only photon and visibility
+buffers (17 MiB). All active GI slots (up to 65,536) are assigned to local emitters because GI discards
+celestial photons. It replaces one eighth of those slots per frame with subsequent Halton
+samples while keeping each photon weighted by its full source quota. Stable ordered source
+compaction preserves retained slot ownership. Geometry/source invalidation rebuilds all slots;
+normal refresh does not invalidate glossy history. The world-space GI index and `gi_resolve`
+read this changing map, while direct caustics retain the original map. This removes permanently
+frozen sampling holes from the GI estimator; finite history and sparse samples still limit
+convergence, and client frame time remains unverified.
 
 Sun and moon photons use a complete world-anchored launch grid and are retraced for the
 current celestial direction and shadow map. Their plane stays between one and two launch radii
@@ -252,12 +266,21 @@ screen-space approximation without thickness-dependent volume absorption.
 
 GI additionally gathers local glass photons at its opaque secondary hit. Photon cache and trace
 run before `gi_resolve`; `glass_gi_photon_reset`/`glass_gi_photon_bin` build a separate world-cell
-index (512 KiB) so off-screen secondary surfaces participate. The gather uses the same surface
-footprint and last-leg visibility as primary shading, then applies the hit's albedo/pi once.
+index (512 KiB) so off-screen secondary surfaces participate. The GI gather uses a normalized
+half-block radius and the same last-leg visibility as primary shading; direct caustics keep their
+quarter-block radius. It then applies the hit's albedo/pi once.
 Missing cache/index data is an unanswered GI sample; a valid empty gather is zero. The primary
 screen index and material response remain separate. This supplies lamp -> glass -> opaque surface
 -> receiver paths, using the existing photon and GI sample budgets; candidate visibility still
 costs optical traversal. Local photons retain their existing direct-light/shadow enablement gate.
+The retained local GI producer continues opaque scattering within its existing cumulative reach
+and event budget. It samples one eligible diffuse vertex per path with reservoir weighting.
+First-hit transmission (record kind 0) refines direct lighting; higher opaque bounces (kind 2)
+add irradiance independently. A previous opaque last leg carries its actual finite model face,
+which the gather tests against blockers. The direct caustic producer is unchanged. Closed opaque
+interior exits absorb the suffix; unknown material mapping holds a compatible previous slot.
+Opaque continuation uses Lambert scattering for nonconductors and visible-normal GGX for pure
+conductors; dielectric specular and arbitrary non-box face continuation are not represented.
 
 With glass transport enabled, primary GI paths continue through certified dielectric boundaries.
 `gi_glass_begin` saves the initial hemisphere bearing and initializes throughput. Each ordered
@@ -268,7 +291,8 @@ and hit for sun/lamp seeding. The final resolve applies this weight once and ret
 bearing. A budget-exhausted or unavailable path holds compatible history rather than adding black.
 These buffer updates require an engine supporting ordered, initialized compute storage-buffer reuse.
 They add 100 bytes per GI sample (25 MiB at 512-square/one sample), plus one native query per allowed
-boundary. This is one diffuse bounce with intervening dielectric events, not multiple diffuse bounces.
+boundary. This camera GI path has one diffuse bounce with intervening dielectric events; the
+separate local glass photon map supplies additional opaque bounces.
 The optical boundaries use geometric normals and roughness, not raster normal-map relief.
 Celestial glass photons do not yet contribute at secondary GI hits; their active sun/moon color
 convention differs from GI's current true-sun convention. Secondary sun/lamp straight connections
@@ -758,6 +782,21 @@ inventory, receiver-neighbour section ranges, actual source boxes and material r
 separate capped analytic light list (`light_list_reset`, `light_list_build`) serves bounce.
 Glass photon launch reads the full source inventory directly.
 
+Glass bounce transport keeps the existing 12-block source integration domain separate from
+`PLAGUE_GLASS_PATH_REACH` (12/24/48/64, default 24). Forward opaque GI applies source falloff
+once at the first opaque incidence; subsequent vertices inherit that weight. Backward conductor
+paths apply falloff to the emitter-to-nearest-opaque leg. Work distance is cumulative, never reset
+per bounce. Finite path/event budgets and unknown geometry still constrain coverage.
+
+`glass_medium_cache` classifies the current palette and material atlas once per frame before
+GI resolve and camera gather. Two storage buffers hold exact five-float medium records, with
+positive/negative IOR encoding glass/non-glass. Consumers append both descriptors after existing
+inputs; output bindings shift together. The table is rebuilt each frame rather than assuming
+material animation or palette contents are unchanged. The supported maximum allocates about
+182 MB across two buffers; only active entries are written. Native captured-frame parity verifies
+classification preservation, not all-device frame cost or in-game appearance.
+
+
 `PLAGUE_GI` is independent of the other two and adds one bounce: `gi_seed_rays` (cosine hemisphere ray
 per cell) -> `gi_trace` (closest hit) -> `gi_shadow_seed`/`gi_shadow_trace` (sun ray from the
 hit) -> `gi_lamp_seed`/`gi_lamp_trace` (lamp ray from the hit, with the summed lamp light at the
@@ -918,8 +957,9 @@ bearings are luminance-weighted. Any unavailable required query holds compatible
 whole estimate. This includes requested GI sun/lamp child queries; an inactive child remains a
 valid zero contribution. One-sample sequences retain their previous layout and random draws.
 
-Glass lighting offers 16384/32768/65536 paths. Half go to local emitters, half to a complete sun
-grid (64-square with two samples, 128-square with one, or 128-square with two). Flux normalization
+Glass lighting offers 16384/32768/65536 paths. The direct map sends half to local emitters and
+half to a complete sun grid (64-square with two samples, 128-square with one, or 128-square with
+two); the separate GI-only map sends all paths to local emitters. Flux normalization
 uses actual source quotas, and the budget participates in the cache tag. Allocations, hash reset
 and full-resolution gathering remain at maximum; reducing paths reduces tracing/binning work,
 not all glass costs. Reflections use existing resolution/march controls. Primary sun shadows stay
@@ -929,3 +969,7 @@ The engine material capacity is independent of these sampling budgets and takes 
 `voxel_palette_layout.glsl` derives palette/face strides from bound buffer extents and rejects
 inconsistent capacities. More entries retain more contextual surface facts, but do not establish
 that a forward normal/refraction problem was caused by palette overflow.
+
+### Glass transport reset diagnostics
+
+The existing 16-word photon-cache header retains the last reset in words13–15: reason bitmask, engine frame counter, and lowest changed input word. Reason bits1/2/4/8/16/32 mean invalid inventory, cache layout, camera coverage origin, source header, section token, and source row. Word indices address section words first and source-record words after the section word count; `0xffffffff` means neither range changed. Stable frames preserve this record. It identifies invalidation inputs, not whether a geometry republication changed optical contents. No target size or transport decisions change.

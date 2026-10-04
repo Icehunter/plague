@@ -1,4 +1,6 @@
 #version 330
+#moj_import <fornax_runtime:reflection_confidence.glsl>
+
 
 // Half-res reflections back to full res. High tier only (SSR_QUALITY == 1); Epic never runs this.
 //
@@ -73,7 +75,7 @@ void main() {
         vec2 bilinear = mix(1.0 - f, f, vec2(offset));
         float w = bilinear.x * bilinear.y;
         if (error <= SSR_UPSAMPLE_DEPTH_TOLERANCE * centerDepth) {
-            sum += c * w;
+            sum += plagueReflectionAssociate(c) * w;
             weightSum += w;
         }
         if (error < closestError) {
@@ -84,14 +86,16 @@ void main() {
 
     // weightSum is zero only when all four taps sit on a different surface (a thin silhouette);
     // taking the nearest-in-depth tap whole is blockier than bilinear but at least the right colour.
-    fragColor = weightSum > 0.0 ? sum / weightSum : closest;
+    fragColor = weightSum > 0.0 ? plagueReflectionUnassociate(sum / weightSum) : closest;
 #if PLAGUE_VOXEL_REFLECTIONS != 0
     // The world answer joins here, at full resolution, so the half-res screen trace never
     // resamples it. It fills in where the upsampled screen hit is weak; a == 0 is exactly the
     // world value, a == 1 exactly the screen value, the same split ssr_blur makes on Epic.
     vec4 world = texelFetch(u_Input3, ivec2(gl_FragCoord.xy), 0);
     float screenConfidence = clamp(fragColor.a, 0.0, 1.0);
-    fragColor = vec4(mix(world.rgb, fragColor.rgb, screenConfidence),
-                     max(screenConfidence, world.a));
+    // Unsupported world pixels cannot darken an otherwise supported screen sample.
+    vec4 supported = plagueReflectionAssociate(fragColor)
+                   + plagueReflectionAssociate(world) * (1.0 - screenConfidence);
+    fragColor = plagueReflectionUnassociate(supported);
 #endif
 }

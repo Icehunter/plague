@@ -1,0 +1,3 @@
+#version 450
+#define PLAGUE_GLASS_GI_PROGRESSIVE 1
+#moj_import <fornax_runtime:glass_photon_trace.glsl>

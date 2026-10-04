@@ -92,8 +92,8 @@ void main() {
         return;
     }
     vec3 current=plagueRayBatchMean(batch,uint(PLAGUE_LOCAL_SAMPLES));
-    // Negative weight alpha is a valid zero-energy direct path delegated to dielectric
-    // transport. Treating it as missing would retain direct light and double-count the caustic.
+    // Every selected path keeps a positive weight tag. The seed tints it through glass;
+    // a native miss is still the final visibility answer for opaque geometry.
     float gathered=min(abs(previous.a)+1.0,PLAGUE_GI_VIS_FRAMES);
     imageStore(u_Out,cell,vec4(mix(previous.rgb,current,1.0/gathered),gathered));
 }

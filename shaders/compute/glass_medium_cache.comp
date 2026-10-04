@@ -1,0 +1,31 @@
+#version 450
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:glass_options.glsl>
+#define PLAGUE_GLASS_BINDING_START 2
+#moj_import <fornax_runtime:glass_compute_scene.glsl>
+layout(local_size_x=256,local_size_y=1,local_size_z=1) in;
+layout(std430,set=0,binding=9) writeonly buffer GlassMediumOutputLow { float mediumWordsLow[]; };
+layout(std430,set=0,binding=10) writeonly buffer GlassMediumOutputHigh { float mediumWordsHigh[]; };
+void main() {
+    if(!plagueGlassBuffersValid()) return;
+    uint entry=gl_GlobalInvocationID.x;
+    if(entry>=uint(glassPalette.length()/16)) return;
+    const uint halfEntries=4546031u; // ceil(33^3*253/2), supported scene maximum.
+    bool low=entry<halfEntries;
+    uint base=(low?entry:entry-halfEntries)*5u;
+    if((low && base+4u>=uint(mediumWordsLow.length()))
+            || (!low && base+4u>=uint(mediumWordsHigh.length()))) return;
+    PlagueGlassMedium medium=plagueGlassMediumUncached(int(entry));
+    float signedIor=medium.glass?medium.ior:-medium.ior;
+    if(low) {
+        mediumWordsLow[base]=signedIor; mediumWordsLow[base+1u]=medium.roughness;
+        mediumWordsLow[base+2u]=medium.absorption.x; mediumWordsLow[base+3u]=medium.absorption.y;
+        mediumWordsLow[base+4u]=medium.absorption.z;
+    } else {
+        mediumWordsHigh[base]=signedIor; mediumWordsHigh[base+1u]=medium.roughness;
+        mediumWordsHigh[base+2u]=medium.absorption.x; mediumWordsHigh[base+3u]=medium.absorption.y;
+        mediumWordsHigh[base+4u]=medium.absorption.z;
+    }
+}

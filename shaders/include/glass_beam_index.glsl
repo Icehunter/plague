@@ -28,6 +28,11 @@ uint plagueGlassBeamIndexBucket(ivec3 key) {
     return plagueGlassHash(mixed^uint(key.z))&(PLAGUE_GLASS_BEAM_INDEX_HEADS-1u);
 }
 
+uint plagueGlassBeamNormalBucket(ivec3 key,uint bank) {
+    uint side=PLAGUE_GLASS_BEAM_INDEX_HEADS/PLAGUE_GLASS_NORMAL_BANKS;
+    return bank*side+(plagueGlassBeamIndexBucket(key)&(side-1u));
+}
+
 bool plagueGlassBeamIndexBounds(mat4 clipFromCache,vec3 centre,vec3 extent0,vec3 extent1,
         vec3 extent2,ivec2 size,out ivec2 lower,out ivec2 upper,out int level) {
     vec2 minimum=vec2(1.0),maximum=vec2(-1.0);

@@ -1,0 +1,233 @@
+// Shared optical transport: the direct map is retained until scene invalidation;
+// the GI-only arm rotates samples without animating the unfiltered direct caustic map.
+#ifndef PLAGUE_GLASS_GI_PROGRESSIVE
+#define PLAGUE_GLASS_GI_PROGRESSIVE 0
+#endif
+#define FORNAX_COMPUTE_GLOBALS
+#define FORNAX_GLOBALS_BINDING 0
+#moj_import <fornax:globals.glsl>
+#moj_import <fornax_runtime:glass_options.glsl>
+#moj_import <fornax_runtime:shadow_options.glsl>
+#moj_import <fornax_runtime:local_light_mode.glsl>
+// Rebuilt paths use the same integer anchor as retained paths; moving the eye must not change
+// floating-point boundary decisions when an unrelated section invalidates the cache.
+vec3 plagueGlassTraceAnchor;
+vec4 plagueGlassEmissionPlane;
+vec3 plagueGlassEmissionLo,plagueGlassEmissionHi;
+#define PLAGUE_GLASS_SCENE_ORIGIN plagueGlassTraceAnchor
+#define PLAGUE_GLASS_RECORD_PATH
+#moj_import <fornax_runtime:glass_compute_scene.glsl>
+#moj_import <fornax_runtime:glass_photons.glsl>
+#moj_import <fornax_runtime:gi_lights.glsl>
+#moj_import <fornax_runtime:glass_photon_sampling.glsl>
+#moj_import <fornax_runtime:glass_photon_cache.glsl>
+#moj_import <fornax_runtime:glass_sun_grid.glsl>
+#moj_import <fornax_runtime:glass_beam.glsl>
+#moj_import <fornax_runtime:glass_beam_visibility.glsl>
+layout(local_size_x=64,local_size_y=1,local_size_z=1) in;
+layout(std430,set=0,binding=9) readonly buffer GlassLights { uint lightWords[]; };
+layout(set=0,binding=10) uniform sampler2DShadow u_GlassSunShadow;
+layout(std430,set=0,binding=11) readonly buffer GlassSources { uint sourceWords[]; };
+layout(std430,set=0,binding=12) readonly buffer GlassCache { uint cacheWords[]; };
+layout(std430,set=0,binding=13) writeonly buffer GlassPhotons { vec4 photonWords[]; };
+layout(std430,set=0,binding=14) writeonly buffer GlassBeams { vec4 beamWords[]; };
+
+#if PLAGUE_GLASS_GI_PROGRESSIVE != 0
+#moj_import <fornax_runtime:glass_gi_opaque_transport.glsl>
+#endif
+
+void plagueGlassStoreLastLeg(uint index) {
+    if(dot(plagueGlassLastPlane.xyz,plagueGlassLastPlane.xyz)==0.0) return;
+    uint base=index*PLAGUE_GLASS_BEAM_WORDS;
+    // Reconstruction on a neighbouring pixel must not cross a carpet, backing or another
+    // glass interface. Retain the actual last segment for a visibility test at that pixel.
+    #if PLAGUE_GLASS_GI_PROGRESSIVE != 0
+    beamWords[base+5u]=vec4(0.0,0.0,0.0,plagueGlassGiLastOpaque?-4.0:-2.0);
+#else
+    beamWords[base+5u]=vec4(0.0,0.0,0.0,-2.0);
+#endif
+    beamWords[base+6u]=plagueGlassLastPlane;
+    beamWords[base+7u]=vec4(plagueGlassLastLo,0.0);
+    beamWords[base+8u]=vec4(plagueGlassLastHi,0.0);
+    // Word 9's xyz/word 10 are the bin pass's index volume: the receiver's own gather-radius
+    // box, already written once in main() before this call. glass_caustic_gather.comp rejects
+    // anything past PLAGUE_GLASS_GATHER_RADIUS regardless of what the index volume covers, so
+    // widening it to the aperture here only coarsens the bin level for no gain. Only the
+    // source flag belongs to this function.
+    beamWords[base+9u].w=plagueGlassLastIsSource?65536.0:0.0;
+}
+
+float plagueGlassSunLaunchVisibility(vec3 origin) {
+#ifndef SHADOWS
+    return 0.0; // The engine does not render its shadow map when this option is disabled.
+#else
+    // The finite launch plane may sit below a roof outside the voxel trace. Fornax's shadow map
+    // covers that incoming leg; unlike the screen depth, it stores forward Z and compares ref<=depth.
+    vec4 clip=u_SunViewProj*vec4(origin+(plagueGlassTraceAnchor-u_CameraAbs),1.0);
+    vec3 ndc=clip.xyz/clip.w;
+    float warp=length(ndc.xy)*u_ShadowMapParams.x+(1.0-u_ShadowMapParams.x);
+    vec2 uv=ndc.xy/warp*0.5+0.5;
+    if(any(lessThanEqual(uv,vec2(0.0))) || any(greaterThanEqual(uv,vec2(1.0)))
+            || ndc.z<=0.0 || ndc.z>=1.0) return 0.0;
+    return textureLod(u_GlassSunShadow,vec3(uv,ndc.z),0.0);
+#endif
+}
+
+void main() {
+    uint index=gl_GlobalInvocationID.x;
+    if(index>=PLAGUE_GLASS_PHOTONS) return;
+    plagueGlassTraceAnchor=vec3(ivec3(cacheWords[4],cacheWords[5],cacheWords[6]));
+    plagueGlassEmissionPlane=vec4(0.0);
+    plagueGlassEmissionLo=vec3(0.0); plagueGlassEmissionHi=vec3(0.0);
+#if PLAGUE_GLASS_GI_PROGRESSIVE != 0
+    // GI reconstructs local-source irradiance only; its sun records were always discarded by
+    // the GI gather. Use every slot for local emitters, including in sunlit worlds.
+    bool sun=false;
+#else
+    bool sun=index>=PLAGUE_GLASS_PHOTONS/2u;
+#endif
+    bool sceneValid=plagueGlassBuffersValid() && cacheWords[0]==PLAGUE_GLASS_CACHE_TAG;
+#if PLAGUE_GLASS_GI_PROGRESSIVE != 0
+    if(sceneValid && cacheWords[1]==0u) {
+        if(index%PLAGUE_GLASS_GI_REFRESH_PHASES!=
+                cacheWords[PLAGUE_GLASS_CACHE_GI_PHASE]-1u) return;
+    }
+#else
+    if(!sun && sceneValid && cacheWords[1]==0u) return;
+#endif
+    uint base=index*PLAGUE_GLASS_PHOTON_WORDS;
+#if PLAGUE_GLASS_GI_PROGRESSIVE == 0
+    for(uint word=0u;word<PLAGUE_GLASS_PHOTON_WORDS;++word) photonWords[base+word]=vec4(0.0);
+    beamWords[index*PLAGUE_GLASS_BEAM_WORDS+5u]=vec4(0.0,0.0,0.0,-1.0);
+#else
+    // Refresh writes only after the complete finite path is answered. Unknown suffixes cannot
+    // define the reservoir count and must hold a compatible prior slot instead of blackening it.
+    if(!sceneValid || cacheWords[1]!=0u) {
+        for(uint word=0u;word<PLAGUE_GLASS_PHOTON_WORDS;++word) photonWords[base+word]=vec4(0.0);
+        beamWords[index*PLAGUE_GLASS_BEAM_WORDS+5u]=vec4(0.0,0.0,0.0,-1.0);
+    }
+#endif
+    if(!sceneValid) return;
+#if PLAGUE_GLASS_GI_PROGRESSIVE != 0
+    // A full rebuild clears inactive/remainder slots before the GI bin reads them.
+#endif
+    uint randomState;
+    vec3 origin,direction,flux;
+    float reach=PLAGUE_LOCAL_REACH;
+    if(sun) {
+        // Fornax's forward-Z orthographic projection negates the view's toward-light row Z.
+        // ShadowCamera receives the active source from SunDirection, including the moon handoff.
+        vec3 light=-normalize(vec3(u_SunViewProj[0][2],u_SunViewProj[1][2],u_SunViewProj[2][2]));
+        // Fornax dimension IDs: 1 is the Overworld; 0 is unknown.
+        if(light.y<=0.0 || u_WorldBounds.w!=1.0) return;
+        vec3 tangent,bitangent; ivec2 first; float plane;
+        plagueGlassSunGrid(light,tangent,bitangent,first,plane);
+        uint ordinal=index-PLAGUE_GLASS_PHOTONS/2u,cellIndex=ordinal/PLAGUE_GLASS_SUN_SAMPLES_PER_CELL;
+        ivec2 cell=first+ivec2(int(cellIndex)%PLAGUE_GLASS_SUN_GRID_SIZE,int(cellIndex)/PLAGUE_GLASS_SUN_GRID_SIZE);
+        uint key=plagueGlassSourceKey(ivec3(cell,0),0u,0u);
+        uint sampleLane=ordinal%PLAGUE_GLASS_SUN_SAMPLES_PER_CELL;
+        vec2 draw=plagueGlassEmissionSample(sampleLane,key).xy;
+        randomState=plagueGlassHash(key^sampleLane);
+        vec2 location=(vec2(cell)+draw)*PLAGUE_GLASS_SUN_CELL;
+        origin=tangent*location.x+bitangent*location.y+light*plane-plagueGlassTraceAnchor;
+        direction=-light;
+        float area=4.0*PLAGUE_GLASS_SUN_RADIUS*PLAGUE_GLASS_SUN_RADIUS;
+        float sourceVisibility=plagueGlassSunLaunchVisibility(origin);
+        if(sourceVisibility<=0.0) return;
+        flux=vec3(sourceVisibility*area/float(PLAGUE_GLASS_PHOTONS/2u));
+        reach=PLAGUE_GLASS_SUN_RADIUS*3.0;
+    } else {
+#if PLAGUE_LOCAL_LIGHTING == 0 && PLAGUE_LOCAL_SHADOWS == 0
+        return;
+#endif
+        uint count=cacheWords[2];
+        if(count==0u) return;
+#if PLAGUE_GLASS_GI_PROGRESSIVE != 0
+        uint emitterSamples=PLAGUE_GLASS_PHOTONS/count;
+        if(index>=emitterSamples*count) return;
+        uint source=cacheWords[PLAGUE_GLASS_CACHE_SOURCES+int(index/emitterSamples)];
+        uint ordinal=index%emitterSamples;
+        // Retained GI map rotates source-local samples without changing direct-path ownership.
+        ordinal+=emitterSamples*cacheWords[PLAGUE_GLASS_CACHE_GI_SWEEP];
+#else
+        // Exclusive prefixes assign the same fixed ray budget in proportion to source power.
+        // Binary search is bounded by the compact source count, never the 4096-row inventory.
+        uint first=0u,last=count;
+        while(first<last) {
+            uint middle=(first+last)/2u;
+            if(index<cacheWords[PLAGUE_GLASS_CACHE_DIRECT_PREFIX+int(middle)]) last=middle;
+            else first=middle+1u;
+        }
+        if(first>=count) return;
+        uint start=first==0u?0u:cacheWords[PLAGUE_GLASS_CACHE_DIRECT_PREFIX+int(first-1u)];
+        uint end=cacheWords[PLAGUE_GLASS_CACHE_DIRECT_PREFIX+int(first)];
+        uint emitterSamples=end-start;
+        if(emitterSamples==0u || index<start || index>=end) return;
+        uint source=cacheWords[PLAGUE_GLASS_CACHE_SOURCES+int(first)];
+        uint ordinal=index-start;
+#endif
+        int word=PLAGUE_LOCAL_RECORDS+int(source)*PLAGUE_LOCAL_RECORD_WORDS;
+        ivec3 cell=ivec3(sourceWords[word],sourceWords[word+1],sourceWords[word+2]);
+        uint run=sourceWords[word+PLAGUE_LOCAL_RECORD_RUN],box=sourceWords[word+PLAGUE_LOCAL_RECORD_BOX];
+        uint key=plagueGlassSourceKey(cell,run,box);
+        vec4 draw=plagueGlassEmissionSample(ordinal,key);
+        randomState=plagueGlassHash(key^ordinal);
+        int face=plagueLocalRunFace(run);
+        vec3 normal=plagueGiFaceNormal(face),alongU,alongV;
+        plagueGiFaceAxes(face,alongU,alongV);
+        vec2 runSpan=plagueLocalRunSpan(run);
+        vec3 lo,hi; plagueLocalUnpackBox(box,lo,hi);
+        int axis=face<2?1:face<4?2:0;
+        vec3 extent=hi-lo;
+        extent+=alongU*(runSpan.x-1.0)+alongV*(runSpan.y-1.0);
+        vec2 span=vec2(dot(extent,alongU),dot(extent,alongV));
+        vec3 centre=vec3(cell-ivec3(plagueGlassTraceAnchor))+lo+extent*0.5;
+        centre[axis]=float(cell[axis]-int(plagueGlassTraceAnchor[axis]))+((face&1)==0?lo[axis]:hi[axis]);
+        plagueGlassEmissionPlane=vec4(normal,dot(normal,centre));
+        plagueGlassEmissionLo=centre-alongU*span.x*0.5-alongV*span.y*0.5;
+        plagueGlassEmissionHi=centre+alongU*span.x*0.5+alongV*span.y*0.5;
+        origin=centre+alongU*(draw.x-0.5)*span.x
+                +alongV*(draw.y-0.5)*span.y+normal*PLAGUE_GLASS_EPSILON*2.0;
+        float radius=sqrt(draw.z);
+        float phi=2.0*3.141592653589793*draw.w;
+        direction=normalize(alongU*(radius*cos(phi))+alongV*(radius*sin(phi))+normal*sqrt(1.0-radius*radius));
+        // Equal integer quotas make source permutation irrelevant. Unused remainder paths emit
+        // nothing; each source's actual quota still integrates exactly pi*A*Le.
+        vec3 radiance=max(uintBitsToFloat(uvec3(sourceWords[word+11],sourceWords[word+15],sourceWords[word+19])),vec3(0.0));
+        flux=radiance*(3.141592653589793*span.x*span.y/float(emitterSamples));
+    }
+    PlagueGlassHit receiver; bool crossed; float firstDistance;
+#if PLAGUE_GLASS_GI_PROGRESSIVE != 0
+    int status=plagueGlassGiTransport(origin,direction,flux,reach,randomState,receiver,crossed,firstDistance);
+    if(status<0) return;
+    for(uint word=0u;word<PLAGUE_GLASS_PHOTON_WORDS;++word) photonWords[base+word]=vec4(0.0);
+    beamWords[index*PLAGUE_GLASS_BEAM_WORDS+5u]=vec4(0.0,0.0,0.0,-1.0);
+#else
+    int status=plagueGlassTransport(origin,direction,flux,reach,true,randomState,receiver,crossed,firstDistance);
+#endif
+    if(status!=1 || receiver.glass) return;
+#if PLAGUE_GLASS_GI_PROGRESSIVE != 0
+    // Higher opaque bounces include clear-air prefixes. The retained direct map stays glass-only.
+    if(!crossed && plagueGlassGiSelectedKind!=2.0) return;
+#else
+    if(!crossed) return;
+#endif
+#if PLAGUE_GLASS_GI_PROGRESSIVE == 0
+    if(!sun) flux*=plagueLocalFalloff(plagueGlassPathDistance);
+#endif
+    if(any(isnan(flux)) || any(isinf(flux))) return;
+    photonWords[base]=vec4(receiver.position,1.0);
+#if PLAGUE_GLASS_GI_PROGRESSIVE != 0
+    photonWords[base+1u]=vec4(flux,plagueGlassGiSelectedKind);
+#else
+    photonWords[base+1u]=vec4(flux,sun?1.0:0.0);
+#endif
+    photonWords[base+2u]=vec4(-direction,0.0);
+    photonWords[base+3u]=vec4(dot(receiver.normal,direction)<0.0 ? receiver.normal : -receiver.normal,0.0);
+    // Default index volume for a photon whose last leg never crossed glass: a gather-radius box
+    // around the receiver, the same reach plagueGlassKernel reconstructs with (glass_photons.glsl).
+    // plagueGlassStoreLastLeg below tightens this to the actual aperture when a crossing exists.
+    beamWords[index*PLAGUE_GLASS_BEAM_WORDS+9u]=vec4(receiver.position-vec3(PLAGUE_GLASS_GATHER_RADIUS),0.0);
+    beamWords[index*PLAGUE_GLASS_BEAM_WORDS+10u]=vec4(receiver.position+vec3(PLAGUE_GLASS_GATHER_RADIUS),0.0);
+    plagueGlassStoreLastLeg(index);
+}

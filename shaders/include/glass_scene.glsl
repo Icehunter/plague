@@ -26,24 +26,38 @@ struct PlagueGlassHit {
 };
 #ifdef PLAGUE_GLASS_RECORD_PATH
 int plagueGlassFace(vec3 n);
+vec3 plagueGlassGridOrigin();
 void plagueGlassBox(int entry,int box,out vec3 lo,out vec3 hi);
 // Trace-only endpoint metadata lets reconstruction reject blockers at neighbouring receivers.
 vec4 plagueGlassLastPlane;
 vec3 plagueGlassLastLo,plagueGlassLastHi;
 float plagueGlassPathDistance;
 bool plagueGlassLastIsSource;
-void plagueGlassRecordBoundary(PlagueGlassHit hit,vec3 direction) {
+bool plagueGlassRecordBoundary(PlagueGlassHit hit,vec3 direction) {
     vec3 normal=dot(hit.normal,direction)>0.0 ? hit.normal : -hit.normal;
-    plagueGlassLastPlane=vec4(normal,dot(normal,hit.position));
-    vec3 cellOrigin=hit.position-hit.local;
+    int axis=hit.normal.x!=0.0 ? 0 : hit.normal.y!=0.0 ? 1 : 2;
+    // Trace cell coordinates are integral. Recover that cell exactly instead of retaining
+    // cancellation error from the separately rounded hit position and local coordinates.
+    vec3 cellOrigin=round(plagueGlassGridOrigin()+hit.position-hit.local)-plagueGlassGridOrigin();
     plagueGlassLastLo=vec3(1e30); plagueGlassLastHi=vec3(-1e30);
     int count=int(plagueGlassPaletteWord(hit.entry*16)&15u);
+    bool found=false;
     for(int box=0;box<max(count,1);++box) {
         vec3 lo,hi; plagueGlassBox(hit.entry,box,lo,hi);
         plagueGlassLastLo=min(plagueGlassLastLo,cellOrigin+lo);
         plagueGlassLastHi=max(plagueGlassLastHi,cellOrigin+hi);
+        float face=hit.normal[axis]>0.0 ? hi[axis] : lo[axis];
+        if(!found && abs(face-hit.local[axis])<=PLAGUE_GLASS_EPSILON
+                && all(greaterThanEqual(hit.local,lo-vec3(PLAGUE_GLASS_EPSILON)))
+                && all(lessThanEqual(hit.local,hi+vec3(PLAGUE_GLASS_EPSILON)))) {
+            // The plane and bounds come from the same model coordinates. A hit-derived plane
+            // can round outside its own bounds and permanently reject a valid last leg.
+            plagueGlassLastPlane=vec4(normal,normal[axis]*(cellOrigin[axis]+face));
+            found=true;
+        }
     }
     plagueGlassLastIsSource=false;
+    return found;
 }
 #endif
 int plagueGlassMod(int a, int b) { return a >= 0 ? a % b : b - 1 - ((-1 - a) % b); }
@@ -61,7 +75,7 @@ vec3 plagueGlassFaceNormal(int face) {
 vec3 plagueGlassGridOrigin() { return PLAGUE_GLASS_SCENE_ORIGIN - vec3((u_VoxelWindow.xyz - ivec3((u_VoxelWindow.w-1)/2))*16); }
 
 // Returns -1 for empty and -2 for unknown. Unknown cells never certify an unoccluded ray.
-int plagueGlassCell(ivec3 cell) {
+int plagueGlassCellUncached(ivec3 cell) {
     int d = u_VoxelWindow.w;
     if (any(lessThan(cell, ivec3(0))) || any(greaterThanEqual(cell, ivec3(d*16)))) return -2;
     ivec3 section = (cell >> 4) + u_VoxelWindow.xyz - ivec3((d-1)/2);
@@ -74,6 +88,26 @@ int plagueGlassCell(ivec3 cell) {
     if ((plagueGlassOccupancyWord(slot*128+(index>>5)) & (1u << uint(index&31))) == 0u) return -1;
     int entry = int((plagueGlassPayloadWord(slot*1024+(index>>2)) >> uint((index&3)*8)) & 255u);
     return entry < plagueGlassPaletteCapacity() ? slot*plagueGlassPaletteCapacity() + entry : -2;
+}
+// 9-section near cache (144 cells per axis), measured exact on captured room traversal.
+// Larger scene windows retain their full domain through the unchanged fallback classifier.
+#ifdef PLAGUE_GLASS_CELL_BINDING
+layout(std430,set=0,binding=PLAGUE_GLASS_CELL_BINDING) readonly buffer GlassCellCache { int glassCellWords[]; };
+#endif
+int plagueGlassCell(ivec3 cell) {
+#ifdef PLAGUE_GLASS_CELL_BINDING
+    if(!plagueGlassBuffersValid()) return -2;
+    int diameter=u_VoxelWindow.w*16;
+    if(any(lessThan(cell,ivec3(0))) || any(greaterThanEqual(cell,ivec3(diameter)))) return -2;
+    ivec3 local=cell-ivec3(max((diameter-144)/2,0));
+    // Truncated cache has no authority; preserve unknown/air/occupied answers via fallback.
+    // Correct-sized stale contents cannot be detected: graph order and scene immutability
+    // between producer and consumer are required, exactly as for the medium cache.
+    if(glassCellWords.length()>=2985984 && all(greaterThanEqual(local,ivec3(0)))
+            && all(lessThan(local,ivec3(144))))
+        return glassCellWords[(local.y*144+local.z)*144+local.x];
+#endif
+    return plagueGlassCellUncached(cell);
 }
 void plagueGlassBox(int entry, int box, out vec3 lo, out vec3 hi) {
     int count = int(plagueGlassPaletteWord(entry*16) & 15u);
@@ -117,7 +151,7 @@ bool plagueGlassMaterialSample(int entry,int face,out vec2 uv,out float area) {
     return !any(isnan(uv)) && !any(isinf(uv)) && all(greaterThanEqual(uv,vec2(0.0)))
         && all(lessThanEqual(uv,vec2(1.0))) && !isnan(area) && !isinf(area) && area>0.0 && area<=1.0;
 }
-PlagueGlassMedium plagueGlassMedium(int entry) {
+PlagueGlassMedium plagueGlassMediumUncached(int entry) {
     PlagueGlassMedium medium;
     medium.glass=false; medium.ior=1.0; medium.absorption=vec3(0.0); medium.roughness=0.0;
     if (entry<0) return medium;
@@ -202,6 +236,39 @@ PlagueGlassMedium plagueGlassMedium(int entry) {
     medium.absorption=plagueGlassAbsorption(blended && weight>0.0 ? colour/weight : vec3(1.0));
     return medium;
 }
+#ifdef PLAGUE_GLASS_MEDIUM_BINDING
+// Five float32 words preserve the exact optical classifier. Positive IOR means glass;
+// canonical non-glass IOR is stored negative. No precision or material thresholds change.
+layout(std430,set=0,binding=PLAGUE_GLASS_MEDIUM_BINDING) readonly buffer GlassMediumCacheLow { float glassMediumWordsLow[]; };
+layout(std430,set=0,binding=PLAGUE_GLASS_MEDIUM_BINDING+1) readonly buffer GlassMediumCacheHigh { float glassMediumWordsHigh[]; };
+#endif
+PlagueGlassMedium plagueGlassMedium(int entry) {
+#ifdef PLAGUE_GLASS_MEDIUM_BINDING
+    // The producer must run after scene/atlas publication and before this consumer each frame.
+    // Correct-length stale contents cannot be detected here; graph order is part of the ABI.
+    // Offline fixtures omit the binding macro and retain the classifier below. The active
+    // graph allocates every supported palette entry; a missing descriptor is a load error.
+    if(entry<0) return PlagueGlassMedium(false,1.0,vec3(0.0),0.0);
+    // ceil(33^3*253/2) entries per descriptor keeps each range below Vulkan's128MiB minimum.
+    const int halfEntries=4546031;
+    int base=(entry<halfEntries?entry:entry-halfEntries)*5;
+    float signedIor,roughness; vec3 absorption;
+    if(entry<halfEntries) {
+        signedIor=glassMediumWordsLow[base]; roughness=glassMediumWordsLow[base+1];
+        absorption=vec3(glassMediumWordsLow[base+2],glassMediumWordsLow[base+3],glassMediumWordsLow[base+4]);
+    } else {
+        signedIor=glassMediumWordsHigh[base]; roughness=glassMediumWordsHigh[base+1];
+        absorption=vec3(glassMediumWordsHigh[base+2],glassMediumWordsHigh[base+3],glassMediumWordsHigh[base+4]);
+    }
+    PlagueGlassMedium medium;
+    medium.glass=signedIor>0.0; medium.ior=abs(signedIor);
+    medium.roughness=roughness; medium.absorption=absorption;
+    return medium;
+#else
+    return plagueGlassMediumUncached(entry);
+#endif
+}
+
 PlagueGlassMedium plagueGlassAt(vec3 point) {
     vec3 p=plagueGlassGridOrigin()+point;
     int entry=plagueGlassCell(ivec3(floor(p)));
@@ -333,34 +400,55 @@ int plagueGlassTrace(vec3 origin,vec3 direction,float reach,bool glassOnly,out P
                 }
             } else if(!glassOnly || medium.glass) {
                 float nearest=reach; vec3 normal=vec3(0.0);
-                // Exact ray-interval sidedness survives grazing rays whose spatial epsilon
-                // probes round to the same point. Shared box endpoints suppress internal faces.
-                float enters[8],leaves[8];
-                vec3 enterNormals[8],leaveNormals[8];
-                bool intersects[8];
-                for(int box=0;box<max(count,1);++box) {
-                    vec3 lo,hi; plagueGlassBox(entry,box,lo,hi);
-                    intersects[box]=plagueGlassInterval(gridOrigin-vec3(cell),direction,lo,hi,
-                        enters[box],leaves[box],enterNormals[box],leaveNormals[box]);
-                }
-                for(int box=0;box<max(count,1);++box) {
-                    if(!intersects[box]) continue;
-                    for(int side=0;side<2;++side) {
-                        float candidate=side==0?enters[box]:leaves[box];
-                        if(candidate<PLAGUE_GLASS_EPSILON || candidate+PLAGUE_GLASS_EPSILON<t || candidate>=nearest) continue;
-                        bool before=false,after=false;
-                        for(int other=0;other<max(count,1);++other) if(intersects[other]) {
-                            before=before || (enters[other]<candidate && leaves[other]>=candidate);
-                            after=after || (enters[other]<=candidate && leaves[other]>candidate);
+                if(count<=1) {
+                    // One intersected interval has two union boundaries by leave>enter;
+                    // retain both endpoint tests so a transparent near face can expose the exit.
+                    vec3 lo,hi; plagueGlassBox(entry,0,lo,hi);
+                    float enter,leave; vec3 enterNormal,leaveNormal;
+                    if(plagueGlassInterval(gridOrigin-vec3(cell),direction,lo,hi,
+                            enter,leave,enterNormal,leaveNormal)) {
+                        for(int side=0;side<2;++side) {
+                            float candidate=side==0?enter:leave;
+                            if(candidate<PLAGUE_GLASS_EPSILON || candidate+PLAGUE_GLASS_EPSILON<t || candidate>=nearest) continue;
+                            vec3 local=gridOrigin+direction*candidate-vec3(cell);
+                            vec3 n=side==0?enterNormal:leaveNormal;
+                            if(!medium.glass && (flags&0xc0000000u)!=0u) {
+                                vec2 uv; vec3 tint;
+                                if(plagueGlassUv(entry,local,n,uv,tint) && plagueGlassAlbedo(uv).a<0.5) continue;
+                            }
+                            nearest=candidate; normal=n;
                         }
-                        if(before==after) continue; // Overlapping box faces are not medium boundaries.
-                        vec3 local=gridOrigin+direction*candidate-vec3(cell);
-                        vec3 n=side==0?enterNormals[box]:leaveNormals[box];
-                        if(!medium.glass && (flags&0xc0000000u)!=0u) {
-                            vec2 uv; vec3 tint;
-                            if(plagueGlassUv(entry,local,n,uv,tint) && plagueGlassAlbedo(uv).a<0.5) continue;
+                    }
+                } else {
+                    // Exact ray-interval sidedness survives grazing rays whose spatial epsilon
+                    // probes round to the same point. Shared box endpoints suppress internal faces.
+                    float enters[8],leaves[8];
+                    vec3 enterNormals[8],leaveNormals[8];
+                    bool intersects[8];
+                    for(int box=0;box<max(count,1);++box) {
+                        vec3 lo,hi; plagueGlassBox(entry,box,lo,hi);
+                        intersects[box]=plagueGlassInterval(gridOrigin-vec3(cell),direction,lo,hi,
+                            enters[box],leaves[box],enterNormals[box],leaveNormals[box]);
+                    }
+                    for(int box=0;box<max(count,1);++box) {
+                        if(!intersects[box]) continue;
+                        for(int side=0;side<2;++side) {
+                            float candidate=side==0?enters[box]:leaves[box];
+                            if(candidate<PLAGUE_GLASS_EPSILON || candidate+PLAGUE_GLASS_EPSILON<t || candidate>=nearest) continue;
+                            bool before=false,after=false;
+                            for(int other=0;other<max(count,1);++other) if(intersects[other]) {
+                                before=before || (enters[other]<candidate && leaves[other]>=candidate);
+                                after=after || (enters[other]<=candidate && leaves[other]>candidate);
+                            }
+                            if(before==after) continue; // Overlapping box faces are not medium boundaries.
+                            vec3 local=gridOrigin+direction*candidate-vec3(cell);
+                            vec3 n=side==0?enterNormals[box]:leaveNormals[box];
+                            if(!medium.glass && (flags&0xc0000000u)!=0u) {
+                                vec2 uv; vec3 tint;
+                                if(plagueGlassUv(entry,local,n,uv,tint) && plagueGlassAlbedo(uv).a<0.5) continue;
+                            }
+                            nearest=candidate; normal=n;
                         }
-                        nearest=candidate; normal=n;
                     }
                 }
                 if(nearest<reach && nearest<=crossing+PLAGUE_GLASS_EPSILON) {
@@ -378,6 +466,56 @@ int plagueGlassTrace(vec3 origin,vec3 direction,float reach,bool glassOnly,out P
 bool plagueGlassSegmentIntersects(vec3 origin,vec3 direction,float reach) {
     PlagueGlassHit hit;
     return plagueGlassTrace(origin,direction,reach,true,hit)==1;
+}
+
+// Continuous direct-light estimate through certified dielectric volumes. This follows the
+// unbent receiver-to-source segment: Beer absorption uses that chord, while a separate optical
+// direction carries Snell/Fresnel across interfaces. This neglects displacement; photons carry it.
+// Unknown geometry returns false so callers can retain the native mesh visibility answer.
+// The interface count shares the optical path budget above; exceeding it is unavailable.
+bool plagueGlassSegmentTransmission(vec3 origin,vec3 direction,float reach,out vec3 transmission) {
+    transmission=vec3(1.0);
+    if(!plagueGlassBuffersValid() || !(reach>0.0)) return false;
+    vec3 cursor=origin;
+    vec3 endpoint=origin+direction*reach;
+    vec3 opticalDirection=direction;
+    PlagueGlassMedium current=plagueGlassAt(cursor);
+    float remaining=reach;
+    for(int event=0;event<PLAGUE_GLASS_INTERFACES;++event) {
+        PlagueGlassHit hit;
+        int status=plagueGlassTrace(cursor,direction,remaining,true,hit);
+        if(status<0) return false;
+        float interval=status==1 ? hit.distance : remaining;
+        transmission*=plagueGlassAttenuation(current.absorption,interval);
+        if(status==0) return true;
+        vec3 after=plagueGlassBoundaryOffset(hit.position,direction,hit.normal);
+        if(plagueGlassCell(ivec3(floor(plagueGlassGridOrigin()+after)))==-2) return false;
+        PlagueGlassMedium next=plagueGlassAt(after);
+        if(current.ior!=next.ior) {
+            vec3 normal=dot(direction,hit.normal)<0.0 ? hit.normal : -hit.normal;
+            // A bent path may not cross the same face as its straight chord. That geometry is
+            // unavailable to this approximation, not a certified opaque blocker.
+            if(dot(opticalDirection,normal)>=0.0) return false;
+            vec3 refracted; float reflectance;
+            if(!plagueGlassInterface(opticalDirection,normal,current.ior,next.ior,refracted,reflectance)) {
+                transmission=vec3(0.0);
+                return true;
+            }
+            transmission*=1.0-reflectance;
+            // Snell's law: the exit angle belongs to the current medium. Reusing the air
+            // direction here falsely creates total internal reflection through a parallel slab.
+            opticalDirection=refracted;
+        }
+        // Begin the next query on the far side of this face. An along-ray epsilon can
+        // remain inside the previous medium at grazing angles and count this face again.
+        // Boundary offsets change the cursor as well as the accumulated path length. Measure
+        // against the original endpoint so a chain of faces cannot extend past the lamp.
+        remaining=dot(endpoint-after,direction);
+        if(remaining<=PLAGUE_GLASS_EPSILON*2.0) return true;
+        cursor=after;
+        current=next;
+    }
+    return false;
 }
 
 // Branch -1 retains stochastic Fresnel transport; 0/1 force the first reflection/transmission.
@@ -443,7 +581,7 @@ int plagueGlassTransportFirstBranch(inout vec3 origin,inout vec3 direction,inout
             // it would split the same path family according to which block seam a ray crossed.
             if(current.glass!=nextMedium.glass || current.roughness!=nextMedium.roughness
                     || any(notEqual(current.absorption,nextMedium.absorption)))
-                plagueGlassRecordBoundary(receiver,direction);
+                if(!plagueGlassRecordBoundary(receiver,direction)) return -1;
 #endif
             origin=afterPoint;
             current=nextMedium;
@@ -481,7 +619,7 @@ int plagueGlassTransportFirstBranch(inout vec3 origin,inout vec3 direction,inout
         throughput*=plagueGlassMaskWeight(incident,direction,n,alpha);
         if(max(throughput.x,max(throughput.y,throughput.z))<=0.0) return 2;
 #ifdef PLAGUE_GLASS_RECORD_PATH
-        plagueGlassRecordBoundary(receiver,direction);
+        if(!plagueGlassRecordBoundary(receiver,direction)) return -1;
 #endif
         origin=plagueGlassBoundaryOffset(receiver.position,direction,receiver.normal);
         if(remaining<=PLAGUE_GLASS_EPSILON) return -1;

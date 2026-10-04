@@ -14,8 +14,10 @@ notes; what is here is what a reader needs to know the limit exists.
 - Glass classification uses representative surface materials and bulk tint uses palette colour averages (`glass_scene.glsl`); mixed optical volumes are not resolved spatially, and labPBR supplies no measured absorption spectrum.
 - Quality tiers change query counts and grid storage; GPU frame rates and the reported moving bright patches still require owner-run validation. High/Ultra GI and block-light presets use 4.5/16 times the default ray count.
 - Material capacity remains finite (96/128/192/240 entries per section); increasing it postpones overflow and does not deduplicate contextual variants or prove a direct normal-map issue is fixed.
-- Primary diffuse GI follows a finite number of certified glass interfaces (`gi_glass_step.comp`); exhausted paths hold history. Secondary sun/lamp straight connections still reject glass, with transmitted local light supplied by photons. Multiple diffuse bounces and optical normal-map relief remain unsupported; the continuation needs an owner visual/performance check.
-- Cached photon density has finite radius and spatial sampling error (`glass_photons.glsl`, `glass_photon_sampling.glsl`); source-count changes alter finite sample quotas, and client stability and cost still require measurement.
+- Primary diffuse GI follows a finite number of certified glass interfaces (`gi_glass_step.comp`); exhausted paths hold history. Secondary sun/lamp straight connections still reject glass, with transmitted local light supplied by photons. The local glass photon map supports bounded additional Lambert and pure-conductor bounces; clear-air multiple diffuse bounces, dielectric specular continuation, non-box opaque face continuation, and optical normal-map relief remain unsupported. The continuation needs an owner visual/performance check.
+- Local glossy history currently converges only with a stationary camera and unchanged jitter (`glass_glossy_history.glsl`); moving-view noise, client appearance and frame cost remain unverified, and exact full-resolution histories cost about 172 MiB at 1728×1084.
+- Photon density has finite radius and spatial sampling error (`glass_photons.glsl`, `glass_photon_sampling.glsl`); GI has a separate full-budget local map to eight-frame refresh with a half-block gather. In the 2026-09-29 cave capture, direct quarter-block photons geometrically covered only 11.6% of eligible nonmetal pixels; direct coverage and GI appearance still need a client check, and added tracing cost remains unverified.
+- Metal receivers use bounded camera glossy paths to emissive sources and photon-lit diffuse endpoints (`glass_camera_specular.glsl`). Unknown geometry, finite cumulative reach and event budgets can still leave dark reflections; moving-view convergence and whole-room appearance require a client check.
 - Glass transport cache invalidation covers published geometry, sources and atlas generations (`glass_photon_cache.comp`); optical texture animation without a generation change and dynamic entities need additional update evidence.
 - Camera glass uses raster material response and screen-space refraction (`terrain.fsh`); volumetric camera absorption and multiple refracted interfaces need full surface representation before they can replace it.
 - Tall wall-light bands around glass remain unisolated (`gbuffer_resolve.fsh`); separate direct, caustic, bounce and fog captures are needed to identify their source.
@@ -195,3 +197,11 @@ notes; what is here is what a reader needs to know the limit exists.
 - **True Camera Stills can jitter with ray traced lighting on.** Experimental and off by
   default (`shaders/post/dof_accumulate.fsh`, engine `ApertureJitter`); the diagnostic plan is
   in the working notes.
+
+### October 1 transport verification
+
+The bounded 144³ near-cell lookup adds 11.94 MB and falls back to exact scene lookup outside its cube or for truncated storage. Native replay of frame 187 preserved all nine gather outputs byte for byte and reduced median gather cost by about 15%, including cache production. This is not a client FPS or whole-room appearance result.
+
+Geometry-only publications rebuild the photon map while advancing its sample sweep. Stationary receiver history survives only when every changed section lies outside its conservative finite transport support; source, ownership, layout, origin and invalid inventory changes still reset globally. Nearby changes and camera motion can still delay convergence.
+
+Saved opaque and glass photon planes use actual model-face coordinates, retaining physical backface selection. Twelve native regression fixtures recover legitimate rounded last legs while rejecting gaps, high edges and unknown geometry. These fixtures do not establish whole-room brightness or convergence in the client.

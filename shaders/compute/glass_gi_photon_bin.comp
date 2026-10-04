@@ -11,8 +11,10 @@ void main() {
     if(index>=PLAGUE_GLASS_PHOTONS) return;
     uint base=index*PLAGUE_GLASS_PHOTON_WORDS;
     vec4 photon=photonWords[base];
-    // Only local flux has the same radiometric convention as the GI lamp term.
-    if(photon.w==0.0 || photonWords[base+1u].a!=0.0) return;
-    ivec3 cell=ivec3(floor(photon.xyz/PLAGUE_GLASS_HASH_CELL));
-    linkWords[index]=atomicExchange(headWords[plagueGlassBucket(cell)],index+1u);
+    // Both local first-hit refinement (0) and higher opaque bounce (2) have the local
+    // irradiance convention. Sun (1) is a different unit family and remains excluded.
+    float kind=photonWords[base+1u].a;
+    if(photon.w==0.0 || (kind!=0.0 && kind!=2.0)) return;
+    ivec3 cell=ivec3(floor(photon.xyz/PLAGUE_GI_PHOTON_HASH_CELL));
+    linkWords[index]=atomicExchange(headWords[plagueGlassNormalBucket(cell,plagueGlassNormalBank(photonWords[base+3u].xyz))],index+1u);
 }

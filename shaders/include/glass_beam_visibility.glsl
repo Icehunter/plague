@@ -128,8 +128,10 @@ bool plagueGlassBeamLastLegSupported(vec3 receiverOriginScene,vec3 incoming,vec4
         exitLoCache,exitHiCache,cacheOriginMinusSceneOrigin,distance);
 }
 
-bool plagueGlassBeamLastLegVisible(vec3 receiverOriginScene,vec3 incoming,vec4 exitPlaneCache,
-        vec3 exitLoCache,vec3 exitHiCache,vec3 cacheOriginMinusSceneOrigin,bool endpointSource) {
+// The caller may classify one immutable receiver origin once per photon lookup.
+// Only the starting medium is reused; each later boundary retains its own classification.
+bool plagueGlassBeamLastLegVisibleInMedium(vec3 receiverOriginScene,vec3 incoming,vec4 exitPlaneCache,
+        vec3 exitLoCache,vec3 exitHiCache,vec3 cacheOriginMinusSceneOrigin,bool endpointSource,PlagueGlassMedium medium,bool endpointOpaque) {
     float distance;
     if(!plagueGlassBeamLastLegDomain(receiverOriginScene,incoming,exitPlaneCache,
             exitLoCache,exitHiCache,cacheOriginMinusSceneOrigin,distance)) return false;
@@ -138,8 +140,6 @@ bool plagueGlassBeamLastLegVisible(vec3 receiverOriginScene,vec3 incoming,vec4 e
     float plane=exitPlaneCache.w+dot(normal,cacheOriginMinusSceneOrigin);
     vec3 lo=exitLoCache+cacheOriginMinusSceneOrigin,hi=exitHiCache+cacheOriginMinusSceneOrigin;
     vec3 origin=receiverOriginScene;
-    if(plagueGlassCell(ivec3(floor(plagueGlassGridOrigin()+origin)))==-2) return false;
-    PlagueGlassMedium medium=plagueGlassAt(origin);
     // A straight last leg may cross model seams inside one identical medium. A physical
     // optical interface would change its direction or throughput and is never skipped here.
     for(int boundary=0;boundary<PLAGUE_GLASS_INTERFACES;++boundary) {
@@ -157,6 +157,7 @@ bool plagueGlassBeamLastLegVisible(vec3 receiverOriginScene,vec3 incoming,vec4 e
         // Source bounds come from a homogeneous emitting run in the source inventory. Its
         // exact opaque face must still exist: a hole or a closer opaque surface is not a source.
         if(endpoint) {
+            if(endpointOpaque) return !hit.glass;
             if(!endpointSource) return hit.glass;
             if(!hit.glass) return true;
             // A source touching glass shares its plane with the glass model's final face.
@@ -173,6 +174,21 @@ bool plagueGlassBeamLastLegVisible(vec3 receiverOriginScene,vec3 incoming,vec4 e
         origin=nextOrigin;
     }
     return false;
+}
+bool plagueGlassBeamLastLegVisible(vec3 receiverOriginScene,vec3 incoming,vec4 exitPlaneCache,
+        vec3 exitLoCache,vec3 exitHiCache,vec3 cacheOriginMinusSceneOrigin,bool endpointSource) {
+    float domainDistance;
+    if(!plagueGlassBeamLastLegDomain(receiverOriginScene,incoming,exitPlaneCache,exitLoCache,exitHiCache,cacheOriginMinusSceneOrigin,domainDistance)) return false;
+    if(plagueGlassCell(ivec3(floor(plagueGlassGridOrigin()+receiverOriginScene)))==-2) return false;
+    return plagueGlassBeamLastLegVisibleInMedium(receiverOriginScene,incoming,exitPlaneCache,exitLoCache,exitHiCache,cacheOriginMinusSceneOrigin,endpointSource,plagueGlassAt(receiverOriginScene),false);
+}
+
+// An opaque bounce endpoint is a finite geometry face, never an unchecked source.
+// Glass at the stored plane cannot stand in for that previous opaque vertex.
+bool plagueGlassBeamOpaqueLastLegVisibleInMedium(vec3 receiverOriginScene,vec3 incoming,vec4 exitPlaneCache,
+        vec3 exitLoCache,vec3 exitHiCache,vec3 cacheOriginMinusSceneOrigin,PlagueGlassMedium medium) {
+    return plagueGlassBeamLastLegVisibleInMedium(receiverOriginScene,incoming,exitPlaneCache,
+        exitLoCache,exitHiCache,cacheOriginMinusSceneOrigin,false,medium,true);
 }
 
 bool plagueGlassBeamLastLegSupported(vec3 receiverOriginScene,vec3 incoming,vec4 exitPlaneCache,

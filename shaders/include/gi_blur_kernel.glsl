@@ -180,10 +180,9 @@ void plagueGiBlurCell(ivec2 cell, int step, ivec2 size) {
     float lumaHere = plagueGiBlurLuma(imageLoad(u_Bounce, cell).rgb);
 
     vec3 total = vec3(0.0);
-    // The bearing is averaged the same way and by the same taps. Averaging vectors is what keeps
-    // its meaning: neighbours that agree about where the light is keep the length that says so,
-    // and neighbours that disagree shorten it, which is the honest answer for that spot.
-    vec3 bearing = vec3(0.0);
+    // Filter the radiance-weighted direction and its energy with identical weights.
+    // Normalizing before this step would give a dark neighbour the same vote as a lamp.
+    vec4 bearing = vec4(0.0);
     float weight = 0.0;
     float varianceSum = 0.0;
     for (int y = -PLAGUE_GI_BLUR_RADIUS; y <= PLAGUE_GI_BLUR_RADIUS; ++y) {
@@ -201,7 +200,7 @@ void plagueGiBlurCell(ivec2 cell, int step, ivec2 size) {
                     * plagueGiBlurPlaneWeight(here, normalHere, plagueGiHistoryPosition(tapUv, tapDepth))
                     * exp(-abs(lumaHere - plagueGiBlurLuma(tapColour)) / sigmaLuma);
             total += tapColour * w;
-            bearing += imageLoad(u_Dir, tap).rgb * w;
+            bearing += imageLoad(u_Dir, tap) * w;
             weight += w;
             // The variance of a weighted mean is the weights squared times each part's own.
             varianceSum += plagueGiBlurInputVariance(tap, variance) * w * w;
@@ -211,7 +210,7 @@ void plagueGiBlurCell(ivec2 cell, int step, ivec2 size) {
     // A cell whose every neighbour was rejected keeps its own sample rather than going black.
     if (weight > 0.0) {
         imageStore(u_OutBlurred, cell, vec4(total / weight, varianceSum / (weight * weight)));
-        imageStore(u_OutDir, cell, vec4(bearing / weight, 1.0));
+        imageStore(u_OutDir, cell, bearing / weight);
     } else {
         imageStore(u_OutBlurred, cell, vec4(imageLoad(u_Bounce, cell).rgb, variance));
         imageStore(u_OutDir, cell, imageLoad(u_Dir, cell));

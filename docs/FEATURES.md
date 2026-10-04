@@ -54,6 +54,8 @@ covers what the pack does, not the engine under it.
   higher counts average more evidence in the same frame without multiplying brightness. Advanced
   changes display Custom. Existing settings and feature switches are preserved.
 - Glass photon budgets offer 16384, 32768 and 65536 paths with constant total source energy.
+- Glass Bounce Reach offers 12/24/48/64 blocks of cumulative optical work, independently of the
+  existing 12-block source integration domain. The default is 24.
   Lower budgets reduce tracing work while retaining maximum buffer storage and gathering resolution.
 - Fornax's Material Capacity setting offers 96/128/192/240 contextual entries per section and
   applies after restart. Larger capacities retain more surface facts at higher memory cost.
@@ -94,6 +96,8 @@ covers what the pack does, not the engine under it.
   point seen at the old spot lies in the cell's plane, so walls at a grazing angle hold it while
   walking. Stationary views also retain four separate surface estimates per cell through changing
   cutout coverage; these expire after 24 unobserved frames and clear when the camera changes.
+  Direction and its luminance weight travel together through accumulation and filtering, so
+  black samples do not erase the normal response of sparse bright lighting.
   Commanded time jumps discard stale bounce light and exposure history immediately.
   Longer AA cycles or more than four recurring surfaces can still exhaust that cache. Bounce
   Light Strength scales the lamp share of the bounce only. There is no emission
@@ -232,8 +236,18 @@ covers what the pack does, not the engine under it.
   thickness-dependent RGB absorption. Photon paths illuminate
   their receiving surfaces at full pixel resolution, preserving albedo, normal and roughness detail.
   Source-anchored photon samples retain RGB energy and incoming directions across camera motion.
-  The current material and view are shaded afresh, without a caustic colour-history settling window.
-  Geometry and source changes rebuild the local photon set before shading. Finite sampling can
+  Primary local glossy light instead samples material reflection directions at 1/2/4/8 rays per
+  pixel (default 2), using a randomized low-discrepancy sequence to cover reflection directions
+  more evenly. This term and the separate photon-lit opaque endpoint reflection use cumulative
+  stationary sample means, continuing until the exact float32 sample sequence is exhausted; exact
+  material, normal, depth, camera and light-change checks reject stale history. Motion and changing
+  TAA jitter reset convergence. Local diffuse and sun light keep their photon estimates.
+  GI uses a separate photon set with its full budget assigned to local emitters, refreshing one
+  eighth each frame with subsequent samples and a wider half-block gather; the direct caustic set
+  remains stable with a sharper quarter-block gather. Geometry and source changes
+  rebuild both sets before shading. Photon indexes separate exact axis-facing records from
+  generic normals so queries avoid orientations that the unchanged receiver test rejects;
+  budgets, receiving footprints and photon energy remain unchanged. Finite sampling can
   leave spatial error. Camera glass retains its authored texture, normal map and material response
   through forward rendering and screen-space refraction. Camera rays do not use the homogeneous
   photon volume to replace these surfaces; their refraction does not include thickness-dependent

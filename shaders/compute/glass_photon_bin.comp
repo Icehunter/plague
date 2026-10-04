@@ -43,7 +43,7 @@ void main() {
     uint lane=0u;
     for(int y=first.y;y<=last.y;++y) for(int x=first.x;x<=last.x;++x) {
         ivec3 key=ivec3(x,y,level);
-        uint node=firstNode+lane++,bucket=plagueGlassBeamIndexBucket(key);
+        uint node=firstNode+lane++,bucket=plagueGlassBeamNormalBucket(key,plagueGlassNormalBank(photonWords[photonBase+3u].xyz));
         uint previous=atomicExchange(headWords[bucket],node+1u);
         linkWords[node]=uvec4(previous,uvec3(key));
     }

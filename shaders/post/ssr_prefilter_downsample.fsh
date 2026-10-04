@@ -1,4 +1,6 @@
 #version 330
+#moj_import <fornax_runtime:reflection_confidence.glsl>
+
 
 // Builds the prefiltered reflection hierarchy: one mip chain over the finished `ssr` target, so a
 // rough surface can read a genuinely convolved environment rather than a mirror sample.
@@ -28,10 +30,10 @@ void main() {
     ivec2 destination = ivec2(gl_FragCoord.xy);
     ivec2 sourceSize = textureSize(u_Input0, 0);
 
-    // Seed level must equal `ssr` texel for texel: gbuffer_resolve reads LOD 0 as its sharp mirror
-    // lobe, so any filtering here would change every mirror surface in the pack.
+    // Associate at the seed so hardware bilinear/trilinear filtering preserves confidence.
+    // The consumer unassociates after sampling; supported mirror colour is unchanged.
     if (u_Param2 > 0.5) {
-        fragColor = texelFetch(u_Input0, min(destination, sourceSize - 1), 0);
+        fragColor = plagueReflectionAssociate(texelFetch(u_Input0, min(destination, sourceSize - 1), 0));
         return;
     }
 

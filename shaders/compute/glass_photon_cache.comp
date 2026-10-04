@@ -17,6 +17,28 @@ layout(std430,set=0,binding=8) readonly buffer Faces { uint faceWords[]; };
 layout(std430,set=0,binding=9) buffer Cache { uint cacheWords[]; };
 shared uint changed;
 shared uint sources;
+shared uint resetReason;
+shared uint resetWord;
+shared int historyLo[3];
+shared int historyHi[3];
+// 4096 uint eligibility flags use 16 KiB; ordered compaction avoids quadratic sorting.
+shared uint eligibleSources[PLAGUE_LOCAL_CAPACITY];
+
+float plagueGlassDirectSourcePower(uint source) {
+    int row=PLAGUE_LOCAL_RECORDS+int(source)*PLAGUE_LOCAL_RECORD_WORDS;
+    uint run=sourceWords[row+PLAGUE_LOCAL_RECORD_RUN];
+    int face=plagueLocalRunFace(run);
+    int uAxis=face<4?0:1,vAxis=face<2?2:face<4?1:2;
+    vec3 lo,hi; plagueLocalUnpackBox(sourceWords[row+PLAGUE_LOCAL_RECORD_BOX],lo,hi);
+    vec2 span=plagueLocalRunSpan(run);
+    float area=(hi[uAxis]-lo[uAxis]+span.x-1.0)*(hi[vAxis]-lo[vAxis]+span.y-1.0);
+    vec3 radiance=max(uintBitsToFloat(uvec3(sourceWords[row+11],sourceWords[row+15],
+        sourceWords[row+19])),vec3(0.0));
+    // Lambertian emitted power is pi*A*Le; pi cancels between source probabilities.
+    // BT.709 linear luminance preserves the relative RGB flux of the sampled inventory.
+    return max(area,0.0)*dot(radiance,vec3(0.2126,0.7152,0.0722));
+}
+
 void main() {
     uint lane=gl_LocalInvocationID.x;
     ivec3 origin=ivec3(floor(u_CameraAbs/16.0))*16+ivec3(8);
@@ -30,30 +52,79 @@ void main() {
         && sourceWords[2]<=uint(PLAGUE_LOCAL_CAPACITY) && sourceWords[3]!=0u;
     uint count=valid?sourceWords[2]:0u;
     if(lane==0u) {
-        changed=(!valid || cacheWords[0]!=PLAGUE_GLASS_CACHE_TAG
-            || cacheWords[3]!=uint(sectionWords.length()) || cacheWords[7]!=count
-            || any(notEqual(ivec3(cacheWords[4],cacheWords[5],cacheWords[6]),origin))
-            || (valid && (cacheWords[8]!=sourceWords[3] || cacheWords[9]!=sourceWords[4]
-                || cacheWords[10]!=sourceWords[5])))?1u:0u;
+        resetReason=0u;
+        resetWord=0xffffffffu;
+        for(int axis=0;axis<3;++axis) {
+            historyLo[axis]=2147483647;
+            historyHi[axis]=-2147483647;
+        }
+        if(!valid) resetReason|=1u;
+        if(cacheWords[0]!=PLAGUE_GLASS_CACHE_TAG
+            || cacheWords[3]!=uint(sectionWords.length())) resetReason|=2u;
+        if(any(notEqual(ivec3(cacheWords[4],cacheWords[5],cacheWords[6]),origin))) resetReason|=4u;
+        if(cacheWords[7]!=count || (valid && (cacheWords[8]!=sourceWords[3]
+            || cacheWords[9]!=sourceWords[4] || cacheWords[10]!=sourceWords[5]))) resetReason|=8u;
+        changed=resetReason!=0u?1u:0u;
         sources=0u;
     }
     barrier();
     if(valid) {
-        for(uint word=lane;word<uint(sectionWords.length());word+=256u) {
-            // Lightmap content revisions do not change optical geometry. Owner, generation,
-            // geometry revision and publication validity cover empty traversed sections too.
-            if((word&7u)==5u || (word&7u)==7u) continue;
-            uint value=sectionWords[word];
-            int destination=PLAGUE_GLASS_CACHE_SECTIONS+int(word);
-            if(cacheWords[destination]!=value) atomicOr(changed,1u);
-            cacheWords[destination]=value;
+        // One invocation owns an entire section token, so its old/new bounds are read before
+        // either snapshot is overwritten. Geometry changes still rebuild the global photon maps.
+        for(uint slot=lane;slot<uint(sectionWords.length())/8u;slot+=256u) {
+            uint base=slot*8u;
+            bool sectionChanged=false;
+            for(uint offset=0u;offset<8u;++offset) {
+                if(offset==5u || offset==7u) continue;
+                uint word=base+offset;
+                if(cacheWords[PLAGUE_GLASS_CACHE_SECTIONS+int(word)]!=sectionWords[word]) {
+                    sectionChanged=true;
+                    atomicMin(resetWord,word);
+                }
+            }
+            if(sectionChanged) {
+                atomicOr(changed,1u);
+                atomicOr(resetReason,16u);
+                bool oldValid=cacheWords[PLAGUE_GLASS_CACHE_SECTIONS+int(base)+6]==1u;
+                bool newValid=sectionWords[base+6u]==1u;
+                // Missing ownership cannot certify a finite influence domain. Generation/owner
+                // replacement changes the sampling representation, so it remains a global reset.
+                for(uint offset=0u;offset<4u;++offset)
+                    if(cacheWords[PLAGUE_GLASS_CACHE_SECTIONS+int(base+offset)]!=sectionWords[base+offset])
+                        atomicOr(resetReason,64u);
+                if(!oldValid && !newValid) atomicOr(resetReason,64u);
+                // Palette box maxima31/16 can protrude by15/16 beyond a cell; certified
+                // RT models allow MAX_SECTION_SPILL1. Expand both section bounds by1block.
+                for(int axis=0;axis<3;++axis) {
+                    if(oldValid) {
+                        int block=int(cacheWords[PLAGUE_GLASS_CACHE_SECTIONS+int(base)+axis])*16;
+                        atomicMin(historyLo[axis],block-1);
+                        atomicMax(historyHi[axis],block+17);
+                    }
+                    if(newValid) {
+                        int block=int(sectionWords[base+uint(axis)])*16;
+                        atomicMin(historyLo[axis],block-1);
+                        atomicMax(historyHi[axis],block+17);
+                    }
+                }
+            }
+            for(uint offset=0u;offset<8u;++offset) {
+                if(offset==5u || offset==7u) continue;
+                cacheWords[PLAGUE_GLASS_CACHE_SECTIONS+int(base+offset)]=sectionWords[base+offset];
+            }
         }
         for(uint index=lane;index<count;index+=256u) {
+            eligibleSources[index]=0u;
             int row=PLAGUE_LOCAL_RECORDS+int(index)*PLAGUE_LOCAL_RECORD_WORDS;
             int old=PLAGUE_GLASS_CACHE_ROWS+int(index)*PLAGUE_LOCAL_RECORD_WORDS;
             for(int word=0;word<PLAGUE_LOCAL_RECORD_WORDS;++word) {
                 uint value=sourceWords[row+word];
-                if(cacheWords[old+word]!=value) atomicOr(changed,1u);
+                if(cacheWords[old+word]!=value) {
+                    atomicOr(changed,1u);
+                    atomicOr(resetReason,32u);
+                    atomicMin(resetWord,uint(sectionWords.length())
+                        +index*uint(PLAGUE_LOCAL_RECORD_WORDS)+uint(word));
+                }
                 cacheWords[old+word]=value;
             }
             vec3 radiance=uintBitsToFloat(uvec3(sourceWords[row+11],sourceWords[row+15],sourceWords[row+19]));
@@ -71,12 +142,73 @@ void main() {
             // that can illuminate a visible glass receiver as the eye moves inside this section.
             float radius=PLAGUE_GLASS_VIEW_REACH+PLAGUE_LOCAL_REACH+sqrt(3.0)*8.0;
             if(length(relative-nearest)>radius) continue;
-            uint destination=atomicAdd(sources,1u);
-            cacheWords[PLAGUE_GLASS_CACHE_SOURCES+int(destination)]=index;
+            eligibleSources[index]=1u;
         }
     }
+    memoryBarrierBuffer();
     barrier();
     if(lane==0u) {
+        // Stable row order keeps retained GI slots attached to the same emitter. Source-row
+        // permutation already marks the cache changed; only admission order was nondeterministic.
+        for(uint index=0u;index<count;++index) {
+            if(eligibleSources[index]==0u) continue;
+            cacheWords[PLAGUE_GLASS_CACHE_SOURCES+int(sources++)]=index;
+        }
+        if(sources>0u && (changed!=0u || cacheWords[2]!=sources)) {
+            float totalPower=0.0;
+            for(uint index=0u;index<sources;++index)
+                totalPower+=plagueGlassDirectSourcePower(
+                    cacheWords[PLAGUE_GLASS_CACHE_SOURCES+int(index)]);
+            // Every admitted source keeps at least one ray. A non-finite inventory falls back
+            // to equal quotas rather than corrupting the prefix search or photon flux.
+            bool weighted=totalPower>0.0 && !isnan(totalPower) && !isinf(totalPower);
+            float cumulativePower=0.0;
+            uint budget=uint(PLAGUE_GLASS_SAMPLES)/2u,extra=budget-sources;
+            for(uint index=0u;index<sources;++index) {
+                if(weighted) cumulativePower+=plagueGlassDirectSourcePower(
+                    cacheWords[PLAGUE_GLASS_CACHE_SOURCES+int(index)]);
+                float fraction=weighted?clamp(cumulativePower/totalPower,0.0,1.0)
+                    :float(index+1u)/float(sources);
+                uint end=index+1u+uint(floor(float(extra)*fraction+0.5));
+                cacheWords[PLAGUE_GLASS_CACHE_DIRECT_PREFIX+int(index)]=
+                    index+1u==sources?budget:end;
+            }
+        }
+        if(changed!=0u || sources==0u) {
+            cacheWords[PLAGUE_GLASS_CACHE_GI_PHASE]=0u;
+            uint sweep=0u;
+            // Geometry-only invalidation keeps the same ordered sources and quotas. Rebuild
+            // every path, but advance its sample epoch instead of replaying the first GI prefix.
+            // Layout, source, anchor and missing-ownership changes still restart progression.
+            if(resetReason==16u && sources>0u && cacheWords[2]==sources) {
+                uint quota=uint(PLAGUE_GLASS_SAMPLES)/sources;
+                uint lastSweep=(0xffffffffu-quota)/quota;
+                uint previous=cacheWords[PLAGUE_GLASS_CACHE_GI_SWEEP];
+                sweep=previous>=lastSweep?1u:previous+1u;
+            }
+            cacheWords[PLAGUE_GLASS_CACHE_GI_SWEEP]=sweep;
+        } else {
+            uint phase=cacheWords[PLAGUE_GLASS_CACHE_GI_PHASE]%PLAGUE_GLASS_GI_REFRESH_PHASES+1u;
+            uint sweep=cacheWords[PLAGUE_GLASS_CACHE_GI_SWEEP];
+            // GI traces the full local budget; its ordinal wrap must use that exact quota.
+            uint quota=uint(PLAGUE_GLASS_SAMPLES)/sources;
+            // Leave room for the largest ordinal and the Halton helper's +1. Wrapping
+            // this sample sequence repeats samples, never changes weights or scene identity.
+            uint lastSweep=(0xffffffffu-quota)/quota;
+            if(phase==1u) sweep=sweep>=lastSweep?1u:sweep+1u;
+            cacheWords[PLAGUE_GLASS_CACHE_GI_PHASE]=phase;
+            cacheWords[PLAGUE_GLASS_CACHE_GI_SWEEP]=sweep;
+        }
+        if(changed!=0u) {
+            cacheWords[PLAGUE_GLASS_CACHE_RESET_REASON]=resetReason;
+            cacheWords[PLAGUE_GLASS_CACHE_RESET_FRAME]=uint(u_FrameState.x);
+            cacheWords[PLAGUE_GLASS_CACHE_RESET_WORD]=resetWord;
+        }
+        cacheWords[PLAGUE_GLASS_CACHE_HISTORY_REASON]=resetReason;
+        for(int axis=0;axis<3;++axis) {
+            cacheWords[PLAGUE_GLASS_CACHE_HISTORY_LO+axis]=uint(historyLo[axis]);
+            cacheWords[PLAGUE_GLASS_CACHE_HISTORY_HI+axis]=uint(historyHi[axis]);
+        }
         cacheWords[0]=valid?PLAGUE_GLASS_CACHE_TAG:0u;
         cacheWords[1]=changed;
         cacheWords[2]=sources;
